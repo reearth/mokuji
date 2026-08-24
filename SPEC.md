@@ -137,7 +137,31 @@ are an OPTIONAL extension; section ID `0x0050` is reserved for it. It is not
 required, because the cost of building pair postings grows quadratically and a
 linear bound is already a sufficient contract.
 
-### 4.1 Why the bound is stated at all
+### 4.1 Prefix and range queries
+
+A prefix query returning `n` terms costs:
+
+```
+reads = b                      term blocks spanned by the matching range
+      + 1                      postings, if the terms' postings are wanted
+      + p                      payload blocks
+```
+
+`b` is at most `ceil(n / terms_per_block) + 1`. Whether the range continues past
+a block is answerable from the resident term index alone — a block whose first
+term does not share the prefix contains nothing that does — so only the first
+block is read on faith.
+
+The single postings read is a consequence of the layout rather than an
+optimization: runs are written in term order, so terms adjacent in the
+dictionary have adjacent runs, and a prefix match is exactly such a range.
+
+Prefix and range queries are not a feature layered on the dictionary. They
+follow from its being sorted, which is what makes hierarchical keys — addresses,
+paths, statute numbers — the case the format handles best rather than a case it
+tolerates.
+
+### 4.2 Why the bound is stated at all
 
 Every existing option either declines to state a bound or cannot state one.
 Formats designed for memory mapping assume that a seek is free. A general

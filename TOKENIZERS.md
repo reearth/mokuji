@@ -43,6 +43,18 @@ Deliberately minimal. It exists so that a corpus that has already been
 tokenized upstream can be indexed without this format pretending to have
 opinions about text it has not seen.
 
+### `identity`
+
+The whole input is one token. No splitting and no normalization.
+
+Parameters: none.
+
+This is the tokenizer for a dictionary rather than a document collection: an
+address, a path, or a statute number is looked up whole or by prefix, not
+matched by its parts. Combined with the sorted term dictionary it turns a COLex
+file into an ordered key-value store with a stated I/O bound, which is what
+forward geocoding actually needs.
+
 ## Reserved
 
 `ja-address` is reserved for the address normalizer used by the Japanese

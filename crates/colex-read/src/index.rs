@@ -7,7 +7,7 @@ use colex_format::{
     parse_section_table, Error, Flags, Header, Result, SectionCodec, SectionEntry, SectionId,
 };
 
-use crate::term::{find_in_block, TermEntry, TermIndex};
+use crate::term::{self, find_in_block, TermEntry, TermIndex};
 use crate::{postings, RangeReader};
 
 /// How much of the file to fetch when opening it.
@@ -18,6 +18,12 @@ use crate::{postings, RangeReader};
 /// file whose resident set fits, opening costs exactly one read. The value is a
 /// reader's choice, not a property of the format.
 const OPEN_PREFIX: u32 = 64 * 1024;
+
+/// How wide a single read may grow when gathering the resident set.
+///
+/// Beyond this, reading the gaps between sections would cost more than the
+/// reads it saves, and the reader falls back to fetching each on its own.
+const MAX_RESIDENT_SPAN: u64 = 8 * 1024 * 1024;
 
 /// One match: a document and its payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +76,6 @@ impl<R: RangeReader> Index<R> {
             section.check_bounds(reader.file_len())?;
         }
 
-        let mut resident = BTreeMap::new();
         let mut required = vec![
             SectionId::META,
             SectionId::TERM_INDEX,
@@ -79,17 +84,50 @@ impl<R: RangeReader> Index<R> {
         if header.flags.contains(Flags::HAS_PAYLOAD) {
             required.push(SectionId::PAYLOAD_OFFSETS);
         }
-        for id in required {
-            let section = find(&sections, id)?;
-            if section.codec != SectionCodec::Raw {
-                return Err(Error::Malformed {
-                    detail: "a resident section is compressed as a whole",
-                });
-            }
-            resident.insert(
-                id,
-                fetch(&reader, &prefix, section.offset, section.length).await?,
-            );
+        let wanted = required
+            .iter()
+            .map(|&id| {
+                let section = find(&sections, id)?;
+                if section.codec != SectionCodec::Raw {
+                    return Err(Error::Malformed {
+                        detail: "a resident section is compressed as a whole",
+                    });
+                }
+                Ok((id, section.offset, section.length))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // The recommended layout puts the resident sections together at the
+        // head of the file, so when the opening prefix does not reach far
+        // enough the remedy is one wider read, not one read per section.
+        let span_start = wanted.iter().map(|(_, o, _)| *o).min().expect("non-empty");
+        let span_end = wanted
+            .iter()
+            .map(|(_, o, l)| o + l)
+            .max()
+            .expect("non-empty");
+        let span = if span_end <= prefix.len() as u64 || span_end - span_start > MAX_RESIDENT_SPAN {
+            // Either the prefix already covers everything, or the sections are
+            // scattered widely enough that reading the gaps between them would
+            // cost more than the reads it saves.
+            None
+        } else {
+            Some((
+                span_start,
+                fetch(&reader, &prefix, span_start, span_end - span_start).await?,
+            ))
+        };
+
+        let mut resident = BTreeMap::new();
+        for (id, offset, length) in wanted {
+            let bytes = match &span {
+                Some((start, buf)) => {
+                    let at = (offset - start) as usize;
+                    buf[at..at + length as usize].to_vec()
+                }
+                None => fetch(&reader, &prefix, offset, length).await?,
+            };
+            resident.insert(id, bytes);
         }
 
         Ok(Index {
@@ -176,6 +214,102 @@ impl<R: RangeReader> Index<R> {
             });
         }
         Ok(decoded)
+    }
+
+    /// Terms beginning with `prefix`, in order, at most `limit` of them.
+    ///
+    /// This is the query a hierarchical key is for — an address, a path, a
+    /// statute number. It is not a feature layered on top of the dictionary but
+    /// a consequence of its shape: terms are sorted, so everything sharing a
+    /// prefix is contiguous, and contiguous terms occupy contiguous blocks.
+    ///
+    /// Cost is one read per block the range spans, which is a function of how
+    /// many terms match rather than of how long the prefix is.
+    pub async fn prefix(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, TermEntry)>> {
+        let index = TermIndex::new(&self.term_index)?;
+        let boundaries = index.keys()?;
+        // A prefix sorts at or before the first term it matches, so the block
+        // that would contain the prefix itself is where the range starts.
+        let start = index.locate(prefix)?.unwrap_or(0);
+
+        let mut out = Vec::new();
+        for ordinal in start..index.block_count() {
+            // Whether the range continues past this block is answerable from
+            // the resident index alone: a block whose first term does not share
+            // the prefix holds nothing that does. Only the first block has to
+            // be read on faith.
+            if ordinal > start && !boundaries[ordinal as usize].starts_with(prefix) {
+                break;
+            }
+
+            let block = self.read_term_block(ordinal).await?;
+            for (key, entry) in term::decode_block(&block)? {
+                if key.starts_with(prefix) {
+                    out.push((key, entry));
+                    if out.len() == limit {
+                        return Ok(out);
+                    }
+                } else if key.as_slice() > prefix && !out.is_empty() {
+                    // Terms ascend, so the first non-matching key after a match
+                    // ends the range; nothing later can rejoin it.
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Reads the postings for a contiguous run of dictionary entries in one go.
+    ///
+    /// Postings are written in term order, so entries adjacent in the
+    /// dictionary have adjacent runs. A prefix match is exactly such a run,
+    /// which is why completing a prefix costs a constant number of reads rather
+    /// than one per match.
+    pub async fn postings_span(&self, entries: &[TermEntry]) -> Result<Vec<postings::Postings>> {
+        let Some(first) = entries.first() else {
+            return Ok(Vec::new());
+        };
+        let last = entries.last().expect("non-empty");
+        let start = first.postings_offset;
+        let end = last.postings_offset + last.postings_len;
+        for pair in entries.windows(2) {
+            if pair[1].postings_offset < pair[0].postings_offset {
+                return Err(Error::Malformed {
+                    detail: "postings runs are not in term order",
+                });
+            }
+        }
+        let len = u32::try_from(end - start).map_err(|_| Error::Malformed {
+            detail: "postings span is implausibly long",
+        })?;
+        let span = self.reader.read_range(start, len).await?;
+
+        let has_freqs = self.header.flags.contains(Flags::HAS_FREQS);
+        entries
+            .iter()
+            .map(|entry| {
+                let at = (entry.postings_offset - start) as usize;
+                let run =
+                    span.get(at..at + entry.postings_len as usize)
+                        .ok_or(Error::Malformed {
+                            detail: "a postings run lies outside its span",
+                        })?;
+                postings::decode(run, has_freqs, self.header.num_docs)
+            })
+            .collect()
+    }
+
+    /// Fetches payload for documents given in ascending order.
+    ///
+    /// Blocks are shared between adjacent documents, so this costs one read per
+    /// distinct block rather than one per document.
+    pub async fn payload_span(&self, docs: &[u64]) -> Result<Vec<Vec<u8>>> {
+        let mut cache = PayloadCache::default();
+        let mut out = Vec::with_capacity(docs.len());
+        for &doc in docs {
+            out.push(self.payload(doc, &mut cache).await?);
+        }
+        Ok(out)
     }
 
     /// Intersects `terms` and returns the matching documents with their payload.
