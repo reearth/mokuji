@@ -20,8 +20,11 @@ pub fn run(path: &Path, terms: &[&str]) -> Result<(), Error> {
 
     // Terms have to go through whatever the index's terms went through.
     let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    // Put each term through the tokenizer rather than merely rewriting it: an
+    // analyzer that splits — bigrams, most obviously — turns one word the user
+    // typed into several terms that all have to be present.
     let terms: Vec<String> = match Tokenizer::parse(&recorded) {
-        Some(tokenizer) => terms.iter().map(|t| tokenizer.normalize_query(t)).collect(),
+        Some(tokenizer) => terms.iter().flat_map(|t| tokenizer.split(t)).collect(),
         None => {
             eprintln!(
                 "warning: this index was built with the '{recorded}' tokenizer, which this \

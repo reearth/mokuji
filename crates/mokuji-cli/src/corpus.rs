@@ -28,6 +28,12 @@ pub enum Tokenizer {
     /// pinned down so that an index is reproducible, not so that every index
     /// has to use it.
     JaAddress,
+    /// Character bigrams for scripts without word spacing, whole words for the
+    /// rest.
+    ///
+    /// The analyzer that needs no dictionary, which is the only kind a reader
+    /// with no server can be relied on to have. See `TOKENIZERS.md`.
+    Bigram,
 }
 
 impl Tokenizer {
@@ -37,6 +43,7 @@ impl Tokenizer {
             Tokenizer::SpaceSplit => "space-split",
             Tokenizer::Identity => "identity",
             Tokenizer::JaAddress => "ja-address",
+            Tokenizer::Bigram => "bigram",
         }
     }
 
@@ -48,7 +55,10 @@ impl Tokenizer {
     /// format having to specify what that was.
     pub fn normalize_query(self, query: &str) -> String {
         match self {
-            Tokenizer::SpaceSplit | Tokenizer::Identity => query.to_string(),
+            // A prefix is a prefix of a term, so it goes through whatever
+            // rewriting the terms went through — but not through splitting,
+            // which would destroy the thing being prefixed.
+            Tokenizer::SpaceSplit | Tokenizer::Identity | Tokenizer::Bigram => query.to_string(),
             Tokenizer::JaAddress => ja_address(query),
         }
     }
@@ -67,6 +77,7 @@ impl Tokenizer {
             "space-split" => Some(Tokenizer::SpaceSplit),
             "identity" => Some(Tokenizer::Identity),
             "ja-address" => Some(Tokenizer::JaAddress),
+            "bigram" => Some(Tokenizer::Bigram),
             _ => None,
         }
     }
@@ -84,8 +95,46 @@ impl Tokenizer {
                 .collect(),
             Tokenizer::Identity => vec![text.to_string()],
             Tokenizer::JaAddress => vec![ja_address(text)],
+            Tokenizer::Bigram => bigram(text),
         }
     }
+}
+
+/// The `bigram` tokenizer, as registered in `TOKENIZERS.md`.
+///
+/// Runs of letters and digits are split on everything else. A run that is all
+/// ASCII becomes one lowercased term; any other run becomes its character
+/// bigrams, or the single character if that is all there is.
+///
+/// Less precise than morphological analysis, and the index is larger. It is
+/// here because it needs no dictionary, and a dictionary is the one thing a
+/// reader with no server cannot be assumed to have.
+pub fn bigram(text: &str) -> Vec<String> {
+    use unicode_normalization::UnicodeNormalization;
+
+    let composed: String = text.nfkc().collect();
+    let mut out = Vec::new();
+    for run in composed.split(|c: char| !c.is_alphanumeric()) {
+        if run.is_empty() {
+            continue;
+        }
+        // Lowercased either way, so that a Latin letter matches the same
+        // whether it stands alone or sits inside a run of kanji.
+        let run = run.to_lowercase();
+        if run.is_ascii() {
+            out.push(run);
+            continue;
+        }
+        let chars: Vec<char> = run.chars().collect();
+        if chars.len() == 1 {
+            out.push(chars[0].to_string());
+            continue;
+        }
+        for pair in chars.windows(2) {
+            out.push(pair.iter().collect());
+        }
+    }
+    out
 }
 
 /// Japanese address normalization, as registered in `TOKENIZERS.md`.
@@ -371,11 +420,41 @@ mod tests {
     }
 
     #[test]
+    fn bigram_splits_japanese_into_pairs() {
+        assert_eq!(bigram("建築物"), ["建築", "築物"]);
+        assert_eq!(bigram("都市モデル"), ["都市", "市モ", "モデ", "デル"]);
+        assert_eq!(bigram("柱"), ["柱"]);
+    }
+
+    #[test]
+    fn bigram_keeps_ascii_runs_whole() {
+        assert_eq!(bigram("CityGML 3D"), ["citygml", "3d"]);
+        // A mixed run is not all ASCII, so it goes to bigrams rather than being
+        // split at the script boundary — which is what keeps the rule simple
+        // enough to reimplement, at the cost of a bigram straddling it.
+        assert_eq!(bigram("3D都市"), ["3d", "d都", "都市"]);
+    }
+
+    #[test]
+    fn bigram_splits_on_everything_that_is_not_a_letter_or_digit() {
+        assert_eq!(
+            bigram("建築物、および 工作物"),
+            ["建築", "築物", "およ", "よび", "工作", "作物"]
+        );
+    }
+
+    #[test]
+    fn bigram_composes_compatibility_forms() {
+        assert_eq!(bigram("ﾓﾃﾞﾙ"), bigram("モデル"));
+    }
+
+    #[test]
     fn identifiers_round_trip() {
         for t in [
             Tokenizer::SpaceSplit,
             Tokenizer::Identity,
             Tokenizer::JaAddress,
+            Tokenizer::Bigram,
         ] {
             assert_eq!(Tokenizer::parse(t.id()), Some(t));
         }

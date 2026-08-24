@@ -96,6 +96,37 @@ and `2丁目`, because prefix order is byte order. Zero-padding would fix the
 ordering and break the matching, since nobody types `01丁目`. Getting both means
 parsing the address into fields, which is a geocoder's job and not an index's.
 
+### `bigram`
+
+Splits on everything that is not a letter or a digit. Each run is lowercased;
+a run that is then all ASCII becomes one term, and any other run becomes its
+character bigrams — or the single character, if that is all there is.
+
+`建築物` becomes `建築`, `築物`. `CityGML` becomes `citygml`. `3D都市` is not
+all ASCII, so it becomes `3d`, `d都`, `都市`; the rule does not split at a
+script boundary, which costs a bigram straddling it and saves a great deal of
+specification.
+
+Parameters: none.
+
+#### Why bigrams rather than morphology
+
+Morphological analysis is more precise and produces a much smaller index. It
+also needs a dictionary — tens of megabytes for IPA or UniDic — and it needs it
+**at query time as well as at index time**, because a query has to be analyzed
+the same way the terms were. A reader with no server is exactly the reader that
+cannot be assumed to have one.
+
+Bigrams need nothing. The rule above is a few lines in any language, which is
+what makes an index built with it readable by a page.
+
+The cost is real and worth stating: an index of bigrams is larger than an index
+of words, and a two-character query matches substrings rather than words, so
+`京都` matches `東京都`. Where a dictionary can be relied on — a server, a Go
+program, a Worker that can call `Intl.Segmenter` — a morphological or ICU-based
+tokenizer will do better, and belongs in this registry under its own
+identifier.
+
 ## Reserved
 
 Nothing is currently reserved.
