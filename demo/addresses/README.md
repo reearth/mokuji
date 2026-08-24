@@ -140,8 +140,14 @@ publishes nine and ten decimal places:
 139.765575675,35.678505258
 ```
 
-The tenth decimal place of a longitude is a tenth of a millimetre. Rounding to
-six, which is about eleven centimetres, gives:
+The tenth decimal place of a longitude is a tenth of a millimetre. That is
+almost certainly not a claim about accuracy: it is what printing a `float64`
+looks like after converting from a plane rectangular coordinate system, and the
+registry is being faithful rather than boastful. The fault is ours for carrying
+the residue of someone else's coordinate conversion into an index and then
+compressing it.
+
+Rounding to six decimals, which is about eleven centimetres, gives:
 
 | | index |
 |---|---|
@@ -264,4 +270,36 @@ decompression, so it would cost a decompressor in the page. See `SPEC.md`
 §5.6.1.
 
 **Payload is coordinate text**, and on the Tokyo index it is 83% of the file.
-See above: the saving is real, it is large, and it is not the format's to make.
+Rounding is not the largest saving available, and most of what remains *is* the
+format's to make. Measured on the Tokyo payloads (`tools/payload-encodings.py`),
+per address after per-block deflate:
+
+| encoding | index payload | per address |
+|---|---|---|
+| Text, as published | 15.2 MB | 8.69 B |
+| Text, rounded to six decimals | 9.8 MB | 5.61 B |
+| Fixed point 1e-6, `int32` pair | 8.8 MB | 5.05 B |
+| **Fixed point 1e-6, zigzag varint delta** | **5.9 MB** | **3.39 B** |
+| Fixed point 1e-5 (about a metre), delta | 3.7 MB | 2.11 B |
+
+Delta encoding wins because of the monotonic ID rule (`SPEC.md` §3.2), not
+despite it. Documents are in term order, addresses sort hierarchically, and a
+hierarchy of addresses is very nearly a spatial ordering — so consecutive
+documents are metres apart and their coordinates differ in the last few digits.
+The rule was adopted to keep the dictionary small; it turns out to pay a second
+time, in a section that does not know the dictionary exists.
+
+That splits the problem three ways, and only the last part is genuinely outside
+the format:
+
+| | whose | measured here |
+|---|---|---|
+| Structure — what the ordering makes possible | the format | taken |
+| Encoding — how a coordinate is written down | the format | **not taken: 2.6x** |
+| Precision — how many digits are real | the publisher | 1.5x, correctly theirs |
+
+The encoding layer wants a declared payload codec, the way PMTiles declares a
+tile type without saying what a tile means. And the precision layer is not
+beyond the format either, once it is understood as provenance rather than
+compression: an index that rounds and *records that it rounded* is a shortened
+copy that says so. One that rounds silently is a damaged one.

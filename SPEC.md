@@ -654,6 +654,32 @@ own central structure to one. The transducer remains available under
 The property that motivated it, order preservation, comes from the dictionary
 being sorted and is unaffected.
 
+*Corrected by measurement.* The argument above is about the **index**, where it
+holds. It was then allowed to settle the question for the **dictionary**, where
+it does not. Built over the 1,744,962 addresses of Tokyo at residence level
+(`tools/fst-comparison`):
+
+| | bytes | per term |
+|---|---|---|
+| Blocked front-coding, deflated per block | 2,765,050 | 1.58 |
+| `fst::Set` | 571,926 | 0.33 |
+| `fst::Map` carrying the rank | 733,494 | 0.42 |
+
+A transducer is **4.8x smaller**, and the reason is structural rather than
+incidental: minimization shares the *suffixes* as well as the prefixes, so the
+`1番1号 … 30番20号` tail that hangs off thousands of different neighbourhoods is
+stored once as a shared subgraph. Front-coding shares only the prefix, and
+per-block deflate recovers some of the rest but only within a block's window.
+
+That reopens the question rather than settling it the other way. At 733 KB the
+whole dictionary would be small enough to hold **resident**, which would make a
+term lookup cost no range read at all — a stronger result than the bound the
+blocked form provides. Against that stand the two costs the entry above names,
+both still real: the byte format would have to be specified rather than
+deferred to an implementation, and a transducer must be held whole, so an index
+too large to keep resident would have no bounded lookup at all. It is recorded
+here as measured, open, and consequential.
+
 **Implied postings are a dictionary entry, not a postings codec.**
 A codec that encoded "this term names its own document" compactly would still
 cost a byte per term and, worse, a range read per query to fetch that byte. The
