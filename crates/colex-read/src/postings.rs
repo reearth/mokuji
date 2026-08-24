@@ -51,7 +51,9 @@ pub fn decode(run: &[u8], has_freqs: bool, num_docs: u64) -> Result<Postings> {
     })?;
     let (values, mut pos) = bitpack::decode(run, 1 + n, count)?;
 
-    let mut docs = Vec::with_capacity(count);
+    // Bounded: `count` is a varint from the file, and a run that claims a
+    // billion documents should cost nothing until the bytes for them arrive.
+    let mut docs = Vec::with_capacity(count.min(1024));
     let mut current: Option<u64> = None;
     for value in values {
         // The first value is a document ID; the rest are gaps less one, which

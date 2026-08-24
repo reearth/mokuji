@@ -37,7 +37,9 @@ pub fn decode_group(buf: &[u8], pos: usize, count: usize) -> Result<(Vec<u64>, u
         found: buf.len(),
     })?;
 
-    let mut values = Vec::with_capacity(count);
+    // The count is bounded by the caller here, but the group is decoded from
+    // file bytes either way, so the reservation stays bounded.
+    let mut values = Vec::with_capacity(count.min(GROUP_LEN));
     let mut widest = 0;
     for i in 0..count {
         let value = get_bits(packed, i * width as usize, width);
@@ -60,7 +62,9 @@ pub fn decode_group(buf: &[u8], pos: usize, count: usize) -> Result<(Vec<u64>, u
 
 /// Decodes `count` values across as many groups as they occupy.
 pub fn decode(buf: &[u8], mut pos: usize, count: usize) -> Result<(Vec<u64>, usize)> {
-    let mut values = Vec::with_capacity(count);
+    // Reserve a bounded amount: `count` comes from the file, so trusting it
+    // would let a varint ask for gigabytes. The vector grows as bytes arrive.
+    let mut values = Vec::with_capacity(count.min(GROUP_LEN));
     while values.len() < count {
         let (group, next) = decode_group(buf, pos, (count - values.len()).min(GROUP_LEN))?;
         values.extend(group);

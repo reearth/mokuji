@@ -7,3 +7,9 @@
 # Working notes, kept out of the repository
 /tmp
 __pycache__/
+
+# Fuzzing artifacts
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage

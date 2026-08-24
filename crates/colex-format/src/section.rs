@@ -152,6 +152,7 @@ pub fn parse_section_table(buf: &[u8], count: u32) -> Result<Vec<SectionEntry>> 
         });
     }
 
+    // Safe to reserve: `needed` was already checked against the buffer.
     let mut entries = Vec::with_capacity(count);
     let mut prev: Option<SectionId> = None;
     for chunk in buf[..needed].chunks_exact(SECTION_ENTRY_LEN) {

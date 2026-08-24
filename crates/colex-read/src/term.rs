@@ -31,6 +31,14 @@ impl<'a> TermIndex<'a> {
             found: bytes.len(),
         })?;
         let block_count = u32::from_le_bytes(head.try_into().expect("checked length"));
+        // Each boundary key costs at least two bytes, so a count larger than
+        // the section could hold is a lie worth catching before anything acts
+        // on it.
+        if u64::from(block_count) * 2 > (bytes.len() - 4) as u64 {
+            return Err(Error::Malformed {
+                detail: "the term index claims more blocks than it could hold",
+            });
+        }
         Ok(TermIndex { bytes, block_count })
     }
 
@@ -47,7 +55,10 @@ impl<'a> TermIndex<'a> {
     pub fn keys(&self) -> Result<Vec<Vec<u8>>> {
         let mut key = Vec::new();
         let mut pos = 4;
-        let mut out = Vec::with_capacity(self.block_count as usize);
+        // `block_count` is a u32 from the file. A key costs at least two bytes,
+        // so the section's own length is the honest bound on how many there can
+        // be, and the reservation is capped besides.
+        let mut out = Vec::with_capacity((self.block_count as usize).min(self.bytes.len() / 2));
         for _ in 0..self.block_count {
             pos = front_coded::decode_into(self.bytes, pos, &mut key)?;
             out.push(key.clone());
