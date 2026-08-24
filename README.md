@@ -92,11 +92,12 @@ hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 cd demo/addresses && ./run.sh
 ```
 
-Against 300,000 addresses in a 1.9 MB file, completing a prefix costs **two
-range reads and 541 bytes** — and costs the same two at any file size, because a
-contiguous range of terms is contiguous in every section at once. See
-[demo/addresses](demo/addresses) for the measurements, and for what they do and
-do not show.
+Against the 725,823 addresses of Japan's Address Base Registry, in a 5.7 MB
+file, completing a prefix costs **two range reads and about 1 KB** — and costs
+the same two at any file size, because a contiguous range of terms is contiguous
+in every section at once. See [demo/addresses](demo/addresses) for the
+measurements, the provenance chain back to the register, and what the numbers do
+and do not show.
 
 The same file is read by a browser in [demo/web](demo/web), in about 300 lines
 of plain JavaScript with no WebAssembly and no bundled decompressor. That is

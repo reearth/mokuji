@@ -273,3 +273,55 @@ fn build_rejects_an_unregistered_tokenizer() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("TOKENIZERS.md"));
 }
+
+#[test]
+fn build_records_the_register_a_corpus_came_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let register = dir.path().join("register.csv");
+    let index = dir.path().join("index.colex");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    std::fs::write(
+        &register,
+        "the source of truth this corpus was converted from\n",
+    )
+    .unwrap();
+
+    let output = colex(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--source",
+        register.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // An index converted from a published register should name the register,
+    // not only the intermediate file the builder happened to read.
+    let output = colex(&[
+        "verify",
+        index.to_str().unwrap(),
+        "--source",
+        register.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout(&output).contains("matches the recorded provenance"));
+
+    // And the corpus it read is still recorded, so both links in the chain are
+    // checkable.
+    let output = colex(&[
+        "verify",
+        index.to_str().unwrap(),
+        "--source",
+        corpus.to_str().unwrap(),
+    ]);
+    assert!(output.status.success());
+}

@@ -1,5 +1,6 @@
 //! Command line tools for the COLex format.
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use colex_write::Options;
@@ -24,6 +25,9 @@ usage:
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
         --tokenizer <id>               space-split (default) or identity
+        --source <path>                record this file's hash as a source too;
+                                       repeatable, for the register a corpus
+                                       was converted from
         --generation <n>               generation number (default 1)
 
     colex info <file>                  print the header and section table
@@ -79,6 +83,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut options = Options::default();
     let mut tokenizer = Tokenizer::default();
     let mut generation = 1u64;
+    let mut origins: Vec<&str> = Vec::new();
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -91,6 +96,13 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .map_err(|_| Error::Usage(format!("{flag} is too large")))?;
             }
             "--generation" => generation = take_number(flag, &mut rest)?,
+            "--source" => {
+                let (path, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--source needs a path".into()))?;
+                rest = tail;
+                origins.push(path);
+            }
             "--tokenizer" => {
                 let (id, tail) = rest
                     .split_first()
@@ -105,9 +117,11 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             other => return Err(Error::Usage(format!("unknown option '{other}'"))),
         }
     }
+    let origins: Vec<&Path> = origins.iter().map(|p| Path::new(*p)).collect();
     build::run(
         input.as_ref(),
         output.as_ref(),
+        &origins,
         options,
         tokenizer,
         generation,

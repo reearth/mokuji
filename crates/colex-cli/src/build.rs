@@ -12,9 +12,15 @@ use crate::corpus::{self, Tokenizer};
 use crate::info::Error;
 
 /// Builds `input` into `output`.
+///
+/// `origins` are further files to record as sources. An index is often derived
+/// from something the builder never sees — here, a corpus converted from a
+/// published register — and recording only the file it read would make the
+/// provenance true but useless: it would name an intermediate nobody keeps.
 pub fn run(
     input: &Path,
     output: &Path,
+    origins: &[&Path],
     options: Options,
     tokenizer: Tokenizer,
     generation: u64,
@@ -38,12 +44,20 @@ pub fn run(
         }
     }
 
+    let mut sources = vec![Source {
+        content_hash: ContentHash::sha2_256(&digest),
+        uri: Some(input.display().to_string()),
+    }];
+    for origin in origins {
+        sources.push(Source {
+            content_hash: ContentHash::sha2_256(&hash_file(origin)?),
+            uri: Some(origin.display().to_string()),
+        });
+    }
+
     let meta = Meta {
         generation,
-        sources: vec![Source {
-            content_hash: ContentHash::sha2_256(&digest),
-            uri: Some(input.display().to_string()),
-        }],
+        sources,
         generator: Generator {
             name: "colex".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -77,6 +91,27 @@ pub fn run(
         corpus.payloads.len(),
         corpus.postings.len()
     );
-    println!("derived from {}", ContentHash::sha2_256(&digest));
+    for source in &meta.sources {
+        println!("derived from {}", source.content_hash);
+        if let Some(uri) = &source.uri {
+            println!("             {uri}");
+        }
+    }
     Ok(())
+}
+
+/// Hashes a file without holding it in memory, since a register is large.
+fn hash_file(path: &Path) -> Result<Vec<u8>, Error> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(hasher.finalize().to_vec());
+        }
+        hasher.update(&buffer[..read]);
+    }
 }
