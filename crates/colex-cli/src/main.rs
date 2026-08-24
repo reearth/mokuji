@@ -38,10 +38,11 @@ usage:
     colex dump <file>                  write the index back out as a corpus
     colex info <file>                  print the header and section table
     colex search <file> <term>...      intersect terms and report the cost
-    colex prefix <file> <prefix> [-n <limit>]
+    colex prefix <file> <prefix> [-n <limit>] [--resident]
                                        complete a prefix; the query a
                                        hierarchical key such as an address is
-                                       for
+                                       for. --resident holds the whole
+                                       dictionary, so a lookup costs no read
     colex verify <file> [--source <p>] check the whole file, and its provenance
 
     colex --version
@@ -163,14 +164,18 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
 }
 
 fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {
-    let limit = match flags {
-        [] => 20,
-        ["-n", value] | ["--limit", value] => value
-            .parse()
-            .map_err(|_| Error::Usage(format!("limit needs a number, not '{value}'")))?,
-        _ => return Err(Error::Usage("prefix takes at most -n <limit>".into())),
-    };
-    prefix::run(path.as_ref(), needle, limit)
+    let mut limit = 20;
+    let mut resident = false;
+    let mut rest = flags;
+    while let Some((flag, tail)) = rest.split_first() {
+        rest = tail;
+        match *flag {
+            "--resident" => resident = true,
+            "-n" | "--limit" => limit = take_number(flag, &mut rest)? as usize,
+            other => return Err(Error::Usage(format!("unknown option '{other}'"))),
+        }
+    }
+    prefix::run(path.as_ref(), needle, limit, resident)
 }
 
 fn verify_command(path: &str, flags: &[&str]) -> Result<(), Error> {

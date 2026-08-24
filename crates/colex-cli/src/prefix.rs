@@ -7,14 +7,21 @@
 use std::path::Path;
 
 use colex_meta::Meta;
-use colex_read::{block_on::block_on, CountingReader, Index, RangeReader, SliceReader};
+use colex_read::{
+    block_on::block_on, CountingReader, Index, OpenOptions, RangeReader, SliceReader,
+};
 
 use crate::corpus::Tokenizer;
 use crate::info::Error;
 
-pub fn run(path: &Path, query: &str, limit: usize) -> Result<(), Error> {
+pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
-    let index = block_on(Index::open(&reader))?;
+    let index = block_on(Index::open_with(
+        &reader,
+        OpenOptions {
+            resident_dictionary: resident,
+        },
+    ))?;
     let open_reads = reader.reads();
 
     // The query has to go through whatever the terms went through, or it will

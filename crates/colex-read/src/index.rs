@@ -70,6 +70,22 @@ pub struct Match {
     pub payload: Payload,
 }
 
+/// How much of the file to hold rather than fetch.
+///
+/// The format supports both without changing: blocks are independently
+/// decodable and the offsets that locate them are resident either way. Which to
+/// use is a deployment question — see `SPEC.md` §4.2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpenOptions {
+    /// Hold the whole term dictionary, compressed, and decompress one block per
+    /// lookup instead of fetching it.
+    ///
+    /// Costs one read at open and the dictionary's stored size in memory —
+    /// 864 KB for 1,744,962 Tokyo addresses — and makes a term lookup cost no
+    /// range read at all.
+    pub resident_dictionary: bool,
+}
+
 /// An open COLex file.
 ///
 /// Everything resident is held here; everything else is fetched per query.
@@ -84,11 +100,18 @@ pub struct Index<R> {
     payload_offsets: Vec<u8>,
     term_blocks_codec: SectionCodec,
     payload_codec: SectionCodec,
+    /// The whole term blocks section, if it is being held rather than fetched.
+    term_blocks: Option<(u64, Vec<u8>)>,
 }
 
 impl<R: RangeReader> Index<R> {
     /// Opens a file, loading the resident set.
     pub async fn open(reader: R) -> Result<Self> {
+        Self::open_with(reader, OpenOptions::default()).await
+    }
+
+    /// Opens a file, choosing how much of it to hold.
+    pub async fn open_with(reader: R, options: OpenOptions) -> Result<Self> {
         let prefix_len = OPEN_PREFIX.min(u32::try_from(reader.file_len()).unwrap_or(u32::MAX));
         let prefix = reader.read_range(0, prefix_len).await?;
 
@@ -169,6 +192,21 @@ impl<R: RangeReader> Index<R> {
             SectionCodec::Raw
         };
 
+        let term_blocks = if options.resident_dictionary {
+            let section = find(&sections, SectionId::TERM_BLOCKS)?;
+            let len = u32::try_from(section.length).map_err(|_| Error::Malformed {
+                detail: "the term dictionary is too large to hold",
+            })?;
+            // Held as stored. Decompressing it here would cost twenty times the
+            // memory to save a millisecond a lookup.
+            Some((
+                section.offset,
+                reader.read_range(section.offset, len).await?,
+            ))
+        } else {
+            None
+        };
+
         Ok(Index {
             header,
             meta: resident.remove(&SectionId::META).expect("required above"),
@@ -183,6 +221,7 @@ impl<R: RangeReader> Index<R> {
                 .unwrap_or_default(),
             term_blocks_codec,
             payload_codec,
+            term_blocks,
             sections,
             reader,
         })
@@ -215,7 +254,19 @@ impl<R: RangeReader> Index<R> {
     pub async fn read_term_block(&self, ordinal: u32) -> Result<Vec<u8>> {
         let block_count = TermIndex::new(&self.term_index)?.block_count();
         let (offset, len) = self.term_block_bounds(ordinal, block_count)?;
-        let bytes = self.reader.read_range(offset, len).await?;
+        let bytes = match &self.term_blocks {
+            Some((start, held)) => {
+                let at = usize::try_from(offset - start).map_err(|_| Error::Malformed {
+                    detail: "term block lies outside the section",
+                })?;
+                held.get(at..at + len as usize)
+                    .ok_or(Error::Malformed {
+                        detail: "term block lies outside the section",
+                    })?
+                    .to_vec()
+            }
+            None => self.reader.read_range(offset, len).await?,
+        };
         decode_unit(self.term_blocks_codec, bytes)
     }
 
