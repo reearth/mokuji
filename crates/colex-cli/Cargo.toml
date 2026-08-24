@@ -1,0 +1,20 @@
+[package]
+name = "colex-cli"
+description = "Command line tools for the COLex format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "colex"
+path = "src/main.rs"
+
+[dependencies]
+colex-format.workspace = true
+colex-read.workspace = true
+
+[lints]
+workspace = true

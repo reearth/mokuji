@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/colex-format",
+    "crates/colex-codec",
+    "crates/colex-read",
+    "crates/colex-write",
+    "crates/colex-cli",
+    "crates/colex-wasm",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/reearth/colex"
+authors = ["Eukarya Inc."]
+
+[workspace.dependencies]
+colex-format = { path = "crates/colex-format", version = "0.0.0" }
+colex-codec = { path = "crates/colex-codec", version = "0.0.0" }
+colex-read = { path = "crates/colex-read", version = "0.0.0" }
+colex-write = { path = "crates/colex-write", version = "0.0.0" }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
