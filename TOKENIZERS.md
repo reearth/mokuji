@@ -127,6 +127,38 @@ program, a Worker that can call `Intl.Segmenter` — a morphological or ICU-base
 tokenizer will do better, and belongs in this registry under its own
 identifier.
 
+## Why there is no ICU or morphological entry
+
+There is an obvious candidate for a better Japanese tokenizer than `bigram`.
+V8 ships ICU, so `Intl.Segmenter("ja", {granularity: "word"})` segments Japanese
+in every browser and in Cloudflare Workers with nothing bundled, and ICU4X does
+the same in Rust. It looks like a tokenizer that could be registered here and
+implemented everywhere.
+
+Measured, the two do not agree. Over 4,000 lines of the PLATEAU specification:
+
+| | |
+|---|---|
+| Lines segmented identically | 82.8% |
+| Terms produced by V8 and not by ICU4X on the same line | 3.3% |
+| Shared vocabulary | 94% of the union |
+
+Most of the disagreement is grammatical fragments, but not all of it: V8 gives
+`ユース` `ケース` where ICU4X gives `ユースケース`, and a technical corpus is
+full of katakana compounds. A term that one implementation produces and the
+other does not is a term the second cannot find.
+
+A registry entry has to define the token boundary precisely enough that two
+implementations produce the same tokens (see the registration rules above), and
+"whatever ICU does" does not, because ICU is a moving target with versions and
+data behind it. The same argument rules out naming a morphological analyzer:
+`kuromoji` means a particular dictionary at a particular version.
+
+None of this stops a pipeline from using them. It means the identifier is
+private — `x-icu-word-v8`, say — which is exactly what a private identifier is
+for: it says the index is reachable by readers that share the implementation,
+and honestly says nothing more.
+
 ## Reserved
 
 Nothing is currently reserved.
