@@ -12,8 +12,11 @@ cd ../web && python3 serve.py --index ../addresses/addresses.colex
 Then open <http://localhost:8787/> and type a prefix. The panel counts the
 range requests as you type.
 
-Completing a prefix over 300,000 addresses costs **three `Range` requests and
-about 700 bytes** from a 3.8 MB file, and the same three at any file size.
+Completing a prefix over 300,000 addresses costs **two `Range` requests and
+541 bytes** from a 1.9 MB file, and the same two at any file size. One fetches
+the dictionary block, one fetches the payload; there is no postings request at
+all, because in an index of a dictionary the entry states its own postings
+(`SPEC.md` §5.3.4).
 
 ## Why there is no WebAssembly here
 

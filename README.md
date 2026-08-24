@@ -92,9 +92,9 @@ hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 cd demo/addresses && ./run.sh
 ```
 
-Against 300,000 addresses in a 3.8 MB file, completing a prefix costs **three
-range reads and about 700 bytes** — and costs the same three at any file size,
-because a contiguous range of terms is contiguous in every section at once. See
+Against 300,000 addresses in a 1.9 MB file, completing a prefix costs **two
+range reads and 541 bytes** — and costs the same two at any file size, because a
+contiguous range of terms is contiguous in every section at once. See
 [demo/addresses](demo/addresses) for the measurements, and for what they do and
 do not show.
 

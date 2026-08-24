@@ -301,16 +301,32 @@ export class ColexIndex {
     return found;
   }
 
-  /** Postings for a contiguous range of entries, in one request. */
+  // The postings a dictionary entry implies by carrying no run (SPEC.md
+  // §5.3.4): the term names one document, whose ID is the term's own, once.
+  implied(entry) {
+    if (entry.docFreq !== 1) throw new Error("implied postings need a doc_freq of 1");
+    if (entry.termId >= this.numDocs) throw new Error("implied postings name a missing document");
+    return { docs: [entry.termId], freqs: [1] };
+  }
+
+  /** Postings for a contiguous range of entries, in one request — or none. */
   async postingsSpan(entries) {
     if (entries.length === 0) return [];
-    const first = entries[0];
-    const last = entries[entries.length - 1];
-    const start = first.postingsOffset;
-    const span = await this.read(start, last.postingsOffset + last.postingsLength - start);
+    // Entries with implied postings contribute no bytes, so an index of a
+    // dictionary spends no request here at all.
+    const stored = entries.filter((e) => e.postingsLength > 0);
+    let start = 0;
+    let span = null;
+    if (stored.length > 0) {
+      const first = stored[0];
+      const last = stored[stored.length - 1];
+      start = first.postingsOffset;
+      span = await this.read(start, last.postingsOffset + last.postingsLength - start);
+    }
 
     const hasFreqs = Boolean(this.flags & FLAG_HAS_FREQS);
     return entries.map((entry) => {
+      if (entry.postingsLength === 0) return this.implied(entry);
       const at = entry.postingsOffset - start;
       const cursor = new Cursor(span.subarray(at, at + entry.postingsLength));
       if (cursor.bytes[cursor.pos++] !== 0) throw new Error("unsupported postings codec");

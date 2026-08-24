@@ -14,11 +14,11 @@ colex prefix addresses.colex "東京都上足立区丸の内一丁目"
 ...
 8 match(es)
 open:     2 read(s)
-query:    3 read(s) total - 1 dictionary, 1 postings, 1 payload
-bytes:    600 of 3995624
+query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
+bytes:    541 of 1957831
 ```
 
-Three range reads and 600 bytes, from a 4 MB file. Nothing was running.
+Two range reads and 541 bytes, from a 2 MB file. Nothing was running.
 
 ## Why prefix and not search
 
@@ -40,18 +40,21 @@ section at once.
 
 | Results | Dictionary | Postings | Payload | Total reads | Bytes |
 |---|---|---|---|---|---|
-| 8 | 1 | 1 | 1 | 3 | 600 B |
-| 20 | 1 | 1 | 1 | 3 | 684 B |
-| 100 | 2 | 1 | 2 | 5 | 1.7 KB |
-| 500 | 5 | 1 | 8 | 14 | 7.0 KB |
-| 2,000 | 17 | 1 | 32 | 50 | 27 KB |
+| 8 | 1 | 0 | 1 | 2 | 541 B |
+| 20 | 1 | 0 | 1 | 2 | 541 B |
+| 100 | 2 | 0 | 2 | 4 | 1.0 KB |
+| 500 | 5 | 0 | 7 | 12 | 3.5 KB |
+| 2,000 | 17 | 0 | 32 | 49 | 13 KB |
 
 Opening the file costs 2 reads and is paid once.
 
 The dictionary column is `ceil(results / 128) + 1` and the payload column is
-`ceil(results / 64)`, which is what `SPEC.md` §4.1 states. **Postings is always
-1**, at every scale, because a contiguous term range has a contiguous run
-range.
+`ceil(results / 64)`, which is what `SPEC.md` §4.1 states.
+
+**Postings is always 0.** Every term here names exactly the one record that is
+about it, and its document ID is its own term ID, so the dictionary entry states
+the postings and none are stored (`SPEC.md` §5.3.4). The section is present with
+a length of zero.
 
 Nothing here grows with the size of the file. The same query costs the same
 three reads against 300,000 addresses or 19 million.
@@ -68,15 +71,15 @@ meta                    261 B    261 B    raw     resident
 term_index              5.5 KB    77 KB   deflate resident
 term_block_offsets       19 KB    19 KB   raw     resident
 payload_offsets          37 KB    37 KB   raw     resident
-postings                2.0 MB   2.0 MB   raw
-term_blocks              574 KB  4.1 MB   deflate
+postings                    0    2.0 MB   raw     implied
+term_blocks              570 KB  4.1 MB   deflate
 payload                 1.3 MB   5.7 MB   deflate
                         ------  ------
-                        3.8 MB  12.0 MB   from a 20 MB corpus
+                        1.9 MB  12.0 MB   from a 20 MB corpus
 ```
 
 Building takes 0.7 s; `colex verify`, which reads and decodes every block,
-takes 2.3 s.
+takes about 2 s.
 
 The offset tables and the metadata are stored raw on purpose. Metadata stays
 readable without a decompressor because it is the provenance record, and
@@ -119,10 +122,9 @@ prefixes than real ones do. Front-coding therefore does better here than it
 will on the national address base registry. Treat 13.8 bytes per address as a
 lower bound, not an estimate.
 
-**Postings are almost pure redundancy in this index, and now they dominate it.**
-With one term per document, the postings section says nothing but "term *i*
-names document *i*". It cannot be compressed — its addressed unit is a single
-term's seven-byte run — so it is now **more than half the file**: 2.0 MB of
-3.8 MB, having been a sixth of it before the other sections shrank. A codec
-that recognized the identity mapping would delete it outright. That is not in
-the specification, and this is the measurement that argues it should be.
+**Payload is now most of the file.** 1.3 MB of 1.9 MB, and it is coordinate
+text: eighteen ASCII characters per record where a pair of scaled integers would
+be eight bytes before compression. The format has nothing to say about that —
+payload contents are outside the specification (`SPEC.md` §5.5) — but an address
+product would encode coordinates rather than print them, and that is where the
+next large saving is.
