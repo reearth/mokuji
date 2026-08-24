@@ -15,6 +15,12 @@ pub enum Error {
     Format(colex_format::Error),
     /// A search was asked for with no terms.
     NoTerms,
+    /// The input corpus could not be read.
+    Corpus(String),
+    /// The file parses, but says something untrue about itself.
+    Invalid(String),
+    /// The command line could not be understood.
+    Usage(String),
 }
 
 impl fmt::Display for Error {
@@ -23,6 +29,9 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "{e}"),
             Error::Format(e) => write!(f, "{e}"),
             Error::NoTerms => write!(f, "search needs at least one term"),
+            Error::Corpus(detail) => write!(f, "{detail}"),
+            Error::Invalid(detail) => write!(f, "{detail}"),
+            Error::Usage(detail) => write!(f, "{detail}"),
         }
     }
 }

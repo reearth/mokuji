@@ -14,7 +14,14 @@ path = "src/main.rs"
 
 [dependencies]
 colex-format.workspace = true
+colex-meta.workspace = true
 colex-read.workspace = true
+colex-write.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+
 
 [lints]
 workspace = true
