@@ -86,10 +86,10 @@ open: 1 read(s)
 query: 5 read(s), bound 5
 ```
 
-## Two shapes on one layout
+## Three shapes on one layout
 
-A geocoder and a full-text search differ in nearly everything a user would
-notice. What counts as a term. Whether a term names one record or thousands.
+A geocoder, a place-name search and a full-text search differ in nearly
+everything a user would notice. What counts as a term. Whether a term names one record or thousands.
 What the payload means. Whether results come back ranked. What a query even
 looks like — a prefix in one case, an intersection in the other.
 
@@ -108,8 +108,12 @@ writer and read by the same reader:
 | Index | 7.1 MB | 3.1 MB |
 | A query | prefix, **3 reads**, 1.1 KB | two terms ranked, **21 reads**, 57 KB |
 
-Both are reproducible: [demo/addresses](demo/addresses) and
-[demo/documents](demo/documents).
+A gazetteer is the third: [demo/poi](demo/poi) indexes 98,187 Japanese places
+under all their names at once, with coordinates in attribute columns rather than
+payload, because a place needs a name to show as well as a position to return.
+
+All three are reproducible: [demo/addresses](demo/addresses),
+[demo/poi](demo/poi), [demo/documents](demo/documents).
 
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are

@@ -14,7 +14,13 @@ use crate::corpus::Tokenizer;
 use crate::info::Error;
 
 /// Intersects `terms` against the index at `path`, reporting what it cost.
-pub fn run(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
+pub fn run(
+    path: &Path,
+    terms: &[&str],
+    limit: usize,
+    boost: Option<&str>,
+    length_norm: f64,
+) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
@@ -39,7 +45,15 @@ pub fn run(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
     }
     reader.reset();
 
-    let ranked = block_on(rank(&index, &terms))?;
+    let column = match boost {
+        Some(name) => Some(index.column(name).ok_or_else(|| {
+            Error::Invalid(format!(
+                "this index carries no attribute column called '{name}'"
+            ))
+        })?),
+        None => None,
+    };
+    let ranked = block_on(rank(&index, &terms, column, length_norm))?;
     let after_postings = reader.reads();
 
     let shown: Vec<u64> = ranked.iter().take(limit).map(|(doc, _)| *doc).collect();
@@ -58,7 +72,10 @@ pub fn run(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
         ranked.len(),
         shown.len(),
         if index.doc_lengths().is_some() {
-            ", ranked by BM25"
+            match boost {
+                Some(_) => ", ranked by BM25 and a static prior",
+                None => ", ranked by BM25",
+            }
         } else {
             ", unranked: this index carries no document lengths"
         }
@@ -84,6 +101,8 @@ pub fn run(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
 async fn rank<R: RangeReader>(
     index: &Index<R>,
     terms: &[String],
+    boost: Option<&mokuji_read::Column>,
+    length_norm: f64,
 ) -> Result<Vec<(u64, Option<f64>)>, Error> {
     let mut runs = Vec::with_capacity(terms.len());
     for term in terms {
@@ -108,10 +127,10 @@ async fn rank<R: RangeReader>(
     let n = header.num_docs as f64;
     let avgdl = header.avg_doclen().unwrap_or(1.0).max(1.0);
 
-    // Robertson and Sparck Jones' usual constants. They are tuning, which is
+    // Robertson and Sparck Jones' usual constant. Tuning, which is
     // corpus-dependent, which is why none of this is in the format.
     const K1: f64 = 1.2;
-    const B: f64 = 0.75;
+    let b = length_norm;
 
     let mut scored: Vec<(u64, Option<f64>)> = matched
         .into_iter()
@@ -127,10 +146,17 @@ async fn rank<R: RangeReader>(
                         .binary_search(&doc)
                         .expect("in the intersection");
                     let tf = postings.freqs[at] as f64;
-                    idf * (tf * (K1 + 1.0)) / (tf + K1 * (1.0 - B + B * dl / avgdl))
+                    idf * (tf * (K1 + 1.0)) / (tf + K1 * (1.0 - b + b * dl / avgdl))
                 })
                 .sum();
-            (doc, Some(score))
+            // A static prior, added in log space. Which prior, and how much of
+            // it, is tuning — which is why the format supplies the column and
+            // says nothing about what to do with it.
+            let prior = boost.map_or(0.0, |column| {
+                let value = column.values.get(doc as usize).copied().unwrap_or(0);
+                (1.0 + value.max(0) as f64).ln()
+            });
+            (doc, Some(score + prior))
         })
         .collect();
 

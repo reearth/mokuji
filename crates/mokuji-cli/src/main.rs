@@ -32,7 +32,8 @@ usage:
 
     mokuji dump <file>                  write the index back out as a corpus
     mokuji info <file>                  print the header and section table
-    mokuji search <file> <term>... [-n <limit>]
+    mokuji search <file> <term>... [-n <limit>] [--boost <column>]
+                                   [--length-norm <0..1>]
                                        intersect terms, rank them if the file
                                        carries document lengths, and report the
                                        cost
@@ -184,16 +185,37 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
 
 fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
     let mut limit = 10;
+    let mut boost: Option<&str> = None;
+    let mut length_norm = 0.75;
     let mut terms: Vec<&str> = Vec::new();
     let mut rest = args;
     while let Some((arg, tail)) = rest.split_first() {
         rest = tail;
         match *arg {
             "-n" | "--limit" => limit = take_number(arg, &mut rest)? as usize,
+            "--length-norm" => {
+                let (value, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--length-norm needs a value".into()))?;
+                rest = tail;
+                length_norm = value.parse::<f64>().map_err(|_| {
+                    Error::Usage(format!("'{value}' is not a number between 0 and 1"))
+                })?;
+                if !(0.0..=1.0).contains(&length_norm) {
+                    return Err(Error::Usage("--length-norm is between 0 and 1".into()));
+                }
+            }
+            "--boost" => {
+                let (name, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--boost needs a column name".into()))?;
+                rest = tail;
+                boost = Some(name);
+            }
             other => terms.push(other),
         }
     }
-    search::run(path.as_ref(), &terms, limit)
+    search::run(path.as_ref(), &terms, limit, boost, length_norm)
 }
 
 fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {
