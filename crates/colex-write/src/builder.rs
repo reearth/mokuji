@@ -12,9 +12,13 @@ use colex_format::{
 pub struct Options {
     /// Terms per dictionary block.
     ///
-    /// Trades the size of the resident term index against the cost of scanning
-    /// one block. Both are reader-visible, so it is recorded rather than
-    /// chosen by the reader.
+    /// Trades bytes per lookup against the size of the dictionary, and both
+    /// against the size of the resident term index. Larger blocks give the
+    /// compressor more to work with and fewer boundaries to record: measured on
+    /// 1,744,962 Tokyo addresses, 128 terms a block costs 1.58 bytes a term and
+    /// 435 bytes a query, while 1024 costs 0.50 and 725. Bigger blocks also
+    /// *reduce* the read count for a query with many results, since more of
+    /// them fall in one block.
     pub terms_per_block: usize,
     /// Documents per payload block.
     ///
@@ -42,7 +46,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            terms_per_block: 128,
+            terms_per_block: 1024,
             docs_per_payload_block: 64,
             has_freqs: true,
             payload: PayloadEncoding::Opaque,
