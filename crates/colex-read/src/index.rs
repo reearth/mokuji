@@ -127,6 +127,26 @@ impl<R: RangeReader> Index<R> {
         &self.meta
     }
 
+    /// The resident term index.
+    pub fn term_index(&self) -> Result<TermIndex<'_>> {
+        TermIndex::new(&self.term_index)
+    }
+
+    /// Reads one term block whole, at a cost of one range read.
+    pub async fn read_term_block(&self, ordinal: u32) -> Result<Vec<u8>> {
+        let block_count = TermIndex::new(&self.term_index)?.block_count();
+        let (offset, len) = self.term_block_bounds(ordinal, block_count)?;
+        self.reader.read_range(offset, len).await
+    }
+
+    /// Reads one document's payload.
+    ///
+    /// Each call reads a block. A query goes through [`Index::search`] instead,
+    /// which shares a block between documents adjacent in ID order.
+    pub async fn read_payload(&self, doc: u64) -> Result<Vec<u8>> {
+        self.payload(doc, &mut PayloadCache::default()).await
+    }
+
     /// Looks a term up, at a cost of one range read.
     pub async fn lookup(&self, term: &[u8]) -> Result<Option<TermEntry>> {
         let index = TermIndex::new(&self.term_index)?;

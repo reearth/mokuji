@@ -39,6 +39,22 @@ impl<'a> TermIndex<'a> {
         self.block_count
     }
 
+    /// Every boundary key, in order.
+    ///
+    /// Used to check that a block actually begins with the key the index
+    /// claims for it, which a query has no reason to verify but a whole-file
+    /// walk does.
+    pub fn keys(&self) -> Result<Vec<Vec<u8>>> {
+        let mut key = Vec::new();
+        let mut pos = 4;
+        let mut out = Vec::with_capacity(self.block_count as usize);
+        for _ in 0..self.block_count {
+            pos = front_coded::decode_into(self.bytes, pos, &mut key)?;
+            out.push(key.clone());
+        }
+        Ok(out)
+    }
+
     /// The ordinal of the only block that can contain `term`.
     ///
     /// `None` means `term` sorts before the first block and is therefore
@@ -117,4 +133,58 @@ pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
         previous.extend_from_slice(&key);
     }
     Ok(None)
+}
+
+/// Decodes every entry of a term block.
+///
+/// A query stops at the term it wants; this reads the block out in full, which
+/// is what a verification pass needs.
+pub fn decode_block(block: &[u8]) -> Result<Vec<(Vec<u8>, TermEntry)>> {
+    let (count, mut pos) = varint::decode(block)?;
+    let (first_term_id, next) = varint::decode(&block[pos..])?;
+    pos += next;
+
+    let mut out = Vec::with_capacity(count.min(1024) as usize);
+    let mut key = Vec::new();
+    let mut postings_offset: Option<u64> = None;
+    for i in 0..count {
+        pos = front_coded::decode_into(block, pos, &mut key)?;
+        if let Some((previous, _)) = out.last() {
+            if &key <= previous {
+                return Err(Error::Malformed {
+                    detail: "terms within a block are not strictly increasing",
+                });
+            }
+        }
+
+        let (doc_freq, n) = varint::decode(&block[pos..])?;
+        pos += n;
+        let (delta, n) = varint::decode(&block[pos..])?;
+        pos += n;
+        let offset = match postings_offset {
+            None => delta,
+            Some(previous) => previous.checked_add(delta).ok_or(Error::Malformed {
+                detail: "postings offset delta overflows",
+            })?,
+        };
+        postings_offset = Some(offset);
+        let (postings_len, n) = varint::decode(&block[pos..])?;
+        pos += n;
+
+        out.push((
+            key.clone(),
+            TermEntry {
+                term_id: first_term_id + i,
+                doc_freq,
+                postings_offset: offset,
+                postings_len,
+            },
+        ));
+    }
+    if pos != block.len() {
+        return Err(Error::Malformed {
+            detail: "trailing bytes in term block",
+        });
+    }
+    Ok(out)
 }
