@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use colex_format::{parse_section_table, Header, SectionId};
 use colex_read::{block_on::block_on, CountingReader, Index, SliceReader};
 use serde::Deserialize;
 
@@ -119,11 +120,23 @@ fn a_term_before_every_block_costs_no_read_at_all() {
 #[test]
 fn doc_freq_and_the_postings_run_must_agree() {
     let mut bytes = load("tiny");
-    // Term block 0 begins at offset 600; the first entry's doc_freq is the
-    // twelfth byte of it. Claiming two documents for a run holding one must be
-    // caught rather than trusted.
-    assert_eq!(bytes[611], 1);
-    bytes[611] = 2;
+    let header = Header::parse(&bytes).unwrap();
+    let start = header.section_table_offset as usize;
+    let end = start + header.section_table_len as usize;
+    let sections = parse_section_table(&bytes[start..end], header.section_count).unwrap();
+    let blocks = sections
+        .iter()
+        .find(|s| s.id == SectionId::TERM_BLOCKS)
+        .unwrap();
+
+    // The first block is `entry_count`, `first_term_id`, then the first entry:
+    // a front-coded key of `chiyoda` in nine bytes, then its `doc_freq`.
+    let doc_freq = blocks.offset as usize + 2 + 2 + 7;
+    assert_eq!(bytes[doc_freq], 1);
+    // Claiming two documents for a run holding one must be caught rather than
+    // trusted: the dictionary and the postings are separate sections, and
+    // nothing but this check ties them together.
+    bytes[doc_freq] = 2;
 
     let index = block_on(Index::open(SliceReader::new(bytes))).unwrap();
     assert!(block_on(index.search(&[b"chiyoda"])).is_err());

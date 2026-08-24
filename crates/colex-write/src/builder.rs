@@ -1,4 +1,4 @@
-use colex_codec::{bitpack, front_coded, varint};
+use colex_codec::{bitpack, block, front_coded, varint};
 use colex_format::{
     Error, Flags, Header, Result, SectionCodec, SectionEntry, SectionId, HEADER_LEN,
     SECTION_ENTRY_LEN, SPEC_MAJOR, SPEC_MINOR,
@@ -25,6 +25,13 @@ pub struct Options {
     /// An address dictionary, where a term occurs at most once per document,
     /// omits them rather than storing a run of ones.
     pub has_freqs: bool,
+    /// Whether to compress the sections that can be compressed.
+    ///
+    /// Each addressed unit is compressed on its own, so a reader still fetches
+    /// one block and decompresses one block. A section whose units do not
+    /// shrink is stored raw instead, which is decided per section rather than
+    /// per block because the codec is recorded per section.
+    pub compress: bool,
 }
 
 impl Default for Options {
@@ -33,6 +40,7 @@ impl Default for Options {
             terms_per_block: 128,
             docs_per_payload_block: 64,
             has_freqs: true,
+            compress: true,
         }
     }
 }
@@ -149,7 +157,7 @@ impl Builder {
         }
 
         let term_chunks: Vec<&[Term]> = self.terms.chunks(self.options.terms_per_block).collect();
-        let payload_blocks: Vec<Vec<u8>> = self
+        let raw_payload_blocks: Vec<Vec<u8>> = self
             .payloads
             .chunks(self.options.docs_per_payload_block as usize)
             .map(|group| {
@@ -162,6 +170,7 @@ impl Builder {
                 block
             })
             .collect();
+        let (payload_blocks, payload_codec) = self.pack(raw_payload_blocks)?;
 
         let mut term_index = (term_chunks.len() as u32).to_le_bytes().to_vec();
         let mut previous: &[u8] = b"";
@@ -170,55 +179,55 @@ impl Builder {
             front_coded::encode(first, previous, &mut term_index);
             previous = first;
         }
+        // The term index depends on nothing but the terms, so compressing it
+        // cannot disturb the layout.
+        let (term_index, term_index_codec) = self.pack_one(term_index)?;
 
-        // A term block entry carries an absolute postings offset, and the
-        // postings section sits after the term blocks, so each size depends on
-        // the other. Both shrink as the guess improves, so iterating reaches a
-        // fixed point; eight rounds is far beyond what a varint width can need.
+        // Postings are placed before the term blocks that point into them, so
+        // that a postings offset is known before any term block is built. With
+        // the opposite order each depends on the size of the other, and once
+        // the blocks are compressed that dependency has no fixed point to find:
+        // a changed offset changes a varint, which changes what deflate emits,
+        // which moves the offset again. Ordering the file to make it writable
+        // in one pass is cheaper than iterating toward a layout that may not
+        // settle.
         let order = [
             SectionId::META,
             SectionId::TERM_INDEX,
             SectionId::TERM_BLOCK_OFFSETS,
             SectionId::PAYLOAD_OFFSETS,
-            SectionId::TERM_BLOCKS,
             SectionId::POSTINGS,
+            SectionId::TERM_BLOCKS,
             SectionId::PAYLOAD,
         ];
         let table_len = SECTION_ENTRY_LEN * order.len();
-        let head = (HEADER_LEN + table_len) as u64;
 
-        let mut postings_base = 0u64;
-        let (blocks, placed) = loop {
-            let blocks = self.term_blocks(&term_chunks, postings_base);
-            let sizes = |id: SectionId| -> u64 {
-                match id {
-                    SectionId::META => meta.len() as u64,
-                    SectionId::TERM_INDEX => term_index.len() as u64,
-                    SectionId::TERM_BLOCK_OFFSETS => 8 * (term_chunks.len() as u64 + 1),
-                    SectionId::PAYLOAD_OFFSETS => 8 + 8 * (payload_blocks.len() as u64 + 1),
-                    SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
-                    SectionId::POSTINGS => self.terms.iter().map(|t| t.run.len() as u64).sum(),
-                    SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
-                    _ => unreachable!("only the sections in `order` are sized"),
-                }
+        let postings_len: u64 = self.terms.iter().map(|t| t.run.len() as u64).sum();
+        let postings_at = (HEADER_LEN + table_len) as u64
+            + meta.len() as u64
+            + term_index.len() as u64
+            + 8 * (term_chunks.len() as u64 + 1)
+            + 8
+            + 8 * (payload_blocks.len() as u64 + 1);
+
+        let (blocks, term_blocks_codec) = self.pack(self.term_blocks(&term_chunks, postings_at))?;
+
+        let mut placed = Vec::new();
+        let mut cursor = (HEADER_LEN + table_len) as u64;
+        for id in order {
+            let length = match id {
+                SectionId::META => meta.len() as u64,
+                SectionId::TERM_INDEX => term_index.len() as u64,
+                SectionId::TERM_BLOCK_OFFSETS => 8 * (term_chunks.len() as u64 + 1),
+                SectionId::PAYLOAD_OFFSETS => 8 + 8 * (payload_blocks.len() as u64 + 1),
+                SectionId::POSTINGS => postings_len,
+                SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
+                SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
+                _ => unreachable!("only the sections in `order` are sized"),
             };
-
-            let mut placed = Vec::new();
-            let mut cursor = head;
-            for id in order {
-                placed.push((id, cursor, sizes(id)));
-                cursor += sizes(id);
-            }
-            let postings_at = placed
-                .iter()
-                .find(|(id, _, _)| *id == SectionId::POSTINGS)
-                .map(|(_, offset, _)| *offset)
-                .expect("postings is in `order`");
-            if postings_at == postings_base {
-                break (blocks, placed);
-            }
-            postings_base = postings_at;
-        };
+            placed.push((id, cursor, length));
+            cursor += length;
+        }
 
         let at = |id: SectionId| {
             placed
@@ -227,6 +236,7 @@ impl Builder {
                 .map(|(_, offset, len)| (*offset, *len))
                 .expect("every section in `order` is placed")
         };
+        debug_assert_eq!(at(SectionId::POSTINGS).0, postings_at);
 
         let term_block_offsets = offset_table(at(SectionId::TERM_BLOCKS).0, &blocks);
         let mut payload_offsets = self.options.docs_per_payload_block.to_le_bytes().to_vec();
@@ -252,13 +262,27 @@ impl Builder {
         // The table is sorted by identifier, which is not the order the
         // sections are written in: the resident ones go first so that a cold
         // start can fetch them in one read (SPEC.md §4, §5.2).
+        let codec_of = |id: SectionId| match id {
+            SectionId::TERM_INDEX => term_index_codec,
+            SectionId::TERM_BLOCKS => term_blocks_codec,
+            SectionId::PAYLOAD => payload_codec,
+            // Metadata stays readable without a decompressor, which is worth
+            // more than the bytes: it is the provenance record, and tooling
+            // that only wants to know where a file came from should not need
+            // to implement the format to find out.
+            //
+            // The offset tables stay raw because their size feeds back into
+            // the placement they describe. Compressing them is possible and
+            // worthwhile, and wants a settled layout to be built on.
+            _ => SectionCodec::Raw,
+        };
         let mut sorted = placed.clone();
         sorted.sort_by_key(|(id, _, _)| *id);
         for (id, offset, length) in &sorted {
             out.extend_from_slice(
                 &SectionEntry {
                     id: *id,
-                    codec: SectionCodec::Raw,
+                    codec: codec_of(*id),
                     offset: *offset,
                     length: *length,
                 }
@@ -283,6 +307,31 @@ impl Builder {
             }
         }
         Ok(out)
+    }
+
+    /// Compresses each unit, or leaves them all raw if that is no smaller.
+    ///
+    /// Decided per section, since the codec is recorded per section: a file
+    /// cannot say "these blocks are deflated and those are not".
+    fn pack(&self, units: Vec<Vec<u8>>) -> Result<(Vec<Vec<u8>>, SectionCodec)> {
+        if !self.options.compress {
+            return Ok((units, SectionCodec::Raw));
+        }
+        let raw: usize = units.iter().map(Vec::len).sum();
+        let packed = units
+            .iter()
+            .map(|unit| block::compress(unit))
+            .collect::<Result<Vec<_>>>()?;
+        if packed.iter().map(Vec::len).sum::<usize>() < raw {
+            Ok((packed, SectionCodec::Deflate))
+        } else {
+            Ok((units, SectionCodec::Raw))
+        }
+    }
+
+    fn pack_one(&self, unit: Vec<u8>) -> Result<(Vec<u8>, SectionCodec)> {
+        let (mut units, codec) = self.pack(vec![unit])?;
+        Ok((units.remove(0), codec))
     }
 
     fn term_blocks(&self, chunks: &[&[Term]], postings_base: u64) -> Vec<Vec<u8>> {

@@ -8,5 +8,6 @@
 //! no notion of sections, offsets, or I/O.
 
 pub mod bitpack;
+pub mod block;
 pub mod front_coded;
 pub mod varint;

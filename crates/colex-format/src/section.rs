@@ -26,8 +26,8 @@ impl SectionId {
     pub const PAYLOAD: SectionId = SectionId(0x0030);
     /// Document ID to payload block and index.
     pub const PAYLOAD_OFFSETS: SectionId = SectionId(0x0031);
-    /// Shared dictionary for block compression.
-    pub const ZSTD_DICT: SectionId = SectionId(0x0040);
+    /// Shared compression dictionary, for codecs that take one.
+    pub const SHARED_DICT: SectionId = SectionId(0x0040);
     /// Reserved for precomputed postings of frequent term pairs.
     pub const PAIR_CACHE: SectionId = SectionId(0x0050);
     /// Reserved for term positions.
@@ -51,7 +51,7 @@ impl SectionId {
             Self::POSTINGS => "postings",
             Self::PAYLOAD => "payload",
             Self::PAYLOAD_OFFSETS => "payload_offsets",
-            Self::ZSTD_DICT => "zstd_dict",
+            Self::SHARED_DICT => "shared_dict",
             Self::PAIR_CACHE => "pair_cache",
             Self::POSITIONS => "positions",
             _ => return None,
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn round_trips() {
         let e = SectionEntry {
-            codec: SectionCodec::ZstdWithDict,
+            codec: SectionCodec::Deflate,
             ..entry(0x0020, 4096)
         };
         assert_eq!(SectionEntry::parse(&e.encode()).unwrap(), e);

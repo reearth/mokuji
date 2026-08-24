@@ -26,11 +26,14 @@ fn corpus_strategy() -> impl Strategy<Value = Vec<Vec<usize>>> {
 }
 
 fn options_strategy() -> impl Strategy<Value = Options> {
-    (1..6usize, 1..6u32, any::<bool>()).prop_map(|(terms, docs, has_freqs)| Options {
-        terms_per_block: terms,
-        docs_per_payload_block: docs,
-        has_freqs,
-    })
+    (1..6usize, 1..6u32, any::<bool>(), any::<bool>()).prop_map(
+        |(terms, docs, has_freqs, compress)| Options {
+            terms_per_block: terms,
+            docs_per_payload_block: docs,
+            has_freqs,
+            compress,
+        },
+    )
 }
 
 /// Builds the index and the answer it is supposed to give.

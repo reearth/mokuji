@@ -250,55 +250,54 @@ def build():
         }
     )
 
-    # Term block entries carry absolute postings offsets, and the postings
-    # section sits after the term blocks, so the two sizes depend on each
-    # other. Both shrink monotonically toward a fixed point, so iterating to
-    # one terminates.
-    postings_base = 0
-    for _ in range(8):
-        offsets, cursor = {}, postings_base
-        for term in terms:
-            offsets[term] = cursor
-            cursor += len(runs[term])
+    # Postings are placed before the term blocks that point into them, so a
+    # postings offset is known before any term block is built. With the
+    # opposite order each depends on the size of the other, which has no fixed
+    # point once blocks are compressed.
+    order = [
+        SEC_META,
+        SEC_TERM_INDEX,
+        SEC_TERM_BLOCK_OFFSETS,
+        SEC_PAYLOAD_OFFSETS,
+        SEC_POSTINGS,
+        SEC_TERM_BLOCKS,
+        SEC_PAYLOAD,
+    ]
+    head = HEADER_LEN + SECTION_ENTRY_LEN * len(order)
+    postings_at = (
+        head
+        + len(meta)
+        + len(term_index)
+        + 8 * (len(term_chunks) + 1)
+        + 8
+        + 8 * (len(payload_blocks) + 1)
+    )
 
-        blocks, term_id = [], 0
-        for group in term_chunks:
-            entries = [(t, len(index[t]), len(runs[t])) for t in group]
-            blocks.append(
-                encode_term_block(entries, term_id, [offsets[t] for t in group])
-            )
-            term_id += len(group)
+    offsets, cursor = {}, postings_at
+    for term in terms:
+        offsets[term] = cursor
+        cursor += len(runs[term])
 
-        sizes = {
-            SEC_META: len(meta),
-            SEC_TERM_INDEX: len(term_index),
-            SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
-            SEC_PAYLOAD_OFFSETS: 8 + 8 * (len(payload_blocks) + 1),
-            SEC_TERM_BLOCKS: sum(len(b) for b in blocks),
-            SEC_POSTINGS: sum(len(runs[t]) for t in terms),
-            SEC_PAYLOAD: sum(len(b) for b in payload_blocks),
-        }
-        # Resident sections first, so a cold start can fetch them in one range
-        # read (SPEC section 4).
-        order = [
-            SEC_META,
-            SEC_TERM_INDEX,
-            SEC_TERM_BLOCK_OFFSETS,
-            SEC_PAYLOAD_OFFSETS,
-            SEC_TERM_BLOCKS,
-            SEC_POSTINGS,
-            SEC_PAYLOAD,
-        ]
-        placed, cursor = {}, HEADER_LEN + SECTION_ENTRY_LEN * len(order)
-        for sid in order:
-            placed[sid] = cursor
-            cursor += sizes[sid]
+    blocks, term_id = [], 0
+    for group in term_chunks:
+        entries = [(t, len(index[t]), len(runs[t])) for t in group]
+        blocks.append(encode_term_block(entries, term_id, [offsets[t] for t in group]))
+        term_id += len(group)
 
-        if placed[SEC_POSTINGS] == postings_base:
-            break
-        postings_base = placed[SEC_POSTINGS]
-    else:
-        raise RuntimeError("layout did not converge")
+    sizes = {
+        SEC_META: len(meta),
+        SEC_TERM_INDEX: len(term_index),
+        SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
+        SEC_PAYLOAD_OFFSETS: 8 + 8 * (len(payload_blocks) + 1),
+        SEC_POSTINGS: sum(len(runs[t]) for t in terms),
+        SEC_TERM_BLOCKS: sum(len(b) for b in blocks),
+        SEC_PAYLOAD: sum(len(b) for b in payload_blocks),
+    }
+    placed, cursor = {}, head
+    for sid in order:
+        placed[sid] = cursor
+        cursor += sizes[sid]
+    assert placed[SEC_POSTINGS] == postings_at
 
     term_block_offsets = b"".join(
         (placed[SEC_TERM_BLOCKS] + o).to_bytes(8, "little")

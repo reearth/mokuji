@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use colex_codec::varint;
+use colex_codec::{block, varint};
 use colex_format::{
     parse_section_table, Error, Flags, Header, Result, SectionCodec, SectionEntry, SectionId,
 };
@@ -49,6 +49,8 @@ pub struct Index<R> {
     term_index: Vec<u8>,
     term_block_offsets: Vec<u8>,
     payload_offsets: Vec<u8>,
+    term_blocks_codec: SectionCodec,
+    payload_codec: SectionCodec,
 }
 
 impl<R: RangeReader> Index<R> {
@@ -88,22 +90,21 @@ impl<R: RangeReader> Index<R> {
             .iter()
             .map(|&id| {
                 let section = find(&sections, id)?;
-                if section.codec != SectionCodec::Raw {
-                    return Err(Error::Malformed {
-                        detail: "a resident section is compressed as a whole",
-                    });
-                }
-                Ok((id, section.offset, section.length))
+                Ok((id, section.offset, section.length, section.codec))
             })
             .collect::<Result<Vec<_>>>()?;
 
         // The recommended layout puts the resident sections together at the
         // head of the file, so when the opening prefix does not reach far
         // enough the remedy is one wider read, not one read per section.
-        let span_start = wanted.iter().map(|(_, o, _)| *o).min().expect("non-empty");
+        let span_start = wanted
+            .iter()
+            .map(|(_, o, _, _)| *o)
+            .min()
+            .expect("non-empty");
         let span_end = wanted
             .iter()
-            .map(|(_, o, l)| o + l)
+            .map(|(_, o, l, _)| o + l)
             .max()
             .expect("non-empty");
         let span = if span_end <= prefix.len() as u64 || span_end - span_start > MAX_RESIDENT_SPAN {
@@ -119,7 +120,7 @@ impl<R: RangeReader> Index<R> {
         };
 
         let mut resident = BTreeMap::new();
-        for (id, offset, length) in wanted {
+        for (id, offset, length, codec) in wanted {
             let bytes = match &span {
                 Some((start, buf)) => {
                     let at = (offset - start) as usize;
@@ -127,8 +128,24 @@ impl<R: RangeReader> Index<R> {
                 }
                 None => fetch(&reader, &prefix, offset, length).await?,
             };
-            resident.insert(id, bytes);
+            // A resident section is read whole, so the whole of it is one unit.
+            resident.insert(id, decode_unit(codec, bytes)?);
         }
+
+        // Postings are addressed one run at a time, and a run is a handful of
+        // bytes; compressing each would grow the section and would break the
+        // single request that covers a contiguous range of them.
+        if find(&sections, SectionId::POSTINGS)?.codec != SectionCodec::Raw {
+            return Err(Error::Malformed {
+                detail: "the postings section must be stored raw",
+            });
+        }
+        let term_blocks_codec = find(&sections, SectionId::TERM_BLOCKS)?.codec;
+        let payload_codec = if header.flags.contains(Flags::HAS_PAYLOAD) {
+            find(&sections, SectionId::PAYLOAD)?.codec
+        } else {
+            SectionCodec::Raw
+        };
 
         Ok(Index {
             header,
@@ -142,6 +159,8 @@ impl<R: RangeReader> Index<R> {
             payload_offsets: resident
                 .remove(&SectionId::PAYLOAD_OFFSETS)
                 .unwrap_or_default(),
+            term_blocks_codec,
+            payload_codec,
             sections,
             reader,
         })
@@ -174,7 +193,8 @@ impl<R: RangeReader> Index<R> {
     pub async fn read_term_block(&self, ordinal: u32) -> Result<Vec<u8>> {
         let block_count = TermIndex::new(&self.term_index)?.block_count();
         let (offset, len) = self.term_block_bounds(ordinal, block_count)?;
-        self.reader.read_range(offset, len).await
+        let bytes = self.reader.read_range(offset, len).await?;
+        decode_unit(self.term_blocks_codec, bytes)
     }
 
     /// Reads one document's payload.
@@ -192,8 +212,7 @@ impl<R: RangeReader> Index<R> {
             // The term sorts before every block, so no block need be read.
             return Ok(None);
         };
-        let (offset, len) = self.term_block_bounds(ordinal, index.block_count())?;
-        let block = self.reader.read_range(offset, len).await?;
+        let block = self.read_term_block(ordinal).await?;
         find_in_block(&block, term)
     }
 
@@ -374,7 +393,8 @@ impl<R: RangeReader> Index<R> {
 
         if cache.ordinal != Some(ordinal) {
             let (offset, len) = bounds(section, 8, ordinal as usize)?;
-            cache.block = self.reader.read_range(offset, len).await?;
+            let bytes = self.reader.read_range(offset, len).await?;
+            cache.block = decode_unit(self.payload_codec, bytes)?;
             cache.ordinal = Some(ordinal);
         }
         entry_in_payload_block(&cache.block, index)
@@ -466,6 +486,17 @@ fn intersect(a: &[u64], b: &[u64]) -> Vec<u64> {
         }
     }
     out
+}
+
+/// Decodes one addressed unit according to its section's codec.
+fn decode_unit(codec: SectionCodec, bytes: Vec<u8>) -> Result<Vec<u8>> {
+    match codec {
+        SectionCodec::Raw => Ok(bytes),
+        SectionCodec::Deflate => block::decompress(&bytes),
+        SectionCodec::Zstd => Err(Error::Malformed {
+            detail: "zstd is registered but not implemented by this reader",
+        }),
+    }
 }
 
 fn find(sections: &[SectionEntry], id: SectionId) -> Result<&SectionEntry> {

@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 colex-format.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [lints]
 workspace = true
