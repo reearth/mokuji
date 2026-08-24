@@ -48,6 +48,7 @@ impl From<colex_format::Error> for Error {
     }
 }
 
+/// Prints what the file at `path` declares about itself.
 pub fn run(path: &Path) -> Result<(), Error> {
     let bytes = std::fs::read(path)?;
     // Read through the range-read interface even though the file is already in

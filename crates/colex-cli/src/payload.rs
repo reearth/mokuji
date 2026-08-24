@@ -57,45 +57,11 @@ fn scale(field: &str, decimals: u8) -> Result<i64, Error> {
 }
 
 /// Renders a payload as text.
-pub fn render(payload: &Payload) -> String {
-    match payload {
-        Payload::Opaque(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => text.to_string(),
-            Err(_) => format!("<{} bytes>", bytes.len()),
-        },
-        Payload::Ints {
-            values,
-            scale_exponent,
-        } => values
-            .iter()
-            .map(|&v| scaled(v, *scale_exponent))
-            .collect::<Vec<_>>()
-            .join(","),
-    }
-}
-
-/// Writes `value * 10^exponent` in full.
 ///
-/// Trailing zeros are kept: they are what the file's declared scale says was
-/// stored, and trimming them would show a precision the file does not claim.
-fn scaled(value: i64, exponent: i8) -> String {
-    match exponent {
-        0 => value.to_string(),
-        e if e > 0 => format!("{value}{}", "0".repeat(e as usize)),
-        e => {
-            let digits = e.unsigned_abs() as u32;
-            let unit = 10i128.pow(digits);
-            let value = i128::from(value);
-            let sign = if value < 0 { "-" } else { "" };
-            let magnitude = value.abs();
-            format!(
-                "{sign}{}.{:0width$}",
-                magnitude / unit,
-                magnitude % unit,
-                width = digits as usize
-            )
-        }
-    }
+/// Delegates, so that the tool, the tests, and the reader all agree on what a
+/// stored value looks like written out.
+pub fn render(payload: &Payload) -> String {
+    payload.to_string()
 }
 
 #[cfg(test)]

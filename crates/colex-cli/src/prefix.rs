@@ -14,6 +14,7 @@ use colex_read::{
 use crate::corpus::Tokenizer;
 use crate::info::Error;
 
+/// Completes `query` against the index at `path`, reporting what it cost.
 pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open_with(

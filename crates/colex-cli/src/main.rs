@@ -5,18 +5,9 @@ use std::process::ExitCode;
 
 use colex_write::{Options, PayloadEncoding};
 
-use corpus::Tokenizer;
-
-mod build;
-mod corpus;
-mod dump;
-mod info;
-mod payload;
-mod prefix;
-mod search;
-mod verify;
-
-use info::Error;
+use colex_cli::corpus::Tokenizer;
+use colex_cli::info::{self, Error};
+use colex_cli::{build, dump, prefix, search, verify};
 
 const USAGE: &str = "\
 colex - a cloud-optimized concordance format

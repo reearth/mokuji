@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "colex_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "colex"
 path = "src/main.rs"

@@ -14,6 +14,7 @@ use colex_read::{block_on::block_on, term, Index, RangeReader, SliceReader};
 
 use crate::info::Error;
 
+/// Writes the index at `path` out as a corpus.
 pub fn run(path: &Path) -> Result<(), Error> {
     let reader = SliceReader::new(std::fs::read(path)?);
     let index = block_on(Index::open(reader))?;

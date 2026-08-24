@@ -8,6 +8,7 @@ use colex_read::{block_on::block_on, CountingReader, Index, SliceReader};
 use crate::corpus::Tokenizer;
 use crate::info::Error;
 
+/// Intersects `terms` against the index at `path`, reporting what it cost.
 pub fn run(path: &Path, terms: &[&str]) -> Result<(), Error> {
     if terms.is_empty() {
         return Err(Error::NoTerms);
