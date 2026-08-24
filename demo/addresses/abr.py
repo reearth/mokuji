@@ -14,9 +14,13 @@ They join on `(lg_code, machiaza_id)`.
 
 Output is one address per line: the address, a tab, then `lon,lat`.
 
-The indexed term is a normalized form of the address and the payload is its
-coordinates, which is the division a geocoder wants: the key is what a person
-types, and the value is what they were asking for.
+The address text is written out as the registry spells it. Normalization is
+left to `colex build --tokenizer ja-address`, so that the transformation which
+decides what a term is gets recorded in the index's metadata rather than
+happening invisibly in this script. See `TOKENIZERS.md`.
+
+The payload is the coordinates, which is the division a geocoder wants: the key
+is what a person types, and the value is what they were asking for.
 
 Usage:
     python3 abr.py --fullset mt_town_fullset_all.csv --pos pos/ --out abr.tsv
@@ -26,23 +30,10 @@ import argparse
 import csv
 import pathlib
 import sys
-import unicodedata
 
 # The address text, outermost first. ABR leaves unused levels empty rather than
 # absent, so concatenation is the whole of the assembly.
 LEVELS = ["pref", "county", "city", "ward", "oaza_cho", "chome", "koaza"]
-
-
-def normalize(text):
-    """The form that gets indexed.
-
-    NFKC folds the full-width digits ABR uses for chome numbers into ASCII, so
-    that a term matches what someone types. It does not fix ordering: `10丁目`
-    still sorts between `1丁目` and `2丁目`, because prefix order is byte order.
-    Resolving that means parsing the number rather than normalizing the text,
-    which is a geocoder's job and not an index's.
-    """
-    return unicodedata.normalize("NFKC", text).strip()
 
 
 def load_positions(directory):
@@ -76,13 +67,15 @@ def main():
     print(f"{len(positions):,} positions", file=sys.stderr)
 
     # A dictionary, not a list: the registry carries alias rows, so the same
-    # address text can appear more than once, and a term must be unique.
+    # address text can appear more than once. Terms that collide only after
+    # normalization are merged by the builder, which is the component that
+    # knows what normalization was applied.
     addresses = {}
     rows = collisions = missing = 0
     with open(args.fullset, encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             rows += 1
-            term = normalize("".join(row[level] for level in LEVELS))
+            term = "".join(row[level] for level in LEVELS).strip()
             if not term:
                 continue
 
@@ -108,7 +101,7 @@ def main():
 
     print(
         f"{rows:,} rows -> {len(addresses):,} addresses "
-        f"({collisions:,} duplicate terms merged, {missing:,} without a position)",
+        f"({collisions:,} duplicate lines merged, {missing:,} without a position)",
         file=sys.stderr,
     )
     print(f"wrote {out} ({out.stat().st_size:,} bytes)", file=sys.stderr)

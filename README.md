@@ -92,7 +92,7 @@ hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 cd demo/addresses && ./run.sh
 ```
 
-Against the 725,823 addresses of Japan's Address Base Registry, in a 5.7 MB
+Against the 725,814 addresses of Japan's Address Base Registry, in a 5.7 MB
 file, completing a prefix costs **two range reads and about 1 KB** — and costs
 the same two at any file size, because a contiguous range of terms is contiguous
 in every section at once. See [demo/addresses](demo/addresses) for the
@@ -111,7 +111,9 @@ statistics BM25 needs; which model to apply is a property of the corpus.
 Tokenization is likewise outside it, but recorded in the metadata, so that an
 index remains reproducible without the format having to choose between
 morphological analysis and n-grams. [TOKENIZERS.md](TOKENIZERS.md) assigns the
-identifiers used for that.
+identifiers used for that — including `ja-address`, which normalizes Japanese
+addresses. Normalization belongs there rather than in a preprocessing script,
+because it decides what a term is, and the index should record that.
 
 Because the metadata names the source by content hash, `colex verify` can walk
 a whole file, check that everything it claims about itself holds, and confirm

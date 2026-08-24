@@ -11,28 +11,28 @@ quick to rebuild, and it is reported separately because it flatters the format.
 ```sh
 ./fetch-abr.sh abr
 python3 abr.py --fullset abr/mt_town_fullset_all.csv --pos abr/pos --out abr.tsv
-colex build abr.tsv abr.colex --tokenizer identity \
-  --source abr/mt_town_fullset_all.csv
+colex build abr.tsv abr.colex --tokenizer ja-address \
+  --source abr/mt_town_fullset_all.csv --source abr.py
 colex prefix abr.colex "東京都千代田区丸の内"
 ```
 
 ```
-東京都千代田区丸の内一丁目	139.767201,35.68156
-東京都千代田区丸の内三丁目	139.763476,35.676952
-東京都千代田区丸の内二丁目	139.763447,35.680022
+東京都千代田区丸の内1丁目	139.767201,35.68156
+東京都千代田区丸の内2丁目	139.763447,35.680022
+東京都千代田区丸の内3丁目	139.763476,35.676952
 
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    1108 of 5710067
+bytes:    1088 of 5685043
 ```
 
-**725,823 addresses nationwide, in 5.7 MB. Two range reads and 1.1 KB to answer.**
+**725,814 addresses nationwide, in 5.7 MB. Two range reads and 1.1 KB to answer.**
 
 | | |
 |---|---|
 | Source | 159 MB of CSV, from two registry tables |
-| Corpus | 33 MB, one address and its coordinates per line |
+| Corpus | 35 MB, one address and its coordinates per line |
 | Index | 5.7 MB |
-| Build | 1.8 s, including hashing the 159 MB register |
+| Build | 2.4 s, including hashing the 159 MB register |
 | Full verification | 4.8 s, reading and decoding every block, and re-hashing the register |
 
 ### Provenance
@@ -43,19 +43,24 @@ nobody keeps:
 
 ```
 $ colex verify abr.colex --source abr/mt_town_fullset_all.csv
-derived from    sha2-256:925fcad5…   abr.tsv
+tokenizer       ja-address
+derived from    sha2-256:93581da1…   abr.tsv
 derived from    sha2-256:8f9b02e4…   abr/mt_town_fullset_all.csv
+derived from    sha2-256:12cfe1f9…   abr.py
 source          abr/mt_town_fullset_all.csv
 hashes to       sha2-256:8f9b02e4…
                 matches the recorded provenance
 ok
 ```
 
-What is *not* yet recorded is `abr.py` itself — the normalization it applies
-sits between the register and the corpus, and the metadata says only that the
-tokenizer was `identity`. Closing that gap means registering the normalizer as
-a tokenizer (`ja-address` is reserved in `TOKENIZERS.md` for it) so the chain
-from register to index is stated end to end.
+Every link is named. The register, the program that read it, the corpus that
+came out, and the normalization applied on the way in — that last one because
+`ja-address` is a registered tokenizer rather than a step hidden in a script.
+
+Normalization belongs to the tokenizer for exactly this reason. It decides what
+a term *is*, so leaving it in `abr.py` would put the most consequential
+transformation in the pipeline outside anything the index records. `abr.py` now
+only assembles fields from the register.
 
 ### Attribution
 
@@ -83,10 +88,21 @@ Two further things the real data shows:
   representative point, because `mt_town_pos` covers less than the town master
   does. The rest are indexed with an empty payload, which the format allows and
   a product would have to decide about.
-- **Numbering still does not sort.** The registry writes chome in kanji, so
-  `丸の内一丁目`, `丸の内三丁目`, `丸の内二丁目` come back in that order. Byte
-  order is byte order. Fixing it means parsing the numeral, which is a
-  geocoder's job; see the note on normalization above.
+- **The registry spells chome two ways.** `一丁目` in one municipality and
+  `１丁目` in the next. Indexed as written, the same concept sorts in two
+  different places and neither is where someone typing would look, which is
+  what `ja-address` is for. Normalized, `丸の内` comes back as 1, 2, 3 rather
+  than in the arbitrary order the kanji give.
+
+  It is not fully fixed. `10丁目` still sorts between `1丁目` and `2丁目`,
+  because prefix order is byte order and zero-padding would break the matching
+  it fixed the ordering for. Getting both means parsing the address into
+  fields, which is a geocoder's job.
+
+- **41 addresses collided under normalization** and their lines were dropped,
+  reported by `build` rather than silently merged. Two registry rows spelling
+  the same chome differently are one address, and a key names one record — but
+  which payload survives is a data decision, so the count is printed.
 
 ## Synthetic corpus
 
