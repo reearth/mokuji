@@ -6,14 +6,35 @@
 
 use std::path::Path;
 
+use colex_meta::Meta;
 use colex_read::{block_on::block_on, CountingReader, Index, RangeReader, SliceReader};
 
+use crate::corpus::Tokenizer;
 use crate::info::Error;
 
-pub fn run(path: &Path, prefix: &[u8], limit: usize) -> Result<(), Error> {
+pub fn run(path: &Path, query: &str, limit: usize) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
+
+    // The query has to go through whatever the terms went through, or it will
+    // not match them. The index records which tokenizer that was, so a reader
+    // does not have to be told.
+    let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    let normalized = match Tokenizer::parse(&recorded) {
+        Some(tokenizer) => tokenizer.normalize_query(query),
+        None => {
+            eprintln!(
+                "warning: this index was built with the '{recorded}' tokenizer, which this \
+                 build does not implement; the query is used as typed"
+            );
+            query.to_string()
+        }
+    };
+    if normalized != query {
+        eprintln!("query normalized to '{normalized}' by the '{recorded}' tokenizer");
+    }
+    let prefix = normalized.as_bytes();
     reader.reset();
 
     // Each phase is measured rather than assumed. An index whose entries carry

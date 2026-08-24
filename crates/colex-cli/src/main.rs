@@ -136,7 +136,7 @@ fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error>
             .map_err(|_| Error::Usage(format!("limit needs a number, not '{value}'")))?,
         _ => return Err(Error::Usage("prefix takes at most -n <limit>".into())),
     };
-    prefix::run(path.as_ref(), needle.as_bytes(), limit)
+    prefix::run(path.as_ref(), needle, limit)
 }
 
 fn verify_command(path: &str, flags: &[&str]) -> Result<(), Error> {

@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
+use colex_meta::Meta;
 use colex_read::{block_on::block_on, CountingReader, Index, SliceReader};
 
+use crate::corpus::Tokenizer;
 use crate::info::Error;
 
 pub fn run(path: &Path, terms: &[&str]) -> Result<(), Error> {
@@ -14,6 +16,19 @@ pub fn run(path: &Path, terms: &[&str]) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
+
+    // Terms have to go through whatever the index's terms went through.
+    let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    let terms: Vec<String> = match Tokenizer::parse(&recorded) {
+        Some(tokenizer) => terms.iter().map(|t| tokenizer.normalize_query(t)).collect(),
+        None => {
+            eprintln!(
+                "warning: this index was built with the '{recorded}' tokenizer, which this \
+                 build does not implement; terms are used as typed"
+            );
+            terms.iter().map(|t| t.to_string()).collect()
+        }
+    };
     // The resident set is charged to opening the file, not to the query
     // (SPEC.md §4). A long-lived reader pays it once.
     reader.reset();

@@ -40,6 +40,19 @@ impl Tokenizer {
         }
     }
 
+    /// Applies this tokenizer to a query.
+    ///
+    /// A query has to go through the same transformation the terms did, or it
+    /// will not match them. This is what the recorded tokenizer identifier is
+    /// for: a reader can look up what was done and do it again, without the
+    /// format having to specify what that was.
+    pub fn normalize_query(self, query: &str) -> String {
+        match self {
+            Tokenizer::SpaceSplit | Tokenizer::Identity => query.to_string(),
+            Tokenizer::JaAddress => ja_address(query),
+        }
+    }
+
     /// Whether this tokenizer makes the whole line a key.
     ///
     /// A key names one record, so two lines that produce the same key are a
@@ -344,6 +357,17 @@ mod tests {
         // Not perfect — 10 still sorts before 2 — but 1, 10, 2, 3 beats the
         // arbitrary order the kanji give. See TOKENIZERS.md.
         assert_eq!(terms, ["10丁目", "1丁目", "2丁目", "3丁目"]);
+    }
+
+    #[test]
+    fn a_query_goes_through_the_same_normalization_the_terms_did() {
+        // Without this the index built from 一丁目 is unreachable by anyone
+        // typing 一丁目, which is everyone.
+        assert_eq!(
+            Tokenizer::JaAddress.normalize_query("東京都千代田区丸の内一丁目"),
+            "東京都千代田区丸の内1丁目"
+        );
+        assert_eq!(Tokenizer::Identity.normalize_query("一丁目"), "一丁目");
     }
 
     #[test]
