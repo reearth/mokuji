@@ -4,9 +4,12 @@ use std::process::ExitCode;
 
 use colex_write::Options;
 
+use corpus::Tokenizer;
+
 mod build;
 mod corpus;
 mod info;
+mod prefix;
 mod search;
 mod verify;
 
@@ -20,10 +23,15 @@ usage:
         --terms-per-block <n>          terms per dictionary block (default 128)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
+        --tokenizer <id>               space-split (default) or identity
         --generation <n>               generation number (default 1)
 
     colex info <file>                  print the header and section table
     colex search <file> <term>...      intersect terms and report the cost
+    colex prefix <file> <prefix> [-n <limit>]
+                                       complete a prefix; the query a
+                                       hierarchical key such as an address is
+                                       for
     colex verify <file> [--source <p>] check the whole file, and its provenance
 
     colex --version
@@ -48,6 +56,7 @@ fn main() -> ExitCode {
         }
         ["info", path] => info::run(path.as_ref()),
         ["search", path, terms @ ..] => search::run(path.as_ref(), terms),
+        ["prefix", path, needle, flags @ ..] => prefix_command(path, needle, flags),
         ["build", input, output, flags @ ..] => build_command(input, output, flags),
         ["verify", path, flags @ ..] => verify_command(path, flags),
         [cmd, ..] => {
@@ -68,6 +77,7 @@ fn main() -> ExitCode {
 
 fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error> {
     let mut options = Options::default();
+    let mut tokenizer = Tokenizer::default();
     let mut generation = 1u64;
     let mut rest = flags;
 
@@ -81,10 +91,38 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .map_err(|_| Error::Usage(format!("{flag} is too large")))?;
             }
             "--generation" => generation = take_number(flag, &mut rest)?,
+            "--tokenizer" => {
+                let (id, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--tokenizer needs an id".into()))?;
+                rest = tail;
+                tokenizer = Tokenizer::parse(id).ok_or_else(|| {
+                    Error::Usage(format!(
+                        "'{id}' is not a registered tokenizer; see TOKENIZERS.md"
+                    ))
+                })?;
+            }
             other => return Err(Error::Usage(format!("unknown option '{other}'"))),
         }
     }
-    build::run(input.as_ref(), output.as_ref(), options, generation)
+    build::run(
+        input.as_ref(),
+        output.as_ref(),
+        options,
+        tokenizer,
+        generation,
+    )
+}
+
+fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {
+    let limit = match flags {
+        [] => 20,
+        ["-n", value] | ["--limit", value] => value
+            .parse()
+            .map_err(|_| Error::Usage(format!("limit needs a number, not '{value}'")))?,
+        _ => return Err(Error::Usage("prefix takes at most -n <limit>".into())),
+    };
+    prefix::run(path.as_ref(), needle.as_bytes(), limit)
 }
 
 fn verify_command(path: &str, flags: &[&str]) -> Result<(), Error> {

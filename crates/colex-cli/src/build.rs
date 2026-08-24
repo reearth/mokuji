@@ -2,18 +2,26 @@
 
 use std::path::Path;
 
-use colex_meta::{cbor_map, ContentHash, Generator, Meta, Source, Tokenizer, Value};
+use colex_meta::{
+    cbor_map, ContentHash, Generator, Meta, Source, Tokenizer as MetaTokenizer, Value,
+};
 use colex_write::{Builder, Options};
 use sha2::{Digest, Sha256};
 
-use crate::corpus::{self, TOKENIZER_ID};
+use crate::corpus::{self, Tokenizer};
 use crate::info::Error;
 
 /// Builds `input` into `output`.
-pub fn run(input: &Path, output: &Path, options: Options, generation: u64) -> Result<(), Error> {
+pub fn run(
+    input: &Path,
+    output: &Path,
+    options: Options,
+    tokenizer: Tokenizer,
+    generation: u64,
+) -> Result<(), Error> {
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
-    let corpus = corpus::parse(text).map_err(Error::Corpus)?;
+    let corpus = corpus::parse(text, tokenizer).map_err(Error::Corpus)?;
 
     // Hash the source bytes as they were read, not the parsed corpus. The claim
     // being recorded is "this index was derived from that file", and it is only
@@ -53,8 +61,8 @@ pub fn run(input: &Path, output: &Path, options: Options, generation: u64) -> Re
                 ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
             ]),
         },
-        tokenizer: Tokenizer {
-            id: TOKENIZER_ID.into(),
+        tokenizer: MetaTokenizer {
+            id: tokenizer.id().into(),
             params: cbor_map([]),
         },
         attrs: None,

@@ -177,3 +177,99 @@ fn build_rejects_a_corpus_without_payloads() {
     ]);
     assert!(!output.status.success());
 }
+
+/// The address demo in miniature: a hierarchy of keys, one term per document,
+/// answered by prefix rather than by intersection.
+const ADDRESSES: &str = "\
+東京都千代田区丸の内一丁目1番地\t35.6810,139.7670\n\
+東京都千代田区丸の内一丁目2番地\t35.6811,139.7671\n\
+東京都千代田区丸の内二丁目1番地\t35.6820,139.7680\n\
+東京都千代田区大手町一丁目1番地\t35.6870,139.7660\n\
+大阪府大阪市中央区本町一丁目1番地\t34.6820,135.5010\n";
+
+#[test]
+fn an_address_index_answers_by_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("addresses.tsv");
+    let index = dir.path().join("addresses.colex");
+    std::fs::write(&corpus, ADDRESSES).unwrap();
+
+    let output = colex(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--tokenizer",
+        "identity",
+        "--terms-per-block",
+        "2",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = colex(&["prefix", index.to_str().unwrap(), "東京都千代田区丸の内"]);
+    assert!(output.status.success());
+    let printed = stdout(&output);
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines.len(), 3, "got {lines:?}");
+    assert!(lines[0].starts_with("東京都千代田区丸の内一丁目1番地\t35.6810"));
+    assert!(lines[2].starts_with("東京都千代田区丸の内二丁目1番地"));
+}
+
+#[test]
+fn a_prefix_matching_nothing_returns_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("addresses.tsv");
+    let index = dir.path().join("addresses.colex");
+    std::fs::write(&corpus, ADDRESSES).unwrap();
+    colex(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--tokenizer",
+        "identity",
+    ]);
+
+    let output = colex(&["prefix", index.to_str().unwrap(), "京都府"]);
+    assert!(output.status.success());
+    assert!(stdout(&output).trim().is_empty());
+}
+
+#[test]
+fn the_tokenizer_is_recorded_in_the_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("addresses.tsv");
+    let index = dir.path().join("addresses.colex");
+    std::fs::write(&corpus, ADDRESSES).unwrap();
+    colex(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--tokenizer",
+        "identity",
+    ]);
+
+    // Provenance is only repeatable if the analyzer is named, since the same
+    // corpus tokenized differently is a different index.
+    let output = colex(&["verify", index.to_str().unwrap()]);
+    assert!(stdout(&output).contains("tokenizer       identity"));
+}
+
+#[test]
+fn build_rejects_an_unregistered_tokenizer() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("addresses.tsv");
+    std::fs::write(&corpus, ADDRESSES).unwrap();
+
+    let output = colex(&[
+        "build",
+        corpus.to_str().unwrap(),
+        dir.path().join("out.colex").to_str().unwrap(),
+        "--tokenizer",
+        "kuromoji",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("TOKENIZERS.md"));
+}
