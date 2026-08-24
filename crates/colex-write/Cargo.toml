@@ -12,5 +12,9 @@ authors.workspace = true
 colex-codec.workspace = true
 colex-format.workspace = true
 
+[dev-dependencies]
+colex-read.workspace = true
+proptest = "1"
+
 [lints]
 workspace = true
