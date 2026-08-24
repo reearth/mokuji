@@ -18,6 +18,7 @@ colex-meta.workspace = true
 colex-read.workspace = true
 colex-write.workspace = true
 sha2 = "0.10"
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

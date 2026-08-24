@@ -55,8 +55,47 @@ matched by its parts. Combined with the sorted term dictionary it turns a COLex
 file into an ordered key-value store with a stated I/O bound, which is what
 forward geocoding actually needs.
 
+### `ja-address`
+
+The whole input is one term, after normalization. Intended for Japanese address
+dictionaries, where a record is looked up whole or by prefix.
+
+Parameters: none.
+
+Normalization, in order:
+
+1. Unicode Normalization Form KC (NFKC).
+2. Strip leading and trailing whitespace.
+3. Rewrite each maximal run of the characters
+   `〇零一二三四五六七八九十百千` that is **immediately followed by `丁目`**
+   as its decimal value in ASCII digits. A run that cannot be read as a numeral
+   by the rule below is left exactly as it was.
+
+The numeral rule: `十`, `百`, and `千` multiply the digit before them, or one
+when there is none, so `十二` is 12 and `二十` is 20 and `百二十三` is 123. Two
+bare digits in sequence are positional notation, which this rule does not claim
+to read, and such a run is left alone.
+
+#### Why only `丁目`
+
+Because it is the only suffix where a numeral is unambiguously a numbered
+sequence rather than part of a name. `千代田区一番町` is a place, not block one;
+`五条` is a street in Kyoto, not the fifth of anything. Rewriting those would
+damage the very keys the index exists to find. Extending the rule to `番` and
+`号` for block-level addresses needs a way to tell the two apart, and that is
+parsing rather than normalization.
+
+#### Why at all
+
+The Address Base Registry writes chome both ways — `一丁目` in one municipality
+and `１丁目` in the next. Without normalization the same concept sorts in two
+different places, and neither is where someone typing an address would look.
+
+It does not make numbering sort correctly. `10丁目` still falls between `1丁目`
+and `2丁目`, because prefix order is byte order. Zero-padding would fix the
+ordering and break the matching, since nobody types `01丁目`. Getting both means
+parsing the address into fields, which is a geocoder's job and not an index's.
+
 ## Reserved
 
-`ja-address` is reserved for the address normalizer used by the Japanese
-address index, and will be registered when that index is published. It is named
-here so that the identifier is not taken by something else in the meantime.
+Nothing is currently reserved.

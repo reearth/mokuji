@@ -573,7 +573,7 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `generation` | uint | yes | Monotonic generation number |
-| `source` | array | yes | One entry per source of truth |
+| `source` | array | yes | One entry per artifact the index was derived from |
 | `source[].content_hash` | text | yes | `<algorithm>:<lowercase hex>`; `algorithm` is `sha2-256` in this version |
 | `source[].uri` | text | no | Where the source can be obtained |
 | `generator.name` | text | yes | Writer implementation |
@@ -585,6 +585,12 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 
 `generator.params` and `tokenizer.params` together with the source content
 hashes MUST be sufficient to reproduce the file byte-for-byte (§3.4).
+
+A source entry names an artifact the index was derived from. That is usually a
+source of truth — a register, a corpus — but an index is often produced from
+one by a program, and a chain that names the register and the result while
+omitting the step between them is checkable only in parts. Recording the
+transform's own hash as a source closes it, and needs no other mechanism.
 
 `tokenizer.id` is drawn from `TOKENIZERS.md`, published alongside this
 specification. That registry standardizes identifiers; it does not standardize
