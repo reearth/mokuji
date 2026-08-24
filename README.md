@@ -55,6 +55,7 @@ The reference implementation, in Rust.
 | `colex-codec` | Integer and string codecs used inside blocks |
 | `colex-read` | `RangeReader`, and the reader for each section |
 | `colex-write` | Deterministic writer |
+| `colex-meta` | The metadata section, and the canonical CBOR it is written in |
 | `colex-cli` | The `colex` command |
 | `colex-wasm` | Browser bindings over `fetch` with `Range` |
 
@@ -64,8 +65,12 @@ about each other is a requirement of the format and not only good practice.
 
 ```sh
 cargo test
-cargo run -p colex-cli -- info conformance/fixtures/tiny.colex
-cargo run -p colex-cli -- search conformance/fixtures/tiny.colex tokyo chuo
+
+# text<TAB>payload, one document per line
+colex build addresses.tsv addresses.colex
+colex search addresses.colex tokyo chuo
+colex verify addresses.colex --source addresses.tsv
+colex info addresses.colex
 ```
 
 `search` reports what the query cost:
@@ -84,7 +89,12 @@ Scoring is outside the specification. A reader returns postings and the global
 statistics BM25 needs; which model to apply is a property of the corpus.
 Tokenization is likewise outside it, but recorded in the metadata, so that an
 index remains reproducible without the format having to choose between
-morphological analysis and n-grams.
+morphological analysis and n-grams. [TOKENIZERS.md](TOKENIZERS.md) assigns the
+identifiers used for that.
+
+Because the metadata names the source by content hash, `colex verify` can walk
+a whole file, check that everything it claims about itself holds, and confirm
+that it derives from the source it says it does.
 
 ## License
 

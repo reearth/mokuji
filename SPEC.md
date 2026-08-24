@@ -471,9 +471,10 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 `generator.params` and `tokenizer.params` together with the source content
 hashes MUST be sufficient to reproduce the file byte-for-byte (§3.4).
 
-`tokenizer.id` is drawn from a registry published alongside this specification.
-The registry standardizes identifiers; it does not standardize which tokenizer
-an index must use.
+`tokenizer.id` is drawn from `TOKENIZERS.md`, published alongside this
+specification. That registry standardizes identifiers; it does not standardize
+which tokenizer an index must use. Identifiers beginning `x-` are private and
+will never be registered.
 
 ## 7. Conformance
 
