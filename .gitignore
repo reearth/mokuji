@@ -5,5 +5,4 @@
 .DS_Store
 
 # Working notes, kept out of the repository
-IDEA.md
-PLAN.md
+/tmp
