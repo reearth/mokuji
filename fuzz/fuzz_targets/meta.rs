@@ -5,7 +5,7 @@
 
 #![no_main]
 
-use colex_meta::Meta;
+use mokuji_meta::Meta;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

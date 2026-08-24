@@ -1,8 +1,8 @@
 {
-  "name": "colex-web-demo",
+  "name": "mokuji-web-demo",
   "private": true,
   "type": "module",
-  "description": "A COLex reader for the browser, and its tests. Not published; the browser loads colex.js directly.",
+  "description": "A Mokuji reader for the browser, and its tests. Not published; the browser loads mokuji.js directly.",
   "scripts": {
     "test": "node --test '*.test.js'"
   }

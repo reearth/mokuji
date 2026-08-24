@@ -1,6 +1,6 @@
 """What a payload encoding would cost, measured on a real index.
 
-Reads a corpus written by `colex dump`, so the payloads are in the document
+Reads a corpus written by `mokuji dump`, so the payloads are in the document
 order the index actually uses — which is term order, and therefore roughly
 spatial order for addresses. That is the whole reason delta encoding works here.
 

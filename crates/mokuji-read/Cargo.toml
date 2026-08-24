@@ -1,0 +1,20 @@
+[package]
+name = "mokuji-read"
+description = "Bounded range-read access to a Mokuji file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mokuji-codec.workspace = true
+mokuji-format.workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[lints]
+workspace = true

@@ -33,42 +33,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "colex-codec"
-version = "0.0.0"
-dependencies = [
- "colex-format",
- "flate2",
-]
-
-[[package]]
-name = "colex-format"
-version = "0.0.0"
-
-[[package]]
-name = "colex-fuzz"
-version = "0.0.0"
-dependencies = [
- "colex-meta",
- "colex-read",
- "libfuzzer-sys",
-]
-
-[[package]]
-name = "colex-meta"
-version = "0.0.0"
-dependencies = [
- "colex-format",
-]
-
-[[package]]
-name = "colex-read"
-version = "0.0.0"
-dependencies = [
- "colex-codec",
- "colex-format",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,6 +102,42 @@ checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "mokuji-codec"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "mokuji-format",
+]
+
+[[package]]
+name = "mokuji-format"
+version = "0.0.0"
+
+[[package]]
+name = "mokuji-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "mokuji-meta",
+ "mokuji-read",
+]
+
+[[package]]
+name = "mokuji-meta"
+version = "0.0.0"
+dependencies = [
+ "mokuji-format",
+]
+
+[[package]]
+name = "mokuji-read"
+version = "0.0.0"
+dependencies = [
+ "mokuji-codec",
+ "mokuji-format",
 ]
 
 [[package]]

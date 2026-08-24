@@ -1,12 +1,15 @@
-# COLex Format Specification
+# Mokuji Format Specification
 
 **Version:** 0.1 (draft — not frozen, subject to breaking change)
 **Status:** Draft
 **Date:** 2026-08-24
 **Editor:** Eukarya Inc.
 
-> COLex — a cloud-optimized concordance format.
+> Mokuji — a cloud-optimized concordance format.
 > Single immutable file, bounded range reads, no server.
+>
+> 目次: the table of contents. The part of a book that is not the book, and
+> that lets you open it at the right page without reading the rest.
 
 This document is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
@@ -14,10 +17,10 @@ This document is licensed under [CC BY 4.0](https://creativecommons.org/licenses
 
 ## 1. Scope
 
-COLex defines a single-file, immutable, byte-addressable layout for an inverted
+Mokuji defines a single-file, immutable, byte-addressable layout for an inverted
 index that is intended to be served as a static object over HTTP range requests.
 
-A COLex file answers exactly one question: **for a set of query terms, which
+A Mokuji file answers exactly one question: **for a set of query terms, which
 documents contain them, and what are the statistics needed to rank them?**
 
 The following are explicitly **outside** this specification:
@@ -65,7 +68,7 @@ All integers are **unsigned and little-endian** unless stated otherwise.
 All offsets are absolute byte offsets from the start of the file.
 Reserved fields MUST be written as zero and MUST be ignored on read.
 
-A *reader* is an implementation that consumes a COLex file. A *writer* is an
+A *reader* is an implementation that consumes a Mokuji file. A *writer* is an
 implementation that produces one.
 
 ## 3. Design rules
@@ -92,7 +95,7 @@ values are predictable.
 
 ### 3.3 Immutability and generations
 
-A COLex file is immutable. There is no in-place update and no delta format.
+A Mokuji file is immutable. There is no in-place update and no delta format.
 A new index is a new generation, published as a whole. The header records the
 generation and the provenance of the source it was derived from (§6), so a
 consumer can verify which source of truth a given generation corresponds to.
@@ -241,7 +244,7 @@ compressor emits, which moves the offset again.
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 8 | `magic` | ASCII `COLEXv00` |
+| 0 | 8 | `magic` | ASCII `MOKUJIv0` |
 | 8 | 1 | `spec_major` | 0 for this document |
 | 9 | 1 | `spec_minor` | 1 for this document |
 | 10 | 2 | `flags` | See §5.1.1 |
@@ -684,7 +687,7 @@ bytes, and if the resulting file is accepted by a conformant reader.
 
 ## 8. Security considerations
 
-A COLex file is untrusted input. Every offset, length, and count in the header,
+A Mokuji file is untrusted input. Every offset, length, and count in the header,
 the section table, and the offset sections is attacker-controlled.
 
 A reader MUST validate that every offset and length lies within the file before
@@ -850,7 +853,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.colex` is 764 bytes and indexes four documents:
+`conformance/fixtures/tiny.mokuji` is 764 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -860,7 +863,7 @@ osaka chuo       34.681,135.513
 ```
 
 Its full annotated hex dump is in `conformance/fixtures/tiny.hex`, and
-`dict.colex` alongside it is the same walk for a dictionary index — postings
+`dict.mokuji` alongside it is the same walk for a dictionary index — postings
 implied throughout, payload stored as delta-coded integers. The fixture
 is stored raw, so that it can be read against §5 by hand. What follows walks one
 query through it, `chuo`.
@@ -868,12 +871,12 @@ query through it, `chuo`.
 **Header**, at offset 0:
 
 ```
-00000000  43 4f 4c 45 58 76 30 30 00 01 06 00 07 00 00 00  |COLEXv00........|
+00000000  4d 4f 4b 55 4a 49 76 30 00 01 06 00 07 00 00 00  |MOKUJIv0........|
 00000010  04 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00  |................|
 00000020  40 00 00 00 00 00 00 00 a8 00 00 00 00 00 00 00  |@...............|
 ```
 
-Magic `COLEXv00`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
+Magic `MOKUJIv0`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
 `HAS_FREQS`; seven sections; four documents totalling eight tokens; the section
 table is 0xa8 bytes at offset 0x40.
 

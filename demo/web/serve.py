@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A static server that honours Range requests, for the browser demo.
 
-Python's built-in `http.server` does not implement Range, and without it a COLex
+Python's built-in `http.server` does not implement Range, and without it a Mokuji
 file has to be downloaded whole, which is the one thing the format exists to
 avoid. Twenty lines of handler are cheaper than explaining why the demo appears
 to work but transfers four megabytes.
@@ -22,7 +22,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     index_path: pathlib.Path
 
     def translate_path(self, path):
-        if path.split("?")[0] == "/index.colex":
+        if path.split("?")[0] == "/index.mokuji":
             return str(self.index_path)
         return str(HERE / path.split("?")[0].lstrip("/"))
 
@@ -68,7 +68,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--index", default="addresses.colex")
+    parser.add_argument("--index", default="addresses.mokuji")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
 

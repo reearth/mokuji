@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>COLex address lookup</title>
+    <title>Mokuji address lookup</title>
     <style>
       :root {
         --bg: #ffffff;
@@ -73,12 +73,12 @@
   </head>
   <body>
     <main>
-      <h1>COLex address lookup</h1>
+      <h1>Mokuji address lookup</h1>
       <p class="lede">
         1,744,962 Tokyo addresses &mdash; every door in the prefecture, from
         Japan&rsquo;s Address Base Registry &mdash; in one static file. No
         server, no API, no database: the page fetches byte ranges out of
-        <code>index.colex</code> and reads the index itself. Watch the request
+        <code>index.mokuji</code> and reads the index itself. Watch the request
         count while you type.
       </p>
 
@@ -130,7 +130,7 @@
     </main>
 
     <script type="module">
-      import { ColexIndex } from "./colex.js";
+      import { MokujiIndex } from "./mokuji.js";
 
       const $ = (id) => document.getElementById(id);
       const bytes = (n) =>
@@ -197,7 +197,7 @@
 
       (async () => {
         try {
-          index = await ColexIndex.open("./index.colex");
+          index = await MokujiIndex.open("./index.mokuji");
         } catch (err) {
           $("status").innerHTML = `<span class="error">${err.message}</span>`;
           return;

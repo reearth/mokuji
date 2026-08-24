@@ -4,11 +4,11 @@ Neither of these is part of the format or the reference implementation. They
 exist to answer questions about it with numbers, and are kept so the numbers can
 be re-taken rather than quoted.
 
-Both read a corpus produced by `colex dump`, so they measure the index as it
+Both read a corpus produced by `mokuji dump`, so they measure the index as it
 actually is rather than a corpus as it was before indexing:
 
 ```sh
-cargo run --release -q -p colex-cli -- dump tokyo.colex > tokyo-dump.tsv
+cargo run --release -q -p mokuji-cli -- dump tokyo.mokuji > tokyo-dump.tsv
 ```
 
 ## `fst-comparison`

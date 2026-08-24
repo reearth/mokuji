@@ -11,9 +11,9 @@ written at — for one prefecture.
 ```sh
 ./fetch-abr.sh abr
 python3 abr.py --fullset abr/mt_town_fullset_all.csv --pos abr/pos --out abr.tsv
-colex build abr.tsv abr.colex --tokenizer ja-address \
+mokuji build abr.tsv abr.mokuji --tokenizer ja-address \
   --source abr/mt_town_fullset_all.csv --source abr.py
-colex prefix abr.colex "東京都千代田区丸の内"
+mokuji prefix abr.mokuji "東京都千代田区丸の内"
 ```
 
 ```
@@ -42,7 +42,7 @@ the index names what it was actually derived from rather than an intermediate
 nobody keeps:
 
 ```
-$ colex verify abr.colex --source abr/mt_town_fullset_all.csv
+$ mokuji verify abr.mokuji --source abr/mt_town_fullset_all.csv
 tokenizer       ja-address
 derived from    sha2-256:93581da1…   abr.tsv
 derived from    sha2-256:8f9b02e4…   abr/mt_town_fullset_all.csv
@@ -78,9 +78,9 @@ is what a street address is actually written at.
 ./fetch-abr.sh abr 13
 python3 abr.py rsdt --rsdt abr/mt_rsdtdsp_rsdt_pref13.csv \
   --pos abr/mt_rsdtdsp_rsdt_pos_pref13.csv --pref 東京都 --out tokyo.tsv
-colex build tokyo.tsv tokyo.colex --tokenizer ja-address --payload ints:6 \
+mokuji build tokyo.tsv tokyo.mokuji --tokenizer ja-address --payload ints:6 \
   --source abr/mt_rsdtdsp_rsdt_pref13.csv --source abr.py
-colex prefix tokyo.colex "東京都千代田区丸の内一丁目"
+mokuji prefix tokyo.mokuji "東京都千代田区丸の内一丁目"
 ```
 
 ```
@@ -114,7 +114,7 @@ the town-level one.
 Or one read, if the reader holds the dictionary:
 
 ```
-$ colex prefix tokyo.colex "東京都渋谷区" --resident
+$ mokuji prefix tokyo.mokuji "東京都渋谷区" --resident
 query:    1 read(s) total - 0 dictionary, 0 postings, 1 payload
 bytes:    220 of 7101107
 ```
@@ -259,7 +259,7 @@ no bundled decompressor, because the required codec is one browsers already
 have.
 
 ```sh
-cd ../web && python3 serve.py --index ../addresses/tokyo.colex
+cd ../web && python3 serve.py --index ../addresses/tokyo.mokuji
 ```
 
 Typing `一丁目` finds `1丁目`, because the page reads the tokenizer identifier

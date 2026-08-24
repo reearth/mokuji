@@ -1,9 +1,9 @@
-# COLex tokenizer registry
+# Mokuji tokenizer registry
 
 **Version:** 0.1 (draft)
 Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-Tokenization is outside the COLex specification (`SPEC.md` §1). This registry
+Tokenization is outside the Mokuji specification (`SPEC.md` §1). This registry
 does not change that. It assigns stable identifiers to tokenizers so that
 `tokenizer.id` in the metadata section (`SPEC.md` §6) means the same thing to
 everyone, and an index can be rebuilt from its source and compared.
@@ -51,7 +51,7 @@ Parameters: none.
 
 This is the tokenizer for a dictionary rather than a document collection: an
 address, a path, or a statute number is looked up whole or by prefix, not
-matched by its parts. Combined with the sorted term dictionary it turns a COLex
+matched by its parts. Combined with the sorted term dictionary it turns a Mokuji
 file into an ordered key-value store with a stated I/O bound, which is what
 forward geocoding actually needs.
 

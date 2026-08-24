@@ -1,12 +1,12 @@
 # Address lookup in a browser
 
-The same `.colex` file, read by a page. No server logic, no API, no
+The same `.mokuji` file, read by a page. No server logic, no API, no
 WebAssembly, and no bundled decompressor.
 
 Build the Tokyo index first — see [../addresses](../addresses) — then:
 
 ```sh
-python3 serve.py --index ../addresses/tokyo.colex
+python3 serve.py --index ../addresses/tokyo.mokuji
 ```
 
 Open <http://localhost:8787/> and type a prefix. The panel counts the range
@@ -33,14 +33,14 @@ puts the query through the same normalization before searching. Typing `一丁�
 finds `1丁目`, which matters because the Address Base Registry spells chome both
 ways depending on the municipality.
 
-That means `colex.js` implements the tokenizer as well as the format — a
+That means `mokuji.js` implements the tokenizer as well as the format — a
 reminder that the format deliberately does not specify tokenization, but does
 make sure a reader can find out what was done. It reads the identifier from the
 metadata section, which is why it also carries about forty lines of CBOR.
 
 ## Why there is no WebAssembly here
 
-`colex.js` is about 300 lines and pulls in nothing. That is possible because
+`mokuji.js` is about 300 lines and pulls in nothing. That is possible because
 the required compression codec is raw deflate, which browsers implement as
 `DecompressionStream("deflate-raw")`. Had the format required zstd, this page
 would have to ship a decompressor several times its own size, and the argument

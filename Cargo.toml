@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/colex-format",
-    "crates/colex-meta",
-    "crates/colex-codec",
-    "crates/colex-read",
-    "crates/colex-write",
-    "crates/colex-cli",
+    "crates/mokuji-format",
+    "crates/mokuji-meta",
+    "crates/mokuji-codec",
+    "crates/mokuji-read",
+    "crates/mokuji-write",
+    "crates/mokuji-cli",
 ]
 
 [workspace.package]
@@ -14,15 +14,15 @@ version = "0.0.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/reearth/colex"
+repository = "https://github.com/reearth/mokuji"
 authors = ["Re:Earth and contributors"]
 
 [workspace.dependencies]
-colex-format = { path = "crates/colex-format", version = "0.0.0" }
-colex-meta = { path = "crates/colex-meta", version = "0.0.0" }
-colex-codec = { path = "crates/colex-codec", version = "0.0.0" }
-colex-read = { path = "crates/colex-read", version = "0.0.0" }
-colex-write = { path = "crates/colex-write", version = "0.0.0" }
+mokuji-format = { path = "crates/mokuji-format", version = "0.0.0" }
+mokuji-meta = { path = "crates/mokuji-meta", version = "0.0.0" }
+mokuji-codec = { path = "crates/mokuji-codec", version = "0.0.0" }
+mokuji-read = { path = "crates/mokuji-read", version = "0.0.0" }
+mokuji-write = { path = "crates/mokuji-write", version = "0.0.0" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

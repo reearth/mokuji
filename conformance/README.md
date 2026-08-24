@@ -16,9 +16,9 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 | `dict-deflate` | `dict` again, compressed |
 
 ```
-fixtures/build_fixtures.py   builds tiny and dict, independently of colex-write
+fixtures/build_fixtures.py   builds tiny and dict, independently of mokuji-write
 fixtures/*.corpus.txt        the sources they are derived from
-fixtures/*.colex             the fixtures
+fixtures/*.mokuji             the fixtures
 fixtures/*.hex               annotated hex dumps
 cases.toml                   query, expected result, expected read count
 ```
@@ -27,19 +27,19 @@ cases.toml                   query, expected result, expected read count
 specification by hand — and so that two writers can be compared byte for byte,
 which compression makes impossible (`SPEC.md` §3.4). `dict-deflate` exists so
 that decompression is exercised on the read side, where interoperability
-actually matters; it is written by `colex-write` and kept current by a test.
+actually matters; it is written by `mokuji-write` and kept current by a test.
 
 ## Who answers to these cases
 
 | implementation | how |
 |---|---|
-| `colex-read` | `cargo test -p colex-read --test conformance` |
+| `mokuji-read` | `cargo test -p mokuji-read --test conformance` |
 | `build_fixtures.py` | checks every case before writing a fixture |
-| `demo/web/colex.js` | `node --test 'demo/web/*.test.js'` |
+| `demo/web/mokuji.js` | `node --test 'demo/web/*.test.js'` |
 
 ## Why the fixtures are not built by the writer
 
-If `colex-write` emitted them, a mistake in the writer would be mirrored by the
+If `mokuji-write` emitted them, a mistake in the writer would be mirrored by the
 reader developed against it, and the two would agree with each other rather than
 with the specification. `build_fixtures.py` is a second implementation, in
 another language, written from the prose alone. Where the two disagree, one of
@@ -50,5 +50,5 @@ them is wrong about the specification — which is the whole point of having one
 ```sh
 python3 fixtures/build_fixtures.py           # rebuild
 python3 fixtures/build_fixtures.py --check   # verify, as CI does
-COLEX_REGENERATE=1 cargo test                # rewrite dict-deflate.colex
+MOKUJI_REGENERATE=1 cargo test                # rewrite dict-deflate.mokuji
 ```

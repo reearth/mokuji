@@ -1,9 +1,13 @@
-# COLex
+# Mokuji
 
 **A cloud-optimized concordance format.** Single immutable file, bounded range
 reads, no server.
 
-COLex is a single-file layout for an inverted index, designed to be published
+*目次* — the table of contents. The part of a book that is not the book, and
+that lets you open it at the right page without reading the rest. Hold a
+Mokuji file's table of contents in memory and any lookup costs one range read.
+
+Mokuji is a single-file layout for an inverted index, designed to be published
 as a static object and queried directly over HTTP range requests. A search
 index becomes a file you upload, not a service you operate.
 
@@ -23,7 +27,7 @@ only safe to publish if the number of requests per query is bounded and
 written down; without that, cost and latency are unpredictable in a way that
 no amount of implementation quality fixes.
 
-For a query of `k` terms returning `m` documents, COLex bounds a query at
+For a query of `k` terms returning `m` documents, Mokuji bounds a query at
 `2k + m` range reads, plus one read on a cold start. That bound is in the
 specification, and the conformance suite asserts it.
 
@@ -51,12 +55,12 @@ The reference implementation, in Rust.
 
 | Crate | Contents |
 |---|---|
-| `colex-format` | Byte layout: header, section table, codec identifiers. No I/O, no dependencies |
-| `colex-codec` | Integer and string codecs used inside blocks |
-| `colex-read` | `RangeReader`, and the reader for each section |
-| `colex-write` | Deterministic writer |
-| `colex-meta` | The metadata section, and the canonical CBOR it is written in |
-| `colex-cli` | The `colex` command |
+| `mokuji-format` | Byte layout: header, section table, codec identifiers. No I/O, no dependencies |
+| `mokuji-codec` | Integer and string codecs used inside blocks |
+| `mokuji-read` | `RangeReader`, and the reader for each section |
+| `mokuji-write` | Deterministic writer |
+| `mokuji-meta` | The metadata section, and the canonical CBOR it is written in |
+| `mokuji-cli` | The `mokuji` command |
 
 The crate boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
@@ -66,10 +70,10 @@ about each other is a requirement of the format and not only good practice.
 cargo test
 
 # text<TAB>payload, one document per line
-colex build addresses.tsv addresses.colex
-colex search addresses.colex tokyo chuo
-colex verify addresses.colex --source addresses.tsv
-colex info addresses.colex
+mokuji build addresses.tsv addresses.mokuji
+mokuji search addresses.mokuji tokyo chuo
+mokuji verify addresses.mokuji --source addresses.tsv
+mokuji info addresses.mokuji
 ```
 
 `search` reports what the query cost:
@@ -114,7 +118,7 @@ identifiers used for that — including `ja-address`, which normalizes Japanese
 addresses. Normalization belongs there rather than in a preprocessing script,
 because it decides what a term is, and the index should record that.
 
-Because the metadata names the source by content hash, `colex verify` can walk
+Because the metadata names the source by content hash, `mokuji verify` can walk
 a whole file, check that everything it claims about itself holds, and confirm
 that it derives from the source it says it does.
 

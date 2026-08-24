@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn the Address Base Registry into a corpus `colex build` can index.
+"""Turn the Address Base Registry into a corpus `mokuji build` can index.
 
 The registry is Japan's authoritative address dataset, published by the Digital
 Agency as CSV under CC BY 4.0.
@@ -23,7 +23,7 @@ that name a residence:
     mt_rsdtdsp_rsdt_pos_pref<NN>.csv  representative coordinates
 
 The address text is written out as the registry spells it. Normalization is
-left to `colex build --tokenizer ja-address`, so that the transformation which
+left to `mokuji build --tokenizer ja-address`, so that the transformation which
 decides what a term is gets recorded in the index's metadata rather than
 happening invisibly in this script. See `TOKENIZERS.md`.
 

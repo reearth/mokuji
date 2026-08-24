@@ -1,5 +1,5 @@
 [package]
-name = "colex-fuzz"
+name = "mokuji-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -9,8 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-colex-meta = { path = "../crates/colex-meta" }
-colex-read = { path = "../crates/colex-read" }
+mokuji-meta = { path = "../crates/mokuji-meta" }
+mokuji-read = { path = "../crates/mokuji-read" }
 
 [[bin]]
 name = "read"

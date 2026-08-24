@@ -2,7 +2,7 @@
 """Build the `tiny` conformance fixture directly from SPEC.md.
 
 This is deliberately an independent implementation. If the fixture were emitted
-by `colex-write`, a mistake in the writer would simply be mirrored by the
+by `mokuji-write`, a mistake in the writer would simply be mirrored by the
 reader that was developed against it, and the pair would agree with each other
 rather than with the specification. Written twice, in two languages, from the
 prose alone, a disagreement is visible.
@@ -20,7 +20,7 @@ import sys
 
 HERE = pathlib.Path(__file__).parent
 
-MAGIC = b"COLEXv00"
+MAGIC = b"MOKUJIv0"
 SPEC_MAJOR, SPEC_MINOR = 0, 1
 HEADER_LEN = 64
 SECTION_ENTRY_LEN = 24
@@ -701,17 +701,17 @@ def main():
 
         dump = hexdump(data, regions)
         if args.check:
-            if (HERE / f"{name}.colex").read_bytes() != data:
-                stale.append(f"{name}.colex")
+            if (HERE / f"{name}.mokuji").read_bytes() != data:
+                stale.append(f"{name}.mokuji")
             elif (HERE / f"{name}.hex").read_text() != dump:
                 stale.append(f"{name}.hex")
             else:
                 print(f"{name} is current ({len(data)} bytes)")
             continue
 
-        (HERE / f"{name}.colex").write_bytes(data)
+        (HERE / f"{name}.mokuji").write_bytes(data)
         (HERE / f"{name}.hex").write_text(dump)
-        print(f"wrote {name}.colex ({len(data)} bytes) and {name}.hex")
+        print(f"wrote {name}.mokuji ({len(data)} bytes) and {name}.hex")
 
     if stale:
         sys.exit(f"stale: {', '.join(stale)}; re-run this script")

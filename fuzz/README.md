@@ -1,6 +1,6 @@
 # Fuzzing
 
-A COLex file is untrusted input. The whole proposition is that a stranger's file
+A Mokuji file is untrusted input. The whole proposition is that a stranger's file
 is fetched from object storage and read in a page, so every offset, length, and
 count in it is attacker-controlled, and `SPEC.md` §8 requires a reader to fail
 cleanly rather than crash on any of it.
@@ -11,7 +11,7 @@ cargo +nightly fuzz run meta
 ```
 
 Nightly is required by `cargo-fuzz`, so these do not run in CI.
-`crates/colex-read/tests/hostile.rs` does, and covers the same ground
+`crates/mokuji-read/tests/hostile.rs` does, and covers the same ground
 exhaustively but shallowly: every byte of a fixture flipped, zeroed, maxed, and
 truncated at every length.
 

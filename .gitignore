@@ -1,7 +1,7 @@
 /target
 **/*.rs.bk
-*.colex
-!conformance/fixtures/*.colex
+*.mokuji
+!conformance/fixtures/*.mokuji
 .DS_Store
 
 # Working notes, kept out of the repository
