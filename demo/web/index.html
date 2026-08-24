@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>COLex address lookup</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #1f6feb;
+        --panel: #f7f8fa;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1115;
+          --fg: #e6e8ec;
+          --muted: #9aa1ad;
+          --line: #262a33;
+          --accent: #6ea8fe;
+          --panel: #161a21;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Hiragino Sans",
+          "Noto Sans JP", sans-serif;
+      }
+      main { max-width: 60rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      h1 { font-size: 1.5rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+      .lede { color: var(--muted); margin: 0 0 1.75rem; }
+      .lede code { font-size: .9em; }
+      input[type="search"] {
+        width: 100%;
+        padding: .8rem 1rem;
+        font: inherit;
+        font-size: 1.05rem;
+        color: inherit;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: .6rem;
+      }
+      input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .hints { margin: .6rem 0 1.5rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+      .hints button {
+        font: inherit; font-size: .85rem; color: var(--muted);
+        background: none; border: 1px solid var(--line);
+        border-radius: 999px; padding: .2rem .7rem; cursor: pointer;
+      }
+      .hints button:hover { color: var(--fg); border-color: var(--accent); }
+      .layout { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+      @media (min-width: 56rem) { .layout { grid-template-columns: 1fr 19rem; } }
+      table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); }
+      th { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+      td.coords { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; white-space: nowrap; }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem 1.1rem; align-self: start; }
+      .panel h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .7rem; }
+      .stat { display: flex; justify-content: space-between; gap: 1rem; padding: .22rem 0; }
+      .stat b { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .stat.headline b { font-size: 1.35rem; color: var(--accent); }
+      .log { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line);
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: var(--muted); }
+      .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+      .error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>COLex address lookup</h1>
+      <p class="lede">
+        300,000 Japanese addresses in one static file. No server, no API, no
+        database &mdash; the page fetches byte ranges out of
+        <code>index.colex</code> and reads the index itself. Watch the request
+        count while you type.
+      </p>
+
+      <input
+        type="search"
+        id="q"
+        placeholder="東京都"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <div class="hints" id="hints"></div>
+
+      <div class="layout">
+        <div>
+          <table>
+            <thead>
+              <tr><th>Address</th><th>Coordinates</th></tr>
+            </thead>
+            <tbody id="results"></tbody>
+          </table>
+          <p class="note" id="status">Loading the index&hellip;</p>
+        </div>
+
+        <aside class="panel">
+          <h2>This query</h2>
+          <div class="stat headline"><span>Range requests</span><b id="requests">&mdash;</b></div>
+          <div class="stat"><span>Bytes fetched</span><b id="bytes">&mdash;</b></div>
+          <div class="stat"><span>Results</span><b id="count">&mdash;</b></div>
+          <div class="stat"><span>File size</span><b id="filesize">&mdash;</b></div>
+          <div class="stat"><span>Opening cost</span><b id="opencost">&mdash;</b></div>
+          <div class="log" id="log"></div>
+        </aside>
+      </div>
+
+      <p class="note">
+        Opening the file is paid once and reads the resident set &mdash; the
+        header, the term index, and the offset tables. Every keystroke after
+        that costs a handful of range requests whose number depends on how many
+        results come back, not on how large the file is.
+      </p>
+    </main>
+
+    <script type="module">
+      import { ColexIndex } from "./colex.js";
+
+      const $ = (id) => document.getElementById(id);
+      const bytes = (n) =>
+        n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+
+      const EXAMPLES = ["東京都", "東京都上足立区", "東京都上足立区丸の内", "大阪府", "北海道北千代田市"];
+
+      let index;
+      let generation = 0;
+
+      function renderLog(requests) {
+        $("log").innerHTML = requests
+          .map((r) => `<div>Range ${r.offset.toLocaleString()} +${r.length.toLocaleString()}</div>`)
+          .join("");
+      }
+
+      async function run(query) {
+        const mine = ++generation;
+        if (!query) {
+          $("results").innerHTML = "";
+          $("status").textContent = "Type a prefix. Addresses sort hierarchically, so a prefix is a range.";
+          ["requests", "bytes", "count"].forEach((id) => ($(id).textContent = "—"));
+          $("log").innerHTML = "";
+          return;
+        }
+
+        const requests = [];
+        index.onRequest = (r) => requests.push(r);
+        index.resetStats();
+
+        let results;
+        try {
+          results = await index.lookup(query, 20);
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          return;
+        }
+        if (mine !== generation) return; // a later keystroke won
+
+        $("results").innerHTML = results
+          .map(
+            (r) =>
+              `<tr><td>${r.term.replace(/</g, "&lt;")}</td><td class="coords">${r.payload}</td></tr>`
+          )
+          .join("");
+        $("requests").textContent = index.stats.requests;
+        $("bytes").textContent = bytes(index.stats.bytes);
+        $("count").textContent = results.length;
+        $("status").textContent = results.length
+          ? `${results.length} shown${results.length === 20 ? " (limit)" : ""}.`
+          : "No address starts with that.";
+        renderLog(requests);
+      }
+
+      (async () => {
+        try {
+          index = await ColexIndex.open("./index.colex");
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          return;
+        }
+        $("filesize").textContent = bytes(index.fileLength ?? 0);
+        $("opencost").textContent = `${index.stats.requests} request, ${bytes(index.stats.bytes)}`;
+        $("status").textContent = `${index.numDocs.toLocaleString()} addresses. Type a prefix.`;
+
+        $("hints").innerHTML = EXAMPLES.map((e) => `<button>${e}</button>`).join("");
+        $("hints").addEventListener("click", (event) => {
+          if (event.target.tagName !== "BUTTON") return;
+          $("q").value = event.target.textContent;
+          run($("q").value);
+        });
+        $("q").addEventListener("input", (event) => run(event.target.value.trim()));
+        $("q").focus();
+      })();
+    </script>
+  </body>
+</html>

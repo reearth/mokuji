@@ -92,11 +92,16 @@ hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 cd demo/addresses && ./run.sh
 ```
 
-Against 300,000 addresses in a 12 MB file, completing a prefix costs **three
-range reads and about 3 KB** — and costs the same three reads at any file size,
+Against 300,000 addresses in a 3.8 MB file, completing a prefix costs **three
+range reads and about 700 bytes** — and costs the same three at any file size,
 because a contiguous range of terms is contiguous in every section at once. See
 [demo/addresses](demo/addresses) for the measurements, and for what they do and
 do not show.
+
+The same file is read by a browser in [demo/web](demo/web), in about 300 lines
+of plain JavaScript with no WebAssembly and no bundled decompressor. That is
+what the choice of deflate as the required codec buys: browsers already have
+it.
 
 ## Scope
 

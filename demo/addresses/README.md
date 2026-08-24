@@ -85,6 +85,20 @@ implement the format to find out. The offset tables stay raw because their size
 feeds back into the placement they describe; compressing them is worthwhile and
 wants a settled layout to build on.
 
+## In a browser
+
+`../web` serves the same file to a page that reads it with no WebAssembly and
+no bundled decompressor, because the required codec is one browsers already
+have.
+
+```sh
+cd ../web && python3 serve.py --index ../addresses/addresses.colex
+```
+
+Completing a prefix costs three `Range` requests and about 700 bytes out of the
+3.8 MB file, which is byte-for-byte what the command line tool spends — the two
+readers fetch the same ranges.
+
 ## What these numbers are not
 
 **Compression uses no shared dictionary.** Measured on these very blocks, a
@@ -92,6 +106,12 @@ trained shared dictionary takes term blocks from 7.06x to 27.2x. That is by far
 the largest remaining win, and it is deliberately not taken: browsers cannot
 supply a preset dictionary through their native decompression, so it would cost
 a decompressor in the page. See `SPEC.md` §5.6.1.
+
+**Sorted means byte order, not numeric order.** `一丁目` sorts before `三丁目`
+before `二丁目`, because those are the code points' order. A real address
+normalizer resolves this before indexing — that is what a `ja-address`
+tokenizer is for, and why the specification puts normalization outside itself
+and records which one was used.
 
 **The corpus is synthetic and flatters the format.** `generate.py` draws town
 and city names from small pools, so neighbouring addresses share far longer
