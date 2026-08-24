@@ -17,6 +17,9 @@ usage:
         --terms-per-block <n>          terms per dictionary block (default 128)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
+        --positions                    store where each term occurs, which is
+                                       what a phrase query needs; several times
+                                       the size, and read only by one
         --no-doc-lengths               omit the per-document lengths a scorer
                                        would use; nothing to normalize when
                                        every document is the same length
@@ -36,7 +39,7 @@ usage:
     mokuji dump <file>                  write the index back out as a corpus
     mokuji info <file>                  print the header and section table
     mokuji search <file> <term>... [-n <limit>] [--boost <column>]
-                                   [--length-norm <0..1>]
+                                   [--length-norm <0..1>] [--phrase]
                                        intersect terms, rank them if the file
                                        carries document lengths, and report the
                                        cost
@@ -103,6 +106,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
         match *flag {
             "--no-freqs" => options.has_freqs = false,
             "--no-doc-lengths" => options.doc_lengths = false,
+            "--positions" => options.positions = true,
             "--terms-per-block" => options.terms_per_block = take_number(flag, &mut rest)? as usize,
             "--docs-per-payload-block" => {
                 options.docs_per_payload_block = u32::try_from(take_number(flag, &mut rest)?)
@@ -192,6 +196,7 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
     let mut limit = 10;
     let mut boost: Option<&str> = None;
     let mut length_norm = 0.75;
+    let mut phrase = false;
     let mut terms: Vec<&str> = Vec::new();
     let mut rest = args;
     while let Some((arg, tail)) = rest.split_first() {
@@ -210,6 +215,7 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
                     return Err(Error::Usage("--length-norm is between 0 and 1".into()));
                 }
             }
+            "--phrase" => phrase = true,
             "--boost" => {
                 let (name, tail) = rest
                     .split_first()
@@ -220,7 +226,7 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
             other => terms.push(other),
         }
     }
-    search::run(path.as_ref(), &terms, limit, boost, length_norm)
+    search::run(path.as_ref(), &terms, limit, boost, length_norm, phrase)
 }
 
 fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {

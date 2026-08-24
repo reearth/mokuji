@@ -19,6 +19,7 @@ fn options() -> Options {
         docs_per_payload_block: 2,
         has_freqs: true,
         payload: mokuji_write::PayloadEncoding::Opaque,
+        positions: true,
         doc_lengths: true,
         // The fixture is stored raw so that its hex dump can be read against
         // the specification by hand.
@@ -66,20 +67,23 @@ fn build(meta: &[u8]) -> Vec<u8> {
 
     // Postings are pushed in term order, so the caller sorts. The writer owns
     // no sort: a corpus larger than memory is sorted outside it.
-    let mut postings: BTreeMap<String, BTreeMap<u64, u64>> = BTreeMap::new();
+    let mut postings: BTreeMap<String, BTreeMap<u64, Vec<u64>>> = BTreeMap::new();
     for (text, payload) in corpus() {
         let doc = builder.add_document(payload.as_bytes()).unwrap();
-        for token in text.split(' ') {
-            *postings
+        for (at, token) in text.split(' ').enumerate() {
+            postings
                 .entry(token.to_string())
                 .or_default()
                 .entry(doc)
-                .or_default() += 1;
+                .or_default()
+                .push(at as u64);
         }
     }
     for (term, docs) in &postings {
-        for (&doc, &freq) in docs {
-            builder.add_posting(term.as_bytes(), doc, freq).unwrap();
+        for (doc, places) in docs {
+            builder
+                .add_posting_at(term.as_bytes(), *doc, places)
+                .unwrap();
         }
     }
     builder.finish(meta).unwrap()

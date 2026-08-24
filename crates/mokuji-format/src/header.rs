@@ -30,11 +30,16 @@ impl Flags {
     /// dictionary, typically — omits them entirely rather than storing a run
     /// of ones.
     pub const HAS_FREQS: Flags = Flags(1 << 2);
+    /// A positions section is present, and dictionary entries locate it.
+    ///
+    /// What a phrase query needs and nothing else does. Entries carry two more
+    /// varints when this is set, so a reader must know before it parses one.
+    pub const HAS_POSITIONS: Flags = Flags(1 << 3);
 
     // Bit 0 named a monolithic transducer mode that was never specified and
     // has been withdrawn; it stays reserved so nothing collides with a reader
     // written against the earlier draft.
-    const KNOWN: u16 = 0b110;
+    const KNOWN: u16 = 0b1110;
 
     /// Builds flags from the raw field, rejecting reserved bits.
     pub fn from_bits(bits: u16) -> Result<Self> {
@@ -237,7 +242,9 @@ mod tests {
 
     #[test]
     fn accepts_every_defined_flag() {
-        let all = Flags::HAS_PAYLOAD.with(Flags::HAS_FREQS);
+        let all = Flags::HAS_PAYLOAD
+            .with(Flags::HAS_FREQS)
+            .with(Flags::HAS_POSITIONS);
         let mut buf = sample().encode();
         buf[10..12].copy_from_slice(&all.bits().to_le_bytes());
         assert_eq!(Header::parse(&buf).unwrap().flags, all);

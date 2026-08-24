@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 43f0a51985cf2f9d71c2c9ccd182400245f36bd26677c07c54b355ac229154bd # shrinks to corpus = [[9, 9]], options = Options { terms_per_block: 1, docs_per_payload_block: 1, has_freqs: false, payload: Opaque, positions: false, doc_lengths: false, compress: false }

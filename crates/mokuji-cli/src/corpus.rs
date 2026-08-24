@@ -220,12 +220,23 @@ fn parse_numeral(chars: &[char]) -> Option<u64> {
     total.checked_add(digit.unwrap_or(0))
 }
 
+/// Term to document to the count of occurrences.
+pub type Postings = BTreeMap<Vec<u8>, BTreeMap<u64, u64>>;
+
+/// Term to document to the positions it occupies there.
+pub type Positions = BTreeMap<Vec<u8>, BTreeMap<u64, Vec<u64>>>;
+
 /// A parsed corpus, with its postings already inverted.
 pub struct Corpus {
     /// Payloads in the order they appeared, which fixes the document IDs.
     pub payloads: Vec<Vec<u8>>,
     /// Term to document to frequency, sorted, ready to stream to the builder.
-    pub postings: BTreeMap<Vec<u8>, BTreeMap<u64, u64>>,
+    pub postings: Postings,
+    /// Where each term occurs in each document, when it was asked for.
+    ///
+    /// Only built on request: a position per token occurrence is far more than
+    /// the counts, and nothing but a phrase query wants them.
+    pub positions: Option<Positions>,
     /// One column of raw attribute fields per declared column, per document.
     ///
     /// Kept as text: how many decimals a column carries is a build parameter,
@@ -244,11 +255,17 @@ pub struct Corpus {
 /// A line without a tab is an error rather than a document with empty payload:
 /// silently indexing a malformed file is how a corpus and its index drift
 /// apart.
-pub fn parse(text: &str, tokenizer: Tokenizer, columns: usize) -> Result<Corpus, String> {
+pub fn parse(
+    text: &str,
+    tokenizer: Tokenizer,
+    columns: usize,
+    with_positions: bool,
+) -> Result<Corpus, String> {
     let mut payloads: Vec<Vec<u8>> = Vec::new();
     let mut attributes: Vec<Vec<String>> = vec![Vec::new(); columns];
-    let mut postings: BTreeMap<Vec<u8>, BTreeMap<u64, u64>> = BTreeMap::new();
+    let mut postings: Postings = BTreeMap::new();
     let mut duplicate_keys = 0usize;
+    let mut positions: Option<Positions> = with_positions.then(BTreeMap::new);
 
     for (line_number, line) in text.lines().enumerate() {
         if line.is_empty() {
@@ -296,15 +313,20 @@ pub fn parse(text: &str, tokenizer: Tokenizer, columns: usize) -> Result<Corpus,
             continue;
         }
 
-        for token in tokens {
+        for (at, token) in tokens.into_iter().enumerate() {
             if token.is_empty() {
                 continue;
             }
-            *postings
-                .entry(token.into_bytes())
-                .or_default()
-                .entry(doc)
-                .or_default() += 1;
+            let term = token.into_bytes();
+            if let Some(positions) = positions.as_mut() {
+                positions
+                    .entry(term.clone())
+                    .or_default()
+                    .entry(doc)
+                    .or_default()
+                    .push(at as u64);
+            }
+            *postings.entry(term).or_default().entry(doc).or_default() += 1;
         }
         payloads.push(payload.as_bytes().to_vec());
         for (column, field) in attributes.iter_mut().zip(&fields) {
@@ -318,6 +340,7 @@ pub fn parse(text: &str, tokenizer: Tokenizer, columns: usize) -> Result<Corpus,
     Ok(Corpus {
         payloads,
         postings,
+        positions,
         attributes,
         duplicate_keys,
     })
@@ -328,7 +351,7 @@ mod tests {
     use super::*;
 
     fn parse_split(text: &str) -> Result<Corpus, String> {
-        parse(text, Tokenizer::SpaceSplit, 0)
+        parse(text, Tokenizer::SpaceSplit, 0, false)
     }
 
     #[test]
@@ -368,6 +391,7 @@ mod tests {
             "丸の内一丁目\tA\n丸の内１丁目\tB\n",
             Tokenizer::JaAddress,
             0,
+            false,
         )
         .unwrap();
         assert_eq!(corpus.duplicate_keys, 1);
@@ -378,7 +402,13 @@ mod tests {
 
     #[test]
     fn a_splitting_tokenizer_still_shares_terms_between_documents() {
-        let corpus = parse("tokyo chuo\t1\ntokyo kita\t2\n", Tokenizer::SpaceSplit, 0).unwrap();
+        let corpus = parse(
+            "tokyo chuo\t1\ntokyo kita\t2\n",
+            Tokenizer::SpaceSplit,
+            0,
+            false,
+        )
+        .unwrap();
         assert_eq!(corpus.duplicate_keys, 0);
         assert_eq!(corpus.postings[b"tokyo".as_slice()].len(), 2);
     }
@@ -389,6 +419,7 @@ mod tests {
             "東京都千代田区丸の内\t35.68,139.76\n",
             Tokenizer::Identity,
             0,
+            false,
         )
         .unwrap();
         assert_eq!(corpus.postings.len(), 1);
@@ -459,14 +490,20 @@ mod tests {
 
     #[test]
     fn attribute_columns_come_from_extra_fields() {
-        let corpus = parse("a b\tP\t7\t-2\nc\tQ\t8\t3\n", Tokenizer::SpaceSplit, 2).unwrap();
+        let corpus = parse(
+            "a b\tP\t7\t-2\nc\tQ\t8\t3\n",
+            Tokenizer::SpaceSplit,
+            2,
+            false,
+        )
+        .unwrap();
         assert_eq!(corpus.attributes, vec![vec!["7", "8"], vec!["-2", "3"]]);
     }
 
     #[test]
     fn a_line_missing_a_declared_column_is_an_error() {
-        assert!(parse("a\tP\t7\n", Tokenizer::SpaceSplit, 2).is_err());
-        assert!(parse("a\tP\t7\t1\t9\n", Tokenizer::SpaceSplit, 2).is_err());
+        assert!(parse("a\tP\t7\n", Tokenizer::SpaceSplit, 2, false).is_err());
+        assert!(parse("a\tP\t7\t1\t9\n", Tokenizer::SpaceSplit, 2, false).is_err());
     }
 
     #[test]

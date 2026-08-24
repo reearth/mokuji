@@ -14,6 +14,10 @@ pub struct TermEntry {
     pub postings_offset: u64,
     /// Length of that run in bytes.
     pub postings_len: u64,
+    /// Absolute offset of the term's positions run, if the file has one.
+    pub positions_offset: u64,
+    /// Length of that run in bytes; zero when the file carries no positions.
+    pub positions_len: u64,
 }
 
 /// The resident index over block boundary keys.
@@ -97,7 +101,7 @@ impl<'a> TermIndex<'a> {
 }
 
 /// Finds `term` in one term block, which is one range read.
-pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
+pub fn find_in_block(block: &[u8], term: &[u8], positions: bool) -> Result<Option<TermEntry>> {
     let (count, mut pos) = varint::decode(block)?;
     let (first_term_id, next) = varint::decode(&block[pos..])?;
     pos += next;
@@ -105,6 +109,7 @@ pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
     let mut key = Vec::new();
     let mut previous = Vec::new();
     let mut postings_offset: Option<u64> = None;
+    let mut previous_positions: Option<u64> = None;
     for i in 0..count {
         pos = front_coded::decode_into(block, pos, &mut key)?;
         if i > 0 && key <= previous {
@@ -126,6 +131,22 @@ pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
         postings_offset = Some(offset);
         let (postings_len, n) = varint::decode(&block[pos..])?;
         pos += n;
+        let (positions_offset, positions_len) = if positions {
+            let (delta, n) = varint::decode(&block[pos..])?;
+            pos += n;
+            let at = match previous_positions {
+                None => delta,
+                Some(previous) => previous.checked_add(delta).ok_or(Error::Malformed {
+                    detail: "positions offset delta overflows",
+                })?,
+            };
+            previous_positions = Some(at);
+            let (len, n) = varint::decode(&block[pos..])?;
+            pos += n;
+            (at, len)
+        } else {
+            (0, 0)
+        };
 
         // Terms ascend, so a key past the target settles the question without
         // decoding the rest of the block.
@@ -135,6 +156,8 @@ pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
                 doc_freq,
                 postings_offset: offset,
                 postings_len,
+                positions_offset,
+                positions_len,
             }));
         }
         if key.as_slice() > term {
@@ -150,7 +173,7 @@ pub fn find_in_block(block: &[u8], term: &[u8]) -> Result<Option<TermEntry>> {
 ///
 /// A query stops at the term it wants; this reads the block out in full, which
 /// is what a verification pass needs.
-pub fn decode_block(block: &[u8]) -> Result<Vec<(Vec<u8>, TermEntry)>> {
+pub fn decode_block(block: &[u8], positions: bool) -> Result<Vec<(Vec<u8>, TermEntry)>> {
     let (count, mut pos) = varint::decode(block)?;
     let (first_term_id, next) = varint::decode(&block[pos..])?;
     pos += next;
@@ -158,6 +181,7 @@ pub fn decode_block(block: &[u8]) -> Result<Vec<(Vec<u8>, TermEntry)>> {
     let mut out = Vec::with_capacity(count.min(1024) as usize);
     let mut key = Vec::new();
     let mut postings_offset: Option<u64> = None;
+    let mut previous_positions: Option<u64> = None;
     for i in 0..count {
         pos = front_coded::decode_into(block, pos, &mut key)?;
         if let Some((previous, _)) = out.last() {
@@ -181,6 +205,22 @@ pub fn decode_block(block: &[u8]) -> Result<Vec<(Vec<u8>, TermEntry)>> {
         postings_offset = Some(offset);
         let (postings_len, n) = varint::decode(&block[pos..])?;
         pos += n;
+        let (positions_offset, positions_len) = if positions {
+            let (delta, n) = varint::decode(&block[pos..])?;
+            pos += n;
+            let at = match previous_positions {
+                None => delta,
+                Some(previous) => previous.checked_add(delta).ok_or(Error::Malformed {
+                    detail: "positions offset delta overflows",
+                })?,
+            };
+            previous_positions = Some(at);
+            let (len, n) = varint::decode(&block[pos..])?;
+            pos += n;
+            (at, len)
+        } else {
+            (0, 0)
+        };
 
         out.push((
             key.clone(),
@@ -189,6 +229,8 @@ pub fn decode_block(block: &[u8]) -> Result<Vec<(Vec<u8>, TermEntry)>> {
                 doc_freq,
                 postings_offset: offset,
                 postings_len,
+                positions_offset,
+                positions_len,
             },
         ));
     }

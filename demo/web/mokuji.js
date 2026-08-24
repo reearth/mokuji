@@ -14,6 +14,7 @@ const SECTION_ENTRY_LEN = 24;
 
 const FLAG_HAS_PAYLOAD = 1 << 1;
 const FLAG_HAS_FREQS = 1 << 2;
+const FLAG_HAS_POSITIONS = 1 << 3;
 
 const SECTION = {
   META: 0x0001,
@@ -409,21 +410,32 @@ export class MokujiIndex {
     const cursor = new Cursor(block);
     const entryCount = cursor.varint();
     const firstTermId = cursor.varint();
+    const hasPositions = Boolean(this.flags & FLAG_HAS_POSITIONS);
     const entries = [];
     let key = new Uint8Array(0);
     let postingsOffset = null;
+    let positionsOffset = null;
     for (let i = 0; i < entryCount; i++) {
       key = cursor.key(key);
       const docFreq = cursor.varint();
       const delta = cursor.varint();
       postingsOffset = postingsOffset === null ? delta : postingsOffset + delta;
-      entries.push({
+      const entry = {
         term: key,
         termId: firstTermId + i,
         docFreq,
         postingsOffset,
         postingsLength: cursor.varint(),
-      });
+      };
+      if (hasPositions) {
+        // Two further varints an entry carries only when the file has
+        // positions, which is why the flag is read before any entry is.
+        const gap = cursor.varint();
+        positionsOffset = positionsOffset === null ? gap : positionsOffset + gap;
+        entry.positionsOffset = positionsOffset;
+        entry.positionsLength = cursor.varint();
+      }
+      entries.push(entry);
     }
     return entries;
   }

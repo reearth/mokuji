@@ -53,6 +53,7 @@ fn every_section_is_present_and_within_the_file() {
             // Optional, and present here because the fixture is a document
             // collection rather than a dictionary.
             SectionId::DOC_LENGTHS,
+            SectionId::POSITIONS,
         ]
     );
     for section in &sections {
@@ -172,6 +173,7 @@ mod dictionary {
                 values_per_doc: 2,
                 scale_exponent: -6,
             },
+            positions: false,
             doc_lengths: false,
             compress,
         })

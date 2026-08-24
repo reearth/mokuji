@@ -38,6 +38,7 @@ fn options_strategy() -> impl Strategy<Value = Options> {
             docs_per_payload_block: docs,
             has_freqs,
             payload: mokuji_write::PayloadEncoding::Opaque,
+            positions: false,
             doc_lengths,
             compress,
         })
@@ -271,4 +272,87 @@ fn columns_must_have_distinct_names() {
     };
     builder.add_column(column()).unwrap();
     assert!(builder.add_column(column()).is_err());
+}
+
+proptest! {
+    #[test]
+    fn positions_read_back_as_the_places_the_terms_were(
+        corpus in corpus_strategy(),
+        options in options_strategy(),
+    ) {
+        // Positions need frequencies: the frequency is what says how many
+        // positions belong to each document.
+        let options = Options { positions: true, has_freqs: true, ..options };
+        let mut builder = Builder::new(options).unwrap();
+
+        // Where each term sits in each document, which is what a phrase query
+        // tests and what nothing else needs.
+        let mut expected: BTreeMap<String, BTreeMap<u64, Vec<u64>>> = BTreeMap::new();
+        for (i, tokens) in corpus.iter().enumerate() {
+            let doc = builder.add_document(format!("payload-{i}").into_bytes()).unwrap();
+            for (at, &token) in tokens.iter().enumerate() {
+                expected.entry(VOCABULARY[token].to_string()).or_default()
+                    .entry(doc).or_default().push(at as u64);
+            }
+        }
+        for (term, docs) in &expected {
+            for (&doc, places) in docs {
+                builder.add_posting_at(term.as_bytes(), doc, places).unwrap();
+            }
+        }
+
+        let index = block_on(Index::open(SliceReader::new(builder.finish(META).unwrap()))).unwrap();
+        prop_assert!(index.has_positions());
+
+        for (term, docs) in &expected {
+            let entry = block_on(index.lookup(term.as_bytes())).unwrap().unwrap();
+            let postings = block_on(index.postings(&entry)).unwrap();
+            let positions = block_on(index.positions(&entry, &postings)).unwrap();
+
+            prop_assert_eq!(positions.len(), postings.docs.len());
+            for (i, &doc) in postings.docs.iter().enumerate() {
+                prop_assert_eq!(&positions[i], &docs[&doc]);
+                // The frequency is how many positions there are, by definition.
+                prop_assert_eq!(postings.freqs[i] as usize, positions[i].len());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_file_without_positions_reports_none() {
+    let mut builder = Builder::new(Options::default()).unwrap();
+    builder.add_document(b"p".to_vec()).unwrap();
+    builder.add_posting(b"t", 0, 3).unwrap();
+    let index = block_on(Index::open(SliceReader::new(builder.finish(META).unwrap()))).unwrap();
+
+    assert!(!index.has_positions());
+    let entry = block_on(index.lookup(b"t")).unwrap().unwrap();
+    let postings = block_on(index.postings(&entry)).unwrap();
+    assert!(block_on(index.positions(&entry, &postings))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn positions_must_ascend() {
+    let mut builder = Builder::new(Options {
+        positions: true,
+        ..Options::default()
+    })
+    .unwrap();
+    builder.add_document(b"p".to_vec()).unwrap();
+    assert!(builder.add_posting_at(b"t", 0, &[3, 1]).is_err());
+    assert!(builder.add_posting_at(b"t", 0, &[2, 2]).is_err());
+    assert!(builder.add_posting_at(b"t", 0, &[]).is_err());
+}
+
+#[test]
+fn positions_need_frequencies() {
+    let options = Options {
+        positions: true,
+        has_freqs: false,
+        ..Options::default()
+    };
+    assert!(Builder::new(options).is_err());
 }

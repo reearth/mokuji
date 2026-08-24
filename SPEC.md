@@ -290,7 +290,8 @@ header has no floating-point representation to disagree about.
 | 0 | `TERMDICT_MONOLITHIC` | The term dictionary is a single monolithic FST (§5.4.2) rather than the blocked form |
 | 1 | `HAS_PAYLOAD` | A payload section is present |
 | 2 | `HAS_FREQS` | Postings runs carry a term frequency per document |
-| 3-15 | reserved | MUST be zero |
+| 3 | `HAS_POSITIONS` | A positions section is present, and dictionary entries locate it; requires `HAS_FREQS` |
+| 4-15 | reserved | MUST be zero |
 
 ### 5.2 Section table
 
@@ -327,7 +328,7 @@ Section IDs:
 | `0x0033` | Document attributes | no |
 | `0x0040` | Shared zstd dictionary | if any `codec` is 2 |
 | `0x0050` | Term pair cache | reserved, not defined in this version |
-| `0x0060` | Positions | reserved, not defined in this version |
+| `0x0060` | Positions | if `HAS_POSITIONS` |
 
 IDs below `0x8000` are reserved for this specification. IDs at or above
 `0x8000` are available for application-specific use and MUST be ignored by a
@@ -410,6 +411,8 @@ Each entry:
 | `doc_freq` | `varint`, number of documents containing the term |
 | `postings_offset` | `varint`; first entry absolute, later entries the delta from the previous entry's offset |
 | `postings_len` | `varint` |
+| `positions_offset` | `varint`, present only if `HAS_POSITIONS`; first entry absolute, later entries the delta from the previous entry's offset |
+| `positions_len` | `varint`, present only if `HAS_POSITIONS` |
 
 The term ID of entry `j` is `first_term_id + j`. It is not stored per entry:
 IDs are dense and assigned in term order, so position carries them. This is the
@@ -664,6 +667,47 @@ decompression, so a dictionary codec requires a decompressor in the page no
 matter which algorithm it uses, and that trade is worth making deliberately
 rather than by default.
 
+### 5.6a Positions (`0x0060`)
+
+Optional. Where in a document each of its terms occurs, which is what a phrase
+query needs and nothing else does.
+
+One run per term, located by the `positions_offset` and `positions_len` its
+dictionary entry carries. A run holds, for each of the term's documents **in the
+order the postings run gives them**, bit-packed groups (§5.4.1) of that
+document's positions:
+
+| Field | Encoding |
+|---|---|
+| per document | `frequency` values, the first a position and the rest gaps less one |
+
+The frequency comes from the postings run, so positions are read after postings
+and never instead of them — and `HAS_POSITIONS` therefore requires `HAS_FREQS`,
+since without frequencies nothing says where one document's positions end and
+the next begin. A reader MUST reject a file that sets one without the other. Positions within a document are strictly increasing,
+and a reader MUST reject a run whose decoded values are not.
+
+A run is decoded from the front: to reach the fifth document's positions a
+reader decodes the four before it. Blocks are not involved, because a phrase
+query wants the positions of the term it is testing, not of one document.
+
+#### What positions cost, and what they do not
+
+Measured on 2,523 documents and 5.1 million token occurrences (`demo/documents`),
+positions are the largest thing in the file — larger than everything else put
+together.
+
+**They cost bytes and not reads.** A run is fetched only by a query that tests a
+phrase; every other query never touches the section, and the bound in §4 is
+unchanged for them. A phrase query pays one further read per term, so `3k + m`
+rather than `2k + m`.
+
+That distinction is the whole argument for carrying them. An index that is
+downloaded before it is used pays for positions on every query, whether or not
+it asks a question that needs them, which is why formats meant to be downloaded
+tend to make positions optional and their users tend to leave them off. An index
+that is read in ranges pays only for what it reads.
+
 ### 5.7 Document lengths (`0x0032`)
 
 Optional. The length in tokens of every document, in document ID order, as
@@ -817,9 +861,14 @@ file readable by every reader while leaving room to add a better one.
 Block offsets already exist. A second framing layer would add a dependency and
 a second source of truth for the same information.
 
-**No positions in this version.**
-Address lookup does not need phrase queries. Section `0x0060` is reserved so
-that adding them later is not a breaking change.
+**Positions are optional and located from the dictionary entry.**
+Address lookup does not need phrase queries, and an index that carries positions
+is several times the size of one that does not. Putting them inside the postings
+run would have made every query pay for them; putting them in their own section,
+found through two more varints in an entry that is being read anyway, means they
+cost bytes and not reads. A format read in ranges can afford that where one
+downloaded whole cannot, which is the clearest case where the transport changes
+what is worth storing.
 
 **The required term index encoding is a front-coded key list, not an FST.**
 Once the dictionary is blocked, the index holds only block boundary keys —
@@ -956,7 +1005,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.mokuji` is 803 bytes and indexes four documents:
+`conformance/fixtures/tiny.mokuji` is 863 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -974,53 +1023,51 @@ query through it, `chuo`.
 **Header**, at offset 0:
 
 ```
-00000000  4d 4f 4b 55 4a 49 76 30 00 01 06 00 07 00 00 00  |MOKUJIv0........|
+00000000  4d 4f 4b 55 4a 49 76 30 00 01 0e 00 09 00 00 00  |MOKUJIv0........|
 00000010  04 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00  |................|
-00000020  40 00 00 00 00 00 00 00 a8 00 00 00 00 00 00 00  |@...............|
+00000020  40 00 00 00 00 00 00 00 d8 00 00 00 00 00 00 00  |@...............|
 ```
 
-Magic `MOKUJIv0`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
-`HAS_FREQS`; seven sections; four documents totalling eight tokens; the section
-table is 0xa8 bytes at offset 0x40.
+Magic `MOKUJIv0`; version 0.1; flags `0x000e`, so `HAS_PAYLOAD`, `HAS_FREQS`
+and `HAS_POSITIONS`; nine sections; four documents totalling eight tokens; the
+section table is 0xd8 bytes at offset 0x40.
 
-**Term index** (`0x0010`), at offset 565:
+**Term index** (`0x0010`), at offset 600:
 
 ```
-00000235  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
-00000245  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
+00000258  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
+00000268  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
 ```
 
 Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 592: block 0 spans `0x2a9..0x2bf`.
+**Term block offsets** (`0x0012`), at 627: block 0 spans `0x2d8..0x2f3`.
 
-**Term block 0**, at 681, 22 bytes:
+**Term block 0**, at 728, 27 bytes:
 
 ```
-000002a9  02 00 00 07 63 68 69 79 6f 64 61 01 96 05 00 02  |....chiyoda.....|
-000002b9  02 75 6f 02 00 05                                |.uo...|
+000002d8  02 00 00 07 63 68 69 79 6f 64 61 01 b9 05 00 cc  |....chiyoda.....|
+000002e8  05 02 02 02 75 6f 02 00 05 02 04                 |....uo.....|
 ```
 
-Two entries, first term ID 0.
+Two entries, first term ID 0. Each carries two more fields than it would
+otherwise, because `HAS_POSITIONS` is set.
 
 Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1;
-`postings_offset` `96 05`, the first entry so absolute — 0x16 plus 5 shifted by
-seven is 662; and `postings_len` **0**. The length is what matters: this term's
-postings are implied (§5.3.4). It occurs in exactly one document, document 0,
-because its own term ID is 0. Nothing is stored and nothing is read.
+`postings_offset` `b9 05`, the first entry so absolute — 0x39 plus 5 shifted by
+seven is 697; `postings_len` **0**, so this term's postings are implied
+(§5.3.4); `positions_offset` `cc 05`, again absolute, 716; `positions_len` 2.
 
-Entry 1: `shared_len` 2, `suffix_len` 2, `uo` — the term is `ch` + `uo`, which
-is the front-coding paying for itself on a two-term block; `doc_freq` 2;
-`postings_offset` delta 0, because the entry before it consumed no bytes, so
-604 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
-rather than stored.
+Entry 1: `shared_len` 2, `suffix_len` 2, `uo`; `doc_freq` 2; postings offset
+delta 0, because the entry before it consumed no bytes, so 697 again;
+`postings_len` 5; positions offset delta 2, so 718; `positions_len` 4.
 
-**Postings** for `chuo`, at 666, 5 bytes:
+**Postings** for `chuo`, at 697, 5 bytes:
 
 ```
-0000029a  00 02 01 03 00                                   |.....|
+000002b9  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
@@ -1029,31 +1076,41 @@ are gaps less one, so the documents are 1 and 1 + 1 + 1 = 3. The frequency
 group has `bit_width` 0 and therefore no bytes at all: every frequency is 1,
 stored as 0.
 
-Five bytes for a two-document posting list with frequencies, and the
-frequencies were free.
-
-**Payload offsets** (`0x0031`), at 624:
+**Positions** for `chuo`, at 718, 4 bytes:
 
 ```
-00000270  00 00 00 00 02 00 00 00 02 00 00 00 e5 02 00 00  |................|
+000002ce  01 01 01 01                                      |....|
 ```
 
-Payload codec 0, opaque, so no value count and no scale; two documents to a
-block; two blocks; then the offsets. Document 1 is at index 1 of block 0.
+Two documents, one occurrence each, so two groups of one value. Each is
+`bit_width` 1 and one byte holding `1`: `chuo` is the second word of both
+documents, at position 1.
 
-**Document lengths** (`0x0032`), at 660, two bytes:
+**Document lengths** (`0x0032`), at 695, two bytes:
 
 ```
-00000294  02 aa                                            |..|
+000002b7  02 aa                                            |..|
 ```
 
 One bit-packed group of four values at `bit_width` 2, then one byte holding
 them least significant bit first: `0xaa` is `10 10 10 10`, so every document is
 two tokens long. Four documents, two bytes, and a scorer can normalize.
 
+**Payload offsets** (`0x0031`), at 659:
+
+```
+00000293  00 00 00 00 02 00 00 00 02 00 00 00              |............|
+```
+
+Payload codec 0, opaque, so no value count and no scale; two documents to a
+block; two blocks; then the offsets.
+
 **Cost.** One term block read, one postings read, and one payload read per
 distinct payload block. For `tokyo AND chuo`, which matches document 1: four
 reads plus one, against a bound of `2k + m` = 5.
 
 For `chiyoda` alone: one term block read and one payload read. The postings
-read does not happen, because there were no postings to read.
+read does not happen, because there were no postings to read. Nor does the
+positions read, because nothing asked for a phrase — the section is 12 bytes of
+a 863 byte file that most queries never touch, which is the shape the argument
+in §5.6a is about.

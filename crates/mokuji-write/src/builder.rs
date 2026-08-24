@@ -34,6 +34,12 @@ pub struct Options {
     /// Not what it means — see `SPEC.md` §5.5. The format states the encoding
     /// and has no opinion about the subject.
     pub payload: PayloadEncoding,
+    /// Whether to store where each term occurs in each document.
+    ///
+    /// What a phrase query needs and nothing else does. The section is larger
+    /// than the rest of the file put together, and it costs bytes rather than
+    /// reads: a query that tests no phrase never touches it.
+    pub positions: bool,
     /// Whether to store the length in tokens of every document.
     ///
     /// What BM25 needs and the header cannot give: the header carries the
@@ -58,6 +64,7 @@ impl Default for Options {
             docs_per_payload_block: 64,
             has_freqs: true,
             payload: PayloadEncoding::Opaque,
+            positions: false,
             doc_lengths: false,
             compress: true,
         }
@@ -120,6 +127,7 @@ struct Term {
     term: Vec<u8>,
     doc_freq: u64,
     run: Vec<u8>,
+    positions: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -127,6 +135,7 @@ struct OpenTerm {
     term: Vec<u8>,
     docs: Vec<u64>,
     freqs: Vec<u64>,
+    positions: Vec<Vec<u64>>,
 }
 
 impl Builder {
@@ -135,6 +144,13 @@ impl Builder {
         if options.terms_per_block == 0 || options.docs_per_payload_block == 0 {
             return Err(Error::Malformed {
                 detail: "block sizes must be non-zero",
+            });
+        }
+        // A positions run says nothing about where one document's positions end
+        // and the next begin; the frequency is that boundary.
+        if options.positions && !options.has_freqs {
+            return Err(Error::Malformed {
+                detail: "positions need frequencies, which say how many belong to each document",
             });
         }
         Ok(Builder {
@@ -223,6 +239,7 @@ impl Builder {
                 }
                 open.docs.push(doc);
                 open.freqs.push(freq);
+                open.positions.push(Vec::new());
             }
             Some(open) if term <= open.term.as_slice() => {
                 return Err(Error::Malformed {
@@ -235,6 +252,7 @@ impl Builder {
                     term: term.to_vec(),
                     docs: vec![doc],
                     freqs: vec![freq],
+                    positions: vec![Vec::new()],
                 });
             }
         }
@@ -246,6 +264,27 @@ impl Builder {
             }
             self.doc_lengths[doc] += freq;
         }
+        Ok(())
+    }
+
+    /// Records that `term` occurs in `doc` at exactly these positions.
+    ///
+    /// The frequency is the number of positions, so this is `add_posting` with
+    /// the detail a phrase query needs. Positions must ascend.
+    pub fn add_posting_at(&mut self, term: &[u8], doc: u64, positions: &[u64]) -> Result<()> {
+        if positions.is_empty() {
+            return Err(Error::Malformed {
+                detail: "a posting with no positions is not a posting",
+            });
+        }
+        if positions.windows(2).any(|w| w[1] <= w[0]) {
+            return Err(Error::Malformed {
+                detail: "positions within a document are not ascending",
+            });
+        }
+        self.add_posting(term, doc, positions.len() as u64)?;
+        let open = self.open.as_mut().expect("add_posting opened a term");
+        *open.positions.last_mut().expect("one per document") = positions.to_vec();
         Ok(())
     }
 
@@ -368,14 +407,18 @@ impl Builder {
         if attributes.is_some() {
             order.push(SectionId::DOC_ATTRIBUTES);
         }
-        order.extend([
-            SectionId::POSTINGS,
-            SectionId::TERM_BLOCKS,
-            SectionId::PAYLOAD,
-        ]);
+        order.push(SectionId::POSTINGS);
+        if self.options.positions {
+            // Before the term blocks that point into it, for the same reason
+            // the postings are: so that an offset is known before any entry is
+            // written and the file can be built in one pass.
+            order.push(SectionId::POSITIONS);
+        }
+        order.extend([SectionId::TERM_BLOCKS, SectionId::PAYLOAD]);
         let table_len = SECTION_ENTRY_LEN * order.len();
 
         let postings_len: u64 = self.terms.iter().map(|t| t.run.len() as u64).sum();
+        let positions_len: u64 = self.terms.iter().map(|t| t.positions.len() as u64).sum();
         let postings_at = (HEADER_LEN + table_len) as u64
             + meta.len() as u64
             + term_index.len() as u64
@@ -385,7 +428,9 @@ impl Builder {
             + doc_lengths.as_ref().map_or(0, |d| d.len() as u64)
             + attributes.as_ref().map_or(0, |a| a.len() as u64);
 
-        let (blocks, term_blocks_codec) = self.pack(self.term_blocks(&term_chunks, postings_at))?;
+        let positions_at = postings_at + postings_len;
+        let (blocks, term_blocks_codec) =
+            self.pack(self.term_blocks(&term_chunks, postings_at, positions_at))?;
 
         let mut placed = Vec::new();
         let mut cursor = (HEADER_LEN + table_len) as u64;
@@ -402,6 +447,7 @@ impl Builder {
                     attributes.as_ref().expect("present when ordered").len() as u64
                 }
                 SectionId::POSTINGS => postings_len,
+                SectionId::POSITIONS => positions_len,
                 SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
                 SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
                 _ => unreachable!("only the sections in `order` are sized"),
@@ -435,6 +481,9 @@ impl Builder {
         let mut flags = Flags::HAS_PAYLOAD;
         if self.options.has_freqs {
             flags = flags.with(Flags::HAS_FREQS);
+        }
+        if self.options.positions {
+            flags = flags.with(Flags::HAS_POSITIONS);
         }
         let header = Header {
             spec_major: SPEC_MAJOR,
@@ -497,6 +546,10 @@ impl Builder {
                     .terms
                     .iter()
                     .for_each(|t| out.extend_from_slice(&t.run)),
+                SectionId::POSITIONS => self
+                    .terms
+                    .iter()
+                    .for_each(|t| out.extend_from_slice(&t.positions)),
                 SectionId::PAYLOAD => payload_blocks.iter().for_each(|b| out.extend_from_slice(b)),
                 _ => unreachable!("only the sections in `order` are written"),
             }
@@ -529,10 +582,16 @@ impl Builder {
         Ok((units.remove(0), codec))
     }
 
-    fn term_blocks(&self, chunks: &[&[Term]], postings_base: u64) -> Vec<Vec<u8>> {
+    fn term_blocks(
+        &self,
+        chunks: &[&[Term]],
+        postings_base: u64,
+        positions_base: u64,
+    ) -> Vec<Vec<u8>> {
         let mut blocks = Vec::with_capacity(chunks.len());
         let mut term_id = 0u64;
         let mut postings_at = postings_base;
+        let mut positions_at = positions_base;
         for chunk in chunks {
             let mut block = Vec::new();
             varint::encode(chunk.len() as u64, &mut block);
@@ -540,6 +599,7 @@ impl Builder {
 
             let mut previous_key: &[u8] = b"";
             let mut previous_offset: Option<u64> = None;
+            let mut previous_positions: Option<u64> = None;
             for term in chunk.iter() {
                 front_coded::encode(&term.term, previous_key, &mut block);
                 varint::encode(term.doc_freq, &mut block);
@@ -551,6 +611,18 @@ impl Builder {
                     &mut block,
                 );
                 varint::encode(term.run.len() as u64, &mut block);
+                if self.options.positions {
+                    varint::encode(
+                        match previous_positions {
+                            None => positions_at,
+                            Some(previous) => positions_at - previous,
+                        },
+                        &mut block,
+                    );
+                    varint::encode(term.positions.len() as u64, &mut block);
+                    previous_positions = Some(positions_at);
+                    positions_at += term.positions.len() as u64;
+                }
                 previous_key = &term.term;
                 previous_offset = Some(postings_at);
                 postings_at += term.run.len() as u64;
@@ -565,6 +637,27 @@ impl Builder {
         let Some(open) = self.open.take() else {
             return;
         };
+
+        // Positions, in the same document order the postings run uses.
+        let mut positions = Vec::new();
+        if self.options.positions {
+            for (row, &freq) in open.positions.iter().zip(&open.freqs) {
+                let mut values = Vec::with_capacity(row.len());
+                let mut previous: Option<u64> = None;
+                for &at in row {
+                    values.push(match previous {
+                        None => at,
+                        Some(previous) => at - previous - 1,
+                    });
+                    previous = Some(at);
+                }
+                // A posting recorded without positions still needs its share of
+                // the run, or the frequencies stop lining up.
+                values.resize(freq as usize, 0);
+                bitpack::encode(&values, &mut positions);
+            }
+        }
+
         // The dictionary can state this term's postings by itself: it names one
         // document, that document's ID is the ID this term is about to be
         // given, and it occurs there once (SPEC.md §5.3.4). Writing a run would
@@ -575,9 +668,11 @@ impl Builder {
                 term: open.term,
                 doc_freq: 1,
                 run: Vec::new(),
+                positions,
             });
             return;
         }
+
         let mut run = vec![0u8]; // codec 0
         varint::encode(open.docs.len() as u64, &mut run);
 
@@ -603,6 +698,7 @@ impl Builder {
             term: open.term,
             doc_freq: open.docs.len() as u64,
             run,
+            positions,
         });
     }
 }

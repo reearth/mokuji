@@ -250,3 +250,38 @@ fn the_attribute_column_is_the_one_the_fixture_recorded() {
     assert_eq!(index.column("importance").unwrap().values.len(), 5);
     assert_eq!(reader.reads(), 0);
 }
+
+#[test]
+fn the_positions_are_the_ones_the_fixture_recorded() {
+    let reader = CountingReader::new(SliceReader::new(load("tiny")));
+    let index = block_on(Index::open(&reader)).unwrap();
+    assert!(index.has_positions());
+
+    // Written by the Python implementation, read by this one. Every document is
+    // "<something> <something>", so the second word sits at position 1.
+    let entry = block_on(index.lookup(b"chuo")).unwrap().expect("present");
+    let postings = block_on(index.postings(&entry)).unwrap();
+    let positions = block_on(index.positions(&entry, &postings)).unwrap();
+
+    assert_eq!(postings.docs, [1, 3]);
+    assert_eq!(positions, vec![vec![1u64], vec![1]]);
+
+    let entry = block_on(index.lookup(b"tokyo")).unwrap().expect("present");
+    let postings = block_on(index.postings(&entry)).unwrap();
+    let positions = block_on(index.positions(&entry, &postings)).unwrap();
+    assert_eq!(postings.docs, [0, 1, 2]);
+    assert_eq!(positions, vec![vec![0u64], vec![0], vec![0]]);
+}
+
+#[test]
+fn a_query_that_asks_no_phrase_never_reads_the_positions() {
+    let reader = CountingReader::new(SliceReader::new(load("tiny")));
+    let index = block_on(Index::open(&reader)).unwrap();
+    reader.reset();
+
+    // The point of putting positions in their own section: they cost bytes in
+    // the file and no reads in a query that does not want them.
+    let matches = block_on(index.search(&[b"tokyo", b"chuo"])).unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(reader.reads(), 5);
+}

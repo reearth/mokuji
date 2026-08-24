@@ -20,6 +20,7 @@ pub fn run(
     limit: usize,
     boost: Option<&str>,
     length_norm: f64,
+    phrase: bool,
 ) -> Result<(), Error> {
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open(&reader))?;
@@ -53,7 +54,12 @@ pub fn run(
         })?),
         None => None,
     };
-    let ranked = block_on(rank(&index, &terms, column, length_norm))?;
+    if phrase && !index.has_positions() {
+        return Err(Error::Invalid(
+            "this index carries no positions, so it cannot test a phrase".into(),
+        ));
+    }
+    let ranked = block_on(rank(&index, &terms, column, length_norm, phrase))?;
     let after_postings = reader.reads();
 
     let shown: Vec<u64> = ranked.iter().take(limit).map(|(doc, _)| *doc).collect();
@@ -68,8 +74,9 @@ pub fn run(
 
     eprintln!();
     eprintln!(
-        "{} match(es), {} shown{}",
+        "{} match(es){}, {} shown{}",
         ranked.len(),
+        if phrase { " as a phrase" } else { "" },
         shown.len(),
         if index.doc_lengths().is_some() {
             match boost {
@@ -103,6 +110,7 @@ async fn rank<R: RangeReader>(
     terms: &[String],
     boost: Option<&mokuji_read::Column>,
     length_norm: f64,
+    phrase: bool,
 ) -> Result<Vec<(u64, Option<f64>)>, Error> {
     let mut runs = Vec::with_capacity(terms.len());
     for term in terms {
@@ -118,6 +126,28 @@ async fn rank<R: RangeReader>(
     }
     if matched.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if phrase {
+        // One further read per term, and only here. The terms have to occur at
+        // consecutive positions, in the order they were typed.
+        let mut places = Vec::with_capacity(runs.len());
+        for (entry, postings) in &runs {
+            places.push(index.positions(entry, postings).await?);
+        }
+        matched.retain(|doc| {
+            let at = |i: usize| -> &[u64] {
+                let run = &runs[i].1;
+                let index = run.docs.binary_search(doc).expect("in the intersection");
+                places[i][index].as_slice()
+            };
+            at(0).iter().any(|&start| {
+                (1..runs.len()).all(|i| at(i).binary_search(&(start + i as u64)).is_ok())
+            })
+        });
+        if matched.is_empty() {
+            return Ok(Vec::new());
+        }
     }
 
     let Some(lengths) = index.doc_lengths() else {

@@ -302,6 +302,12 @@ impl<R: RangeReader> Index<R> {
             resident.insert(id, decode_unit(codec, bytes)?);
         }
 
+        if header.flags.contains(Flags::HAS_POSITIONS) && !header.flags.contains(Flags::HAS_FREQS) {
+            return Err(Error::Malformed {
+                detail: "positions need frequencies, which say how many belong to each document",
+            });
+        }
+
         // Postings are addressed one run at a time, and a run is a handful of
         // bytes; compressing each would grow the section and would break the
         // single request that covers a contiguous range of them.
@@ -416,6 +422,66 @@ impl<R: RangeReader> Index<R> {
             .and_then(|lengths| lengths.get(doc as usize).copied())
     }
 
+    /// Whether the file carries positions (`SPEC.md` §5.6a).
+    pub fn has_positions(&self) -> bool {
+        self.header.flags.contains(Flags::HAS_POSITIONS)
+    }
+
+    /// Where each of a term's occurrences sits, per document.
+    ///
+    /// One further range read, and only for a query that tests a phrase. The
+    /// returned lists are parallel to `postings.docs`.
+    pub async fn positions(
+        &self,
+        entry: &TermEntry,
+        postings: &postings::Postings,
+    ) -> Result<Vec<Vec<u64>>> {
+        if !self.has_positions() || entry.positions_len == 0 {
+            return Ok(Vec::new());
+        }
+        let len = u32::try_from(entry.positions_len).map_err(|_| Error::Malformed {
+            detail: "positions run is implausibly long",
+        })?;
+        let run = self.reader.read_range(entry.positions_offset, len).await?;
+
+        // A run is decoded from the front: the frequencies say how many values
+        // belong to each document, and they come from the postings.
+        let mut pos = 0;
+        let mut out = Vec::with_capacity(postings.docs.len().min(1024));
+        for &freq in &postings.freqs {
+            let count = usize::try_from(freq).map_err(|_| Error::Malformed {
+                detail: "term frequency overflows",
+            })?;
+            let (values, next) = bitpack::decode(&run, pos, count)?;
+            pos = next;
+
+            let mut positions = Vec::with_capacity(count.min(1024));
+            let mut current: Option<u64> = None;
+            for value in values {
+                // The first is a position; the rest are gaps less one, so that
+                // adjacent occurrences pack to nothing.
+                let at = match current {
+                    None => value,
+                    Some(previous) => previous
+                        .checked_add(value)
+                        .and_then(|v| v.checked_add(1))
+                        .ok_or(Error::Malformed {
+                            detail: "position overflows",
+                        })?,
+                };
+                current = Some(at);
+                positions.push(at);
+            }
+            out.push(positions);
+        }
+        if pos != run.len() {
+            return Err(Error::Malformed {
+                detail: "trailing bytes in positions run",
+            });
+        }
+        Ok(out)
+    }
+
     /// The document attribute columns the file carries (`SPEC.md` §5.8).
     pub fn columns(&self) -> &[Column] {
         &self.columns
@@ -478,7 +544,7 @@ impl<R: RangeReader> Index<R> {
             return Ok(None);
         };
         let block = self.read_term_block(ordinal).await?;
-        find_in_block(&block, term)
+        find_in_block(&block, term, self.has_positions())
     }
 
     /// The postings a dictionary entry implies by carrying no run.
@@ -552,7 +618,7 @@ impl<R: RangeReader> Index<R> {
             }
 
             let block = self.read_term_block(ordinal).await?;
-            for (key, entry) in term::decode_block(&block)? {
+            for (key, entry) in term::decode_block(&block, self.has_positions())? {
                 if key.starts_with(prefix) {
                     out.push((key, entry));
                     if out.len() == limit {

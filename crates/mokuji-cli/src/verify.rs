@@ -87,7 +87,7 @@ async fn walk<R: RangeReader>(index: &Index<R>) -> Result<Stats, Error> {
     let mut expected_term_id = 0u64;
     for ordinal in 0..term_index.block_count() {
         let block = index.read_term_block(ordinal).await?;
-        let entries = term::decode_block(&block)?;
+        let entries = term::decode_block(&block, index.has_positions())?;
         if entries.is_empty() {
             return Err(Error::Invalid(format!("term block {ordinal} is empty")));
         }

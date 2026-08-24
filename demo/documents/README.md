@@ -60,14 +60,45 @@ than one of words would be. `TOKENIZERS.md` records what was measured when the
 alternatives were tried, including why ICU word segmentation is not registered
 even though it is available in every browser and in Cloudflare Workers.
 
-## What is missing here
+## Phrases
 
-**No positions**, so no phrase queries. Section `0x0060` is reserved for them.
+`--positions` stores where every term occurs, and `search --phrase` requires
+them to be consecutive:
+
+```
+$ mokuji build documents.tsv documents.mokuji --tokenizer bigram --positions
+$ mokuji search documents.mokuji 建築物のLOD -n 1
+130 match(es)
+$ mokuji search documents.mokuji 建築物のLOD -n 1 --phrase
+42 match(es) as a phrase
+```
+
+Two thirds of the matches were terms co-occurring rather than a phrase — which
+for a bigram index is most of what makes it imprecise, since the terms are
+fragments and the question is nearly always whether they were adjacent.
+
+| | without | with positions |
+|---|---|---|
+| Index | 3.1 MB | 11.9 MB |
+| positions section | — | 8.7 MB (73%) |
+| An ordinary query | 6 reads, 15.5 KB | **6 reads**, 20.0 KB |
+| A phrase query | not possible | 19 reads |
+
+**Positions cost bytes, not reads.** A query that asks no phrase never touches
+the section; the read count is identical and the extra bytes are the two varints
+each dictionary entry now carries to locate a run it may never fetch.
+
+That is the case where being read in ranges changes what is worth storing. An
+index downloaded before it is used pays for positions on every query whether or
+not it asks a question that needs them — which is why formats meant to be
+downloaded make positions optional and their users leave them off.
+
+## What is missing here
 
 **Ranking is the caller's.** `mokuji search` carries a sample BM25 built on the
 document lengths the file supplies (`SPEC.md` §5.7); the format supplies the
 statistics and has no opinion about the model.
 
-**No highlighting.** Achievable without positions — put the document text in the
+**No highlighting.** Achievable with positions, or without them — put the document text in the
 payload, fetch the matches, and re-run the tokenizer over what comes back — but
 not built here.

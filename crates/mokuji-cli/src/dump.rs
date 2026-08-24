@@ -27,7 +27,7 @@ async fn dump<R: RangeReader, W: Write>(index: &Index<R>, out: &mut W) -> Result
     let blocks = index.term_index()?.block_count();
     for ordinal in 0..blocks {
         let block = index.read_term_block(ordinal).await?;
-        let entries = term::decode_block(&block)?;
+        let entries = term::decode_block(&block, index.has_positions())?;
 
         // A block at a time, so that the postings and payload of terms that sit
         // together are fetched together.

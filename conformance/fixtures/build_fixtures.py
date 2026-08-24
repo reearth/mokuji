@@ -28,6 +28,7 @@ SECTION_ENTRY_LEN = 24
 FLAG_TERMDICT_MONOLITHIC = 1 << 0
 FLAG_HAS_PAYLOAD = 1 << 1
 FLAG_HAS_FREQS = 1 << 2
+FLAG_HAS_POSITIONS = 1 << 3
 
 SEC_META = 0x0001
 SEC_TERM_INDEX = 0x0010
@@ -38,6 +39,7 @@ SEC_PAYLOAD = 0x0030
 SEC_PAYLOAD_OFFSETS = 0x0031
 SEC_DOC_LENGTHS = 0x0032
 SEC_DOC_ATTRIBUTES = 0x0033
+SEC_POSITIONS = 0x0060
 
 # Small enough that every structure in the format appears more than once, which
 # is what makes a fixture worth having: a single-block dictionary would never
@@ -187,11 +189,11 @@ def tokenize(text, whole):
 
 
 def build_index(documents, whole):
+    """Term to document to the positions it occupies there."""
     postings = {}
     for doc_id, (text, _) in enumerate(documents):
-        for token in tokenize(text, whole):
-            postings.setdefault(token, {})
-            postings[token][doc_id] = postings[token].get(doc_id, 0) + 1
+        for at, token in enumerate(tokenize(text, whole)):
+            postings.setdefault(token, {}).setdefault(doc_id, []).append(at)
     return {term: postings[term] for term in sorted(postings)}
 
 
@@ -211,30 +213,46 @@ def scale(text, decimals):
     return -value if negative else value
 
 
+def encode_positions(docs):
+    """One run per term: each document's positions, gaps after the first."""
+    out = bytearray()
+    for doc_id in sorted(docs):
+        places = docs[doc_id]
+        values = [places[0]] + [places[i] - places[i - 1] - 1 for i in range(1, len(places))]
+        out += pack_values(values)
+    return bytes(out)
+
+
 def encode_postings(docs, term_id):
     doc_ids = sorted(docs)
     # The dictionary can state this by itself: one document, whose ID is this
     # term's own, at frequency one (SPEC.md section 5.3.4). Writing it out would
     # record nothing and cost a range read to read back.
-    if doc_ids == [term_id] and docs[term_id] == 1:
+    if doc_ids == [term_id] and len(docs[term_id]) == 1:
         return b""
 
     values = [doc_ids[0]] + [
         doc_ids[i] - doc_ids[i - 1] - 1 for i in range(1, len(doc_ids))
     ]
-    freqs = [docs[d] - 1 for d in doc_ids]
+    freqs = [len(docs[d]) - 1 for d in doc_ids]
     return bytes([0]) + varint(len(doc_ids)) + pack_values(values) + pack_values(freqs)
 
 
-def encode_term_block(entries, first_term_id, postings_offsets):
+def encode_term_block(entries, first_term_id, postings_offsets, positions_offsets=None):
     out = bytearray(varint(len(entries)) + varint(first_term_id))
     previous_key = b""
     previous_offset = None
-    for (term, doc_freq, length), offset in zip(entries, postings_offsets):
+    previous_positions = None
+    for i, ((term, doc_freq, length), offset) in enumerate(zip(entries, postings_offsets)):
         out += front_coded(term.encode(), previous_key)
         out += varint(doc_freq)
         out += varint(offset if previous_offset is None else offset - previous_offset)
         out += varint(length)
+        if positions_offsets is not None:
+            at, plen = positions_offsets[i]
+            out += varint(at if previous_positions is None else at - previous_positions)
+            out += varint(plen)
+            previous_positions = at
         previous_key = term.encode()
         previous_offset = offset
     return bytes(out)
@@ -265,11 +283,13 @@ def chunk(items, size):
 
 
 def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
-          tokenizer_id="space-split", doc_lengths=False, columns=None):
+          tokenizer_id="space-split", doc_lengths=False, columns=None,
+          positions=False):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, whole)
     terms = list(index)
     runs = {term: encode_postings(index[term], i) for i, term in enumerate(terms)}
+    places = {term: encode_positions(index[term]) for term in terms} if positions else None
     term_chunks = chunk(terms, TERMS_PER_BLOCK)
 
     payload_blocks = [
@@ -321,6 +341,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
                     "docs_per_payload_block": DOCS_PER_PAYLOAD_BLOCK,
                     "payload": "opaque" if decimals is None else f"ints:{decimals}",
                     "doc_lengths": 1 if doc_lengths else 0,
+                    "positions": 1 if positions else 0,
                     **(
                         {"attributes": [f"{n}:{-e}" for n, e, _ in columns]}
                         if columns
@@ -346,7 +367,10 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         order.append(SEC_DOC_LENGTHS)
     if attributes is not None:
         order.append(SEC_DOC_ATTRIBUTES)
-    order += [SEC_POSTINGS, SEC_TERM_BLOCKS, SEC_PAYLOAD]
+    order.append(SEC_POSTINGS)
+    if places is not None:
+        order.append(SEC_POSITIONS)
+    order += [SEC_TERM_BLOCKS, SEC_PAYLOAD]
     head = HEADER_LEN + SECTION_ENTRY_LEN * len(order)
     postings_at = (
         head
@@ -364,10 +388,25 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         offsets[term] = cursor
         cursor += len(runs[term])
 
+    positions_at = cursor
+    place_offsets = {}
+    if places is not None:
+        cursor = positions_at
+        for term in terms:
+            place_offsets[term] = (cursor, len(places[term]))
+            cursor += len(places[term])
+
     blocks, term_id = [], 0
     for group in term_chunks:
         entries = [(t, len(index[t]), len(runs[t])) for t in group]
-        blocks.append(encode_term_block(entries, term_id, [offsets[t] for t in group]))
+        blocks.append(
+            encode_term_block(
+                entries,
+                term_id,
+                [offsets[t] for t in group],
+                [place_offsets[t] for t in group] if places is not None else None,
+            )
+        )
         term_id += len(group)
 
     sizes = {
@@ -378,6 +417,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
         SEC_PAYLOAD_OFFSETS: 12 + 8 * (len(payload_blocks) + 1),
         SEC_POSTINGS: sum(len(runs[t]) for t in terms),
+        **({SEC_POSITIONS: sum(len(places[t]) for t in terms)} if places is not None else {}),
         SEC_TERM_BLOCKS: sum(len(b) for b in blocks),
         SEC_PAYLOAD: sum(len(b) for b in payload_blocks),
     }
@@ -417,6 +457,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         SEC_PAYLOAD_OFFSETS: payload_offsets,
         SEC_TERM_BLOCKS: b"".join(blocks),
         SEC_POSTINGS: b"".join(runs[t] for t in terms),
+        **({SEC_POSITIONS: b"".join(places[t] for t in terms)} if places is not None else {}),
         SEC_PAYLOAD: b"".join(payload_blocks),
     }
     for sid, body in bodies.items():
@@ -426,7 +467,10 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     header[0:8] = MAGIC
     header[8] = SPEC_MAJOR
     header[9] = SPEC_MINOR
-    header[10:12] = (FLAG_HAS_PAYLOAD | FLAG_HAS_FREQS).to_bytes(2, "little")
+    flags = FLAG_HAS_PAYLOAD | FLAG_HAS_FREQS
+    if places is not None:
+        flags |= FLAG_HAS_POSITIONS
+    header[10:12] = flags.to_bytes(2, "little")
     header[12:16] = len(order).to_bytes(4, "little")
     header[16:24] = len(documents).to_bytes(8, "little")
     header[24:32] = sum(len(tokenize(t, whole)) for t, _ in documents).to_bytes(8, "little")
@@ -468,6 +512,7 @@ def section_name(sid):
         SEC_TERM_BLOCKS: "term blocks",
         SEC_TERM_BLOCK_OFFSETS: "term block offsets",
         SEC_POSTINGS: "postings",
+        SEC_POSITIONS: "positions",
         SEC_PAYLOAD: "payload",
         SEC_PAYLOAD_OFFSETS: "payload offsets",
         SEC_DOC_LENGTHS: "document lengths",
@@ -529,7 +574,7 @@ def find_block(term_index, term):
     return found
 
 
-def lookup(f, resident, ordinal, term):
+def lookup(f, resident, ordinal, term, has_positions=False):
     offsets = resident[SEC_TERM_BLOCK_OFFSETS]
     start = int.from_bytes(offsets[ordinal * 8 : ordinal * 8 + 8], "little")
     end = int.from_bytes(offsets[ordinal * 8 + 8 : ordinal * 8 + 16], "little")
@@ -538,14 +583,23 @@ def lookup(f, resident, ordinal, term):
     count, pos = read_varint(block, 0)
     first_term_id, pos = read_varint(block, pos)
     key, offset = b"", None
+    positions_at = None
     for i in range(count):
         key, pos = read_front_coded(block, pos, key)
         doc_freq, pos = read_varint(block, pos)
         delta, pos = read_varint(block, pos)
         offset = delta if offset is None else offset + delta
         length, pos = read_varint(block, pos)
+        places = None
+        if has_positions:
+            # Two more varints an entry carries only when the file has
+            # positions, which is why the flag has to be read first.
+            pdelta, pos = read_varint(block, pos)
+            positions_at = pdelta if positions_at is None else positions_at + pdelta
+            plen, pos = read_varint(block, pos)
+            places = (positions_at, plen)
         if key == term:
-            return first_term_id + i, doc_freq, offset, length
+            return first_term_id + i, doc_freq, offset, length, places
     return None
 
 
@@ -629,7 +683,9 @@ def search(data, query):
     """An intersection query, reporting what it cost."""
     f = CountingFile(data)
     header, _, resident = load_resident(f)
-    has_freqs = bool(int.from_bytes(header[10:12], "little") & FLAG_HAS_FREQS)
+    flags = int.from_bytes(header[10:12], "little")
+    has_freqs = bool(flags & FLAG_HAS_FREQS)
+    has_positions = bool(flags & FLAG_HAS_POSITIONS)
     f.reads = 0  # the resident set is accounted for separately
 
     results = None
@@ -637,10 +693,10 @@ def search(data, query):
         ordinal = find_block(resident[SEC_TERM_INDEX], term.encode())
         if ordinal is None:
             return {}, f.reads
-        entry = lookup(f, resident, ordinal, term.encode())
+        entry = lookup(f, resident, ordinal, term.encode(), has_positions)
         if entry is None:
             return {}, f.reads
-        term_id, doc_freq, offset, length = entry
+        term_id, doc_freq, offset, length, _places = entry
         num_docs = int.from_bytes(header[16:24], "little")
         docs = decode_postings(
             f.read(offset, length) if length else b"", has_freqs, term_id, doc_freq, num_docs
@@ -675,6 +731,7 @@ FIXTURES = [
         "decimals": None,
         "tokenizer_id": "space-split",
         "doc_lengths": True,
+        "positions": True,
         # query, expected result, expected reads
         "cases": [
             (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
@@ -735,6 +792,7 @@ def main():
             tokenizer_id=spec["tokenizer_id"],
             doc_lengths=spec.get("doc_lengths", False),
             columns=spec.get("columns"),
+            positions=spec.get("positions", False),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

@@ -28,7 +28,8 @@ pub fn run(
 ) -> Result<(), Error> {
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
-    let corpus = corpus::parse(text, tokenizer, declared.len()).map_err(Error::Corpus)?;
+    let corpus =
+        corpus::parse(text, tokenizer, declared.len(), options.positions).map_err(Error::Corpus)?;
 
     // Hash the source bytes as they were read, not the parsed corpus. The claim
     // being recorded is "this index was derived from that file", and it is only
@@ -117,9 +118,20 @@ pub fn run(
         }
         None => (0..corpus.payloads.len() as u64).collect(),
     };
-    for (term, docs) in &corpus.postings {
-        for (&doc, &freq) in docs {
-            builder.add_posting(term, renumbered[doc as usize], freq)?;
+    match &corpus.positions {
+        Some(positions) => {
+            for (term, docs) in positions {
+                for (doc, places) in docs {
+                    builder.add_posting_at(term, renumbered[*doc as usize], places)?;
+                }
+            }
+        }
+        None => {
+            for (term, docs) in &corpus.postings {
+                for (&doc, &freq) in docs {
+                    builder.add_posting(term, renumbered[doc as usize], freq)?;
+                }
+            }
         }
     }
 
@@ -148,6 +160,7 @@ pub fn run(
         ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
         ("payload", Value::Text(describe(options.payload))),
         ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
+        ("positions", Value::Uint(u64::from(options.positions))),
     ];
     if !declared.is_empty() {
         params.push((
