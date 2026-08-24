@@ -7,4 +7,6 @@
 //! Everything in this crate operates on byte slices already in memory. It has
 //! no notion of sections, offsets, or I/O.
 
+pub mod bitpack;
+pub mod front_coded;
 pub mod varint;
