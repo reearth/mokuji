@@ -12,7 +12,6 @@ const MAGIC = "COLEXv00";
 const HEADER_LEN = 64;
 const SECTION_ENTRY_LEN = 24;
 
-const FLAG_TERMDICT_MONOLITHIC = 1 << 0;
 const FLAG_HAS_PAYLOAD = 1 << 1;
 const FLAG_HAS_FREQS = 1 << 2;
 
@@ -298,9 +297,6 @@ export class ColexIndex {
     if (prefix[8] !== 0) throw new Error(`unsupported major version ${prefix[8]}`);
 
     index.flags = view.getUint16(10, true);
-    if (index.flags & FLAG_TERMDICT_MONOLITHIC) {
-      throw new Error("a monolithic term dictionary cannot be read over range requests");
-    }
     index.numDocs = Number(view.getBigUint64(16, true));
     index.sumDoclen = Number(view.getBigUint64(24, true));
 

@@ -22,13 +22,6 @@ pub const HEADER_LEN: usize = 64;
 pub struct Flags(u16);
 
 impl Flags {
-    /// The term dictionary is a single monolithic FST rather than the blocked
-    /// form.
-    ///
-    /// A file with this bit set does not satisfy the I/O bound and must not be
-    /// published as a range-read target; it exists for local memory-mapped
-    /// use.
-    pub const TERMDICT_MONOLITHIC: Flags = Flags(1 << 0);
     /// A payload section is present.
     pub const HAS_PAYLOAD: Flags = Flags(1 << 1);
     /// Postings runs carry a term frequency per document.
@@ -38,7 +31,10 @@ impl Flags {
     /// of ones.
     pub const HAS_FREQS: Flags = Flags(1 << 2);
 
-    const KNOWN: u16 = 0b111;
+    // Bit 0 named a monolithic transducer mode that was never specified and
+    // has been withdrawn; it stays reserved so nothing collides with a reader
+    // written against the earlier draft.
+    const KNOWN: u16 = 0b110;
 
     /// Builds flags from the raw field, rejecting reserved bits.
     pub fn from_bits(bits: u16) -> Result<Self> {
@@ -241,9 +237,7 @@ mod tests {
 
     #[test]
     fn accepts_every_defined_flag() {
-        let all = Flags::TERMDICT_MONOLITHIC
-            .with(Flags::HAS_PAYLOAD)
-            .with(Flags::HAS_FREQS);
+        let all = Flags::HAS_PAYLOAD.with(Flags::HAS_FREQS);
         let mut buf = sample().encode();
         buf[10..12].copy_from_slice(&all.bits().to_le_bytes());
         assert_eq!(Header::parse(&buf).unwrap().flags, all);

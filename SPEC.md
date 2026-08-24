@@ -290,8 +290,8 @@ Section IDs:
 |---|---|---|
 | `0x0001` | Metadata | yes |
 | `0x0010` | Term index | yes |
-| `0x0011` | Term blocks | yes, unless `TERMDICT_MONOLITHIC` |
-| `0x0012` | Term block offsets | yes, unless `TERMDICT_MONOLITHIC` |
+| `0x0011` | Term blocks | yes |
+| `0x0012` | Term block offsets | yes |
 | `0x0020` | Postings | yes |
 | `0x0030` | Payload | if `HAS_PAYLOAD` |
 | `0x0031` | Payload offsets | if `HAS_PAYLOAD` |
@@ -421,16 +421,6 @@ record each still benefits from the terms that do.
 Terms MUST be strictly increasing across the whole dictionary, blocks MUST
 partition the terms in order, and the first term of block `i` MUST equal
 boundary key `i`.
-
-#### 5.3.5 Monolithic mode
-
-When `TERMDICT_MONOLITHIC` is set, section `0x0010` holds a single finite state
-transducer over all terms, and sections `0x0011` and `0x0012` are absent. The
-transducer encoding is not defined in this version.
-
-This mode is for local memory-mapped use, where a seek is free and zero-copy
-traversal is worth more than a bounded fetch count. **A file in this mode does
-not satisfy §4** and MUST NOT be published as a range-read target.
 
 ### 5.4 Postings (`0x0020`)
 
@@ -830,6 +820,14 @@ The precision question turns out not to be beyond the format either, once it is
 read as provenance rather than compression. An index that rounds and records
 that it rounded is a shortened copy that says so; one that rounds silently is a
 damaged one. `generator.params` is where that belongs.
+
+**Flag bit 0 is reserved rather than used.**
+It named a monolithic transducer mode, and §5.3 described one without defining
+its encoding — a specification pointing at something it does not specify, which
+is the defect this format exists to complain about. Having decided the encoding
+is not worth defining (above), the mode goes with it. The bit stays reserved so
+that it is not reused by something that would collide with an implementation
+that read the earlier draft.
 
 **The term dictionary is blocked rather than a single FST.**
 See §5.3. A monolithic FST cannot satisfy the I/O bound over a range-read

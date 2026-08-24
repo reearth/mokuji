@@ -115,9 +115,6 @@ fn print_sections(sections: &[SectionEntry], file_len: u64) {
 
 fn format_flags(flags: Flags) -> String {
     let mut names = Vec::new();
-    if flags.contains(Flags::TERMDICT_MONOLITHIC) {
-        names.push("termdict_monolithic");
-    }
     if flags.contains(Flags::HAS_PAYLOAD) {
         names.push("has_payload");
     }

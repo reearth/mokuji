@@ -116,11 +116,6 @@ impl<R: RangeReader> Index<R> {
         let prefix = reader.read_range(0, prefix_len).await?;
 
         let header = Header::parse(&prefix)?;
-        if header.flags.contains(Flags::TERMDICT_MONOLITHIC) {
-            return Err(Error::Malformed {
-                detail: "monolithic term dictionaries are not readable over range reads",
-            });
-        }
 
         let table = fetch(
             &reader,

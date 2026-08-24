@@ -27,7 +27,6 @@ fn header_matches_the_corpus_the_fixture_was_built_from() {
     assert_eq!(header.avg_doclen(), Some(2.0));
     assert!(header.flags.contains(Flags::HAS_PAYLOAD));
     assert!(header.flags.contains(Flags::HAS_FREQS));
-    assert!(!header.flags.contains(Flags::TERMDICT_MONOLITHIC));
 }
 
 #[test]
