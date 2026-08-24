@@ -1,0 +1,73 @@
+# Document search
+
+The other shape. `../addresses` indexes a dictionary — one term names one
+record, a query is a prefix, and the postings section is empty. This indexes a
+collection: thousands of terms per record, a ranked intersection for a query,
+and postings that dominate the file. Same layout, same writer, same reader.
+
+Measured on the PLATEAU specifications, which are Markdown and public:
+
+```sh
+git clone https://github.com/eukarya-inc/plateau-spec
+python3 corpus.py --docs plateau-spec/docs --out documents.tsv
+mokuji build documents.tsv documents.mokuji --tokenizer bigram
+mokuji search documents.mokuji 建築物 -n 3
+```
+
+```
+365	7.087	procedure/tocC_11_01_02_02.md|C.11.1.2.2 作業手順
+363	7.082	procedure/tocC_11_01_02.md|C.11.1.2 LOD1
+299	7.081	procedure/tocC_02_01.md|C.2.1 建築物モデル
+
+3 shown, ranked by BM25
+query:    9 read(s) - 4 dictionary and postings, 5 payload
+bytes:    19499 of 3094317
+```
+
+| | |
+|---|---|
+| Corpus | 2,523 documents, 15.2 million characters, 25 MB |
+| Terms | 77,240 bigrams |
+| Index | 3.1 MB |
+| Build | 2.1 s |
+
+## Sections, against the address index
+
+```
+                    documents          addresses
+term_index             1.3 KB            11.1 KB
+term_blocks            1.08 MB  (35%)   863.2 KB  (12%)
+postings               1.96 MB  (63%)          0        implied
+payload                 43.5 KB (1.4%)    5.99 MB  (84%)
+doc_lengths              4.3 KB                  absent
+                       -------           -------
+                        3.1 MB            7.1 MB
+```
+
+Inverted, and neither shape required the format to choose. What a term is, what
+payload means, whether a term's postings are worth storing, whether anything is
+ranked — every one of those is a place the specification declined to decide.
+
+## Why bigrams
+
+`--tokenizer bigram` needs no dictionary, which is the point: a query has to be
+analyzed the same way the terms were, so an analyzer that needs tens of
+megabytes of dictionary needs them **at query time as well**, in whatever is
+doing the querying. A page has no server to ask.
+
+It costs precision. `京都` matches inside `東京都`, and the dictionary is larger
+than one of words would be. `TOKENIZERS.md` records what was measured when the
+alternatives were tried, including why ICU word segmentation is not registered
+even though it is available in every browser and in Cloudflare Workers.
+
+## What is missing here
+
+**No positions**, so no phrase queries. Section `0x0060` is reserved for them.
+
+**Ranking is the caller's.** `mokuji search` carries a sample BM25 built on the
+document lengths the file supplies (`SPEC.md` §5.7); the format supplies the
+statistics and has no opinion about the model.
+
+**No highlighting.** Achievable without positions — put the document text in the
+payload, fetch the matches, and re-run the tokenizer over what comes back — but
+not built here.

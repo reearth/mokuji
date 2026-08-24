@@ -89,7 +89,7 @@ query normalized to '東京都千代田区丸の内1丁目' by the 'ja-address' 
 東京都千代田区丸の内1丁目10番11号	139.765623,35.678635
 ...
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    873 of 7101107
+bytes:    872 of 7099942
 ```
 
 **1,744,962 addresses, every one with coordinates, in 7.1 MB. Two range reads.**
@@ -103,10 +103,10 @@ bytes:    873 of 7101107
 
 | Results | Dictionary | Postings | Payload | Total reads | Bytes |
 |---|---|---|---|---|---|
-| 20 | 1 | 0 | 1 | 2 | 725 B |
-| 100 | 1 | 0 | 2 | 3 | 941 B |
+| 20 | 1 | 0 | 1 | 2 | 724 B |
+| 100 | 1 | 0 | 2 | 3 | 940 B |
 | 500 | 1 | 0 | 9 | 10 | 2.4 KB |
-| 2,000 | 3 | 0 | 32 | 35 | 8.9 KB |
+| 2,000 | 3 | 0 | 32 | 35 | 8.8 KB |
 
 Two range reads, from a file holding two and a half times as many addresses as
 the town-level one.
@@ -116,7 +116,7 @@ Or one read, if the reader holds the dictionary:
 ```
 $ mokuji prefix tokyo.mokuji "東京都渋谷区" --resident
 query:    1 read(s) total - 0 dictionary, 0 postings, 1 payload
-bytes:    220 of 7101107
+bytes:    220 of 7099942
 ```
 
 That costs one read at open and 864 KB of memory — the dictionary as stored,
@@ -239,6 +239,13 @@ Without that, an index built from `一丁目` is unreachable by anyone typing
 `一丁目`, which is everyone. This is what recording the tokenizer is *for*: the
 format does not specify how text becomes terms, but it does make sure a reader
 can find out what was done and do the same.
+
+## The other shape
+
+`../documents` indexes a collection of documents on the same layout: thousands
+of terms per record, a ranked intersection for a query, and a section profile
+that is the inverse of this one — postings two thirds of the file where here
+they are nothing at all.
 
 ## Why prefix and not search
 

@@ -86,6 +86,57 @@ open: 1 read(s)
 query: 5 read(s), bound 5
 ```
 
+## Two shapes on one layout
+
+A geocoder and a full-text search differ in nearly everything a user would
+notice. What counts as a term. Whether a term names one record or thousands.
+What the payload means. Whether results come back ranked. What a query even
+looks like — a prefix in one case, an intersection in the other.
+
+They are the same file layout, and the two indexes here are built by the same
+writer and read by the same reader:
+
+| | Japanese addresses | PLATEAU specifications |
+|---|---|---|
+| Records | 1,744,962 | 2,523 |
+| Terms | 1,744,962 | 77,240 |
+| Tokenizer | `ja-address` | `bigram` |
+| Dictionary | 863 KB (12%) | 1.08 MB (35%) |
+| **Postings** | **0 bytes** — implied | **1.96 MB (63%)** |
+| **Payload** | **5.99 MB (84%)** — coordinates | **43 KB (1.4%)** — paths |
+| Document lengths | absent | 4.3 KB |
+| Index | 7.1 MB | 3.1 MB |
+| A query | prefix, **3 reads**, 1.1 KB | two terms ranked, **21 reads**, 57 KB |
+
+Both are reproducible: [demo/addresses](demo/addresses) and
+[demo/documents](demo/documents).
+
+The section profiles are inverted. In the address index the postings section is
+empty and payload is five sixths of the file; in the document index postings are
+two thirds and payload is a rounding error. Nothing in the format had to choose
+between them.
+
+That works because of what the format declines to decide, not because of what it
+specifies:
+
+| What differs | Where it was left |
+|---|---|
+| What a term is | the tokenizer: recorded, not specified |
+| Whether a term names one record or many | postings, which vanish when a term names its own record |
+| What the payload means | outside the specification |
+| How a number in the payload is written down | declared in the file, not interpreted |
+| Whether results are ranked | scoring outside; the statistics a scorer needs inside |
+
+What both get is the same: a sorted dictionary, postings and payload that can be
+located without reading anything else, provenance back to a source of truth, and
+a stated bound on the number of range reads.
+
+The full-text side is the less complete of the two. There are no positions, so
+no phrase queries; `bigram` is coarser than morphological analysis and produces
+a larger dictionary; and ranking is the caller's, which is deliberate but is
+still work the caller has to do. See [SPEC.md](SPEC.md) §1 for where those lines
+are drawn and why.
+
 ## Address lookup
 
 Forward geocoding is the case the format is shaped for, because an address is a

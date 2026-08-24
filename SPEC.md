@@ -59,6 +59,24 @@ contribution is:
    from which the index was derived, making the index a verifiable derivative
    rather than an opaque artifact.
 
+### 1.2 One layout, two shapes
+
+The exclusions above are not modesty. They are what lets a single layout hold
+two indexes that have almost nothing else in common.
+
+A dictionary of addresses has one term per record, no postings worth storing,
+payload that is a pair of numbers, and a prefix for a query. A collection of
+documents has thousands of terms per record, postings that dominate the file,
+payload that is a path, and a ranked intersection for a query. Measured, their
+section profiles are inverted: postings are 0% of one and 63% of the other,
+payload 84% and 1%.
+
+Every one of those differences falls in a place this specification declined to
+decide — what a term is, what payload means, whether a term's postings are worth
+writing down, whether anything is ranked. What the two share is the part that is
+specified: a sorted dictionary, postings and payload that can be located without
+reading anything else, and the bound in §4.
+
 ## 2. Conventions
 
 The key words MUST, MUST NOT, REQUIRED, SHALL, SHOULD, SHOULD NOT, MAY, and
