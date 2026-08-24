@@ -161,7 +161,33 @@ follow from its being sorted, which is what makes hierarchical keys — addresse
 paths, statute numbers — the case the format handles best rather than a case it
 tolerates.
 
-### 4.2 Why the bound is stated at all
+### 4.2 Where the dictionary lives
+
+The bound above assumes a reader fetches a term block when it needs one. A
+reader MAY instead hold the whole term blocks section, as stored, and decompress
+one block per lookup. Then a term costs **no range read at all**, and a query
+costs only its payload reads.
+
+Both are conformant and neither is a different file. Blocks are independently
+decodable and the offsets that locate them are resident either way, so this is a
+deployment choice rather than a format one:
+
+| | resident set | term lookup | typical query |
+|---|---|---|---|
+| Fetched dictionary | tens to hundreds of KB | 1 read per block | 2 reads |
+| Resident dictionary | plus the dictionary's stored size | 0 reads | 1 read |
+
+On 1,744,962 Tokyo addresses at 1024 terms a block, the dictionary is 864 KB
+stored, so holding it costs one read at open and under a megabyte of memory,
+and a prefix query drops from 2 reads and 725 bytes to 1 read and 220. Holding
+it *as stored* matters: decompressed it would be 16 MB, and decompressing one
+9 KB block per lookup is not a cost worth twenty times the memory to avoid.
+
+A writer influences the choice through `terms_per_block`, since that sets how
+large the dictionary is and how much a single lookup fetches. It does not make
+the choice.
+
+### 4.3 Why the bound is stated at all
 
 Every existing option either declines to state a bound or cannot state one.
 Formats designed for memory mapping assume that a seek is free. A general
@@ -717,20 +743,37 @@ it does not. Built over the 1,744,962 addresses of Tokyo at residence level
 | `fst::Set` | 571,926 | 0.33 |
 | `fst::Map` carrying the rank | 733,494 | 0.42 |
 
-A transducer is **4.8x smaller**, and the reason is structural rather than
-incidental: minimization shares the *suffixes* as well as the prefixes, so the
-`1番1号 … 30番20号` tail that hangs off thousands of different neighbourhoods is
-stored once as a shared subgraph. Front-coding shares only the prefix, and
-per-block deflate recovers some of the rest but only within a block's window.
+A transducer looks **4.8x smaller**, and the mechanism is real: minimization
+shares the *suffixes* as well as the prefixes, so the `1番1号 … 30番20号` tail
+that hangs off thousands of different neighbourhoods is stored once as a shared
+subgraph. Front-coding shares only the prefix, and per-block deflate recovers
+the rest only within a block's window.
 
-That reopens the question rather than settling it the other way. At 733 KB the
-whole dictionary would be small enough to hold **resident**, which would make a
-term lookup cost no range read at all — a stronger result than the bound the
-blocked form provides. Against that stand the two costs the entry above names,
-both still real: the byte format would have to be specified rather than
-deferred to an implementation, and a transducer must be held whole, so an index
-too large to keep resident would have no bounded lookup at all. It is recorded
-here as measured, open, and consequential.
+*Corrected again.* That comparison is against 128 terms a block, a default
+chosen before there was any real data to choose it on. The window is the
+variable, and widening it is free:
+
+| terms per block | dictionary | per term | bytes per query |
+|---|---|---|---|
+| 128 | 2,755,118 | 1.58 | 435 |
+| 1024 | 864,419 | 0.50 | 725 |
+| 2048 | 669,538 | 0.38 | 965 |
+| 4096 | 552,694 | 0.32 | 1,471 |
+
+At 2048 terms a block the blocked dictionary is smaller than `fst::Map`, and at
+4096 smaller than `fst::Set`. Larger blocks also *reduce* the read count for a
+query with many results, since more of them land in one block. What they cost is
+bytes per lookup, and the file is smaller besides.
+
+So the size argument for a transducer does not survive tuning. What survives is
+narrower: a transducer is queried in place, while a blocked dictionary held in
+memory is held compressed and decompresses a block per lookup. At 864 KB stored
+against 16 MB decompressed, holding it compressed is obviously right, and the
+per-lookup decompression is microseconds — so even that advantage is small.
+
+The measurement stands, the mechanism stands, and the conclusion is that the
+specification cost is not worth paying. §4.2 gets the property that a transducer
+was wanted for.
 
 **Implied postings are a dictionary entry, not a postings codec.**
 A codec that encoded "this term names its own document" compactly would still

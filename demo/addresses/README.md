@@ -89,28 +89,39 @@ query normalized to '東京都千代田区丸の内1丁目' by the 'ja-address' 
 東京都千代田区丸の内1丁目10番11号	139.765623,35.678635
 ...
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    471 of 9121905
+bytes:    873 of 7101107
 ```
 
-**1,744,962 addresses, every one with coordinates, in 9.1 MB. Two range reads.**
+**1,744,962 addresses, every one with coordinates, in 7.1 MB. Two range reads.**
 
 | | |
 |---|---|
 | Source | 225 MB of CSV, two tables |
 | Corpus | 120 MB |
-| Index | 9.1 MB |
+| Index | 7.1 MB |
 | Build | 5.5 s |
 
 | Results | Dictionary | Postings | Payload | Total reads | Bytes |
 |---|---|---|---|---|---|
-| 20 | 1 | 0 | 1 | 2 | 435 B |
-| 100 | 2 | 0 | 2 | 4 | 858 B |
-| 500 | 5 | 0 | 9 | 14 | 3.0 KB |
-| 2,000 | 17 | 0 | 32 | 49 | 11 KB |
+| 20 | 1 | 0 | 1 | 2 | 725 B |
+| 100 | 1 | 0 | 2 | 3 | 941 B |
+| 500 | 1 | 0 | 9 | 10 | 2.4 KB |
+| 2,000 | 3 | 0 | 32 | 35 | 8.9 KB |
 
-Two range reads and under half a kilobyte, from a file holding two and a half
-times as many addresses as the town-level one. Nothing in the read column
-moved.
+Two range reads, from a file holding two and a half times as many addresses as
+the town-level one.
+
+Or one read, if the reader holds the dictionary:
+
+```
+$ colex prefix tokyo.colex "東京都渋谷区" --resident
+query:    1 read(s) total - 0 dictionary, 0 postings, 1 payload
+bytes:    220 of 7101107
+```
+
+That costs one read at open and 864 KB of memory — the dictionary as stored,
+decompressing one 9 KB block per lookup. Same file, different deployment; see
+`SPEC.md` §4.2.
 
 ### The dictionary gets cheaper as addresses get more specific
 
@@ -264,14 +275,14 @@ only the bytes moved shrink.
 ```
                       stored         raw     codec
 meta                    274 B       274 B    raw       resident
-term_index             45.8 KB     178.6 KB  deflate   resident
-term_block_offsets    109.1 KB     109.1 KB  raw       resident
+term_index             11.1 KB      44.6 KB  deflate   resident
+term_block_offsets     13.6 KB      13.6 KB  raw       resident
 payload_offsets       218.1 KB     218.1 KB  raw       resident
 postings                    0           0    raw       implied
-term_blocks             2.8 MB      16.7 MB  deflate
+term_blocks           864.4 KB      16.2 MB  deflate
 payload                 6.0 MB       6.0 MB  raw       delta-coded integers
                        -------     -------
-                        9.1 MB      23.2 MB   from a 120 MB corpus
+                        7.1 MB      22.5 MB   from a 120 MB corpus
 ```
 
 The offset tables and the metadata are stored raw on purpose. Metadata stays
@@ -290,12 +301,11 @@ taken: browsers cannot supply a preset dictionary through their native
 decompression, so it would cost a decompressor in the page. See `SPEC.md`
 §5.6.1.
 
-**The dictionary is now most of the file** — 2.8 MB of 9.1 MB — and a finite
-state transducer would be about a fifth of that. See the correction in
-`SPEC.md`'s decision log: the measurement is taken, the question is open, and it
-is the largest thing left.
-
 **A coarser scale is available and is a decision, not an optimization.**
 `ints:5` is about a metre and would take payload from 6.0 MB to 3.7 MB. Whether
 a metre is enough is the publisher's call; the format's part is that the choice
 ends up in the metadata either way.
+
+**Larger dictionary blocks are still on the table.** The default is 1024 terms;
+4096 makes this index 6.8 MB and a query 1.5 KB. Which is better depends on
+whether bytes or requests are the scarce thing where it is served.
