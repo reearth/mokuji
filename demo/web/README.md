@@ -52,9 +52,10 @@ What the format contributes is `exactMany`: several terms in one read per
 dictionary block, which is what makes two lookups cost one request rather than
 two.
 
-The basemap tiles are the only requests on that page that are not range reads
-into the one file. There is no tile server in this repository, and the demo
-would work without a basemap — it would just be harder to know where you clicked.
+The map itself is Leaflet, loaded from a CDN with an integrity hash. It is the
+one dependency in this directory, and drawing tiles and polygons is not a
+problem worth solving again here. Leaflet and the basemap tiles are also the
+only requests that page makes which are not range reads into the one file.
 
 ## Normalization happens here too
 

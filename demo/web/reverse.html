@@ -4,6 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Mokuji reverse geocoding</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+      crossorigin=""
+    ></script>
     <style>
       :root {
         --bg: #ffffff;
@@ -38,24 +49,11 @@
       .layout { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
       @media (min-width: 56rem) { .layout { grid-template-columns: 1fr 19rem; } }
       .map {
-        position: relative; overflow: hidden; height: 30rem;
+        height: 30rem; cursor: crosshair;
         border: 1px solid var(--line); border-radius: .6rem;
-        background: var(--panel); cursor: crosshair; touch-action: none;
+        background: var(--panel);
       }
-      .map img { position: absolute; width: 256px; height: 256px; user-select: none; -webkit-user-drag: none; }
-      .map canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-      .zoom { position: absolute; right: .6rem; top: .6rem; display: grid; gap: .25rem; }
-      .zoom button {
-        width: 2rem; height: 2rem; font: inherit; font-size: 1.1rem; line-height: 1;
-        color: var(--fg); background: var(--bg); border: 1px solid var(--line);
-        border-radius: .35rem; cursor: pointer;
-      }
-      .credit {
-        position: absolute; right: 0; bottom: 0; font-size: .68rem;
-        background: color-mix(in srgb, var(--bg) 80%, transparent);
-        padding: .1rem .35rem; color: var(--muted);
-      }
-      .credit a { color: inherit; }
+      .leaflet-container { background: var(--panel); font: inherit; }
       .hints { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .4rem; }
       .hints button {
         font: inherit; font-size: .85rem; color: var(--muted);
@@ -92,16 +90,7 @@
 
       <div class="layout">
         <div>
-          <div class="map" id="map">
-            <canvas id="overlay"></canvas>
-            <div class="zoom">
-              <button id="in" title="Zoom in">+</button>
-              <button id="out" title="Zoom out">&minus;</button>
-            </div>
-            <div class="credit">
-              Basemap &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>
-            </div>
-          </div>
+          <div class="map" id="map"></div>
           <div class="hints" id="hints"></div>
           <p class="note" id="status">Loading the index&hellip;</p>
         </div>
@@ -157,124 +146,19 @@
       const bytes = (n) =>
         n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
-      // --- a slippy map, because 60 lines is cheaper than a dependency ------
-      // Web Mercator, in units of one tile: whole numbers are tile boundaries.
-      const lonToX = (lon, z) => ((lon + 180) / 360) * 2 ** z;
-      const latToY = (lat, z) => {
-        const r = (lat * Math.PI) / 180;
-        return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z;
-      };
-      const xToLon = (x, z) => (x / 2 ** z) * 360 - 180;
-      const yToLat = (y, z) => {
-        const n = Math.PI * (1 - (2 * y) / 2 ** z);
-        return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-      };
+      const map = L.map("map").setView([35.681236, 139.767125], 15);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(map);
+      const drawn = L.layerGroup().addTo(map);
 
-      const map = $("map");
-      const overlay = $("overlay");
-      const view = { lat: 35.6812, lon: 139.7671, zoom: 15 };
-      const tiles = new Map();
-      let marked = null; // { lat, lon, result }
-
-      function origin() {
-        const w = map.clientWidth;
-        const h = map.clientHeight;
-        return {
-          w,
-          h,
-          x: lonToX(view.lon, view.zoom) * 256 - w / 2,
-          y: latToY(view.lat, view.zoom) * 256 - h / 2,
-        };
-      }
-
-      function project(lon, lat, o) {
-        return [lonToX(lon, view.zoom) * 256 - o.x, latToY(lat, view.zoom) * 256 - o.y];
-      }
-
-      function drawTiles(o) {
-        const span = 2 ** view.zoom;
-        const used = new Set();
-        for (let tx = Math.floor(o.x / 256); tx <= Math.floor((o.x + o.w) / 256); tx++) {
-          for (let ty = Math.floor(o.y / 256); ty <= Math.floor((o.y + o.h) / 256); ty++) {
-            if (ty < 0 || ty >= span) continue;
-            const wrapped = ((tx % span) + span) % span;
-            const key = `${view.zoom}/${wrapped}/${ty}/${tx}`;
-            used.add(key);
-            let img = tiles.get(key);
-            if (!img) {
-              img = new Image();
-              img.src = `https://tile.openstreetmap.org/${view.zoom}/${wrapped}/${ty}.png`;
-              img.alt = "";
-              map.prepend(img);
-              tiles.set(key, img);
-            }
-            img.style.left = `${tx * 256 - o.x}px`;
-            img.style.top = `${ty * 256 - o.y}px`;
-          }
-        }
-        for (const [key, img] of tiles) {
-          if (!used.has(key)) {
-            img.remove();
-            tiles.delete(key);
-          }
-        }
-      }
-
-      function drawOverlay(o) {
-        const dpr = devicePixelRatio || 1;
-        overlay.width = o.w * dpr;
-        overlay.height = o.h * dpr;
-        const ctx = overlay.getContext("2d");
-        ctx.scale(dpr, dpr);
-        ctx.clearRect(0, 0, o.w, o.h);
-        if (!marked) return;
-
-        const ring = (points) => {
-          ctx.beginPath();
-          points.forEach(([lon, lat], i) => {
-            const [px, py] = project(lon, lat, o);
-            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-          });
-          ctx.closePath();
-        };
-
-        const answers = new Set(marked.result.answers.map((a) => a.doc));
-        for (const candidate of marked.result.candidates) {
-          const hit = answers.has(candidate.doc);
-          ctx.strokeStyle = hit ? "#1f6feb" : "#ea8c00";
-          ctx.fillStyle = hit ? "rgba(31,111,235,.20)" : "rgba(234,140,0,.18)";
-          ctx.lineWidth = hit ? 2.5 : 2;
-          for (const points of candidate.rings) {
-            ring(points);
-            ctx.fill();
-            ctx.stroke();
-          }
-        }
-
-        // The cell the click landed in: the unit the index actually reasons in.
-        // Drawn over the polygons, because a hairline under a translucent fill
-        // is a hairline nobody sees.
-        const finest = Math.max(...marked.result.precisions);
-        const box = cellBounds(geohash(marked.lon, marked.lat, finest));
-        const [bx0, by0] = project(box.lonLo, box.latHi, o);
-        const [bx1, by1] = project(box.lonHi, box.latLo, o);
-        ctx.setLineDash([5, 3]);
-        ctx.strokeStyle = "#b42318";
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(bx0, by0, bx1 - bx0, by1 - by0);
-        ctx.setLineDash([]);
-
-        const [mx, my] = project(marked.lon, marked.lat, o);
-        ctx.beginPath();
-        ctx.arc(mx, my, 5, 0, Math.PI * 2);
-        ctx.fillStyle = "#b42318";
-        ctx.fill();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      /** The corners of a geohash cell, decoded back out of its characters. */
+      /** The corners of a geohash cell, decoded back out of its characters.
+       *
+       * Drawn because it is the unit the index actually reasons in: the answer
+       * is whichever candidate this rectangle pulled in that also holds the
+       * point.
+       */
       function cellBounds(cell) {
         const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
         let lonLo = -180, lonHi = 180, latLo = -90, latHi = 90;
@@ -293,59 +177,40 @@
             bit++;
           }
         }
-        return { lonLo, lonHi, latLo, latHi };
+        return [[latLo, lonLo], [latHi, lonHi]];
       }
 
-      function render() {
-        const o = origin();
-        drawTiles(o);
-        drawOverlay(o);
+      function draw(lat, lon, result) {
+        drawn.clearLayers();
+        const answers = new Set(result.answers.map((a) => a.doc));
+        for (const candidate of result.candidates) {
+          const hit = answers.has(candidate.doc);
+          L.polygon(
+            candidate.rings.map((ring) => ring.map(([x, y]) => [y, x])),
+            {
+              color: hit ? "#1f6feb" : "#ea8c00",
+              weight: hit ? 2.5 : 2,
+              fillOpacity: hit ? 0.2 : 0.18,
+            },
+          )
+            .bindTooltip(candidate.label)
+            .addTo(drawn);
+        }
+        L.rectangle(cellBounds(result.cell), {
+          color: "#b42318",
+          weight: 1.5,
+          dashArray: "5 3",
+          fill: false,
+        }).addTo(drawn);
+        L.circleMarker([lat, lon], {
+          radius: 5,
+          color: "#fff",
+          weight: 2,
+          fillColor: "#b42318",
+          fillOpacity: 1,
+        }).addTo(drawn);
       }
 
-      // --- interaction ------------------------------------------------------
-      let dragging = null;
-      map.addEventListener("pointerdown", (e) => {
-        map.setPointerCapture(e.pointerId);
-        dragging = { x: e.clientX, y: e.clientY, moved: 0 };
-      });
-      map.addEventListener("pointermove", (e) => {
-        if (!dragging) return;
-        const dx = e.clientX - dragging.x;
-        const dy = e.clientY - dragging.y;
-        dragging.moved += Math.abs(dx) + Math.abs(dy);
-        dragging.x = e.clientX;
-        dragging.y = e.clientY;
-        const o = origin();
-        view.lon = xToLon((o.x + o.w / 2 - dx) / 256, view.zoom);
-        view.lat = yToLat((o.y + o.h / 2 - dy) / 256, view.zoom);
-        render();
-      });
-      map.addEventListener("pointerup", (e) => {
-        const drag = dragging;
-        dragging = null;
-        if (!drag || drag.moved > 5) return;
-        const rect = map.getBoundingClientRect();
-        const o = origin();
-        query(
-          yToLat((o.y + e.clientY - rect.top) / 256, view.zoom),
-          xToLon((o.x + e.clientX - rect.left) / 256, view.zoom),
-        );
-      });
-      map.addEventListener("wheel", (e) => {
-        e.preventDefault();
-        zoom(e.deltaY < 0 ? 1 : -1);
-      }, { passive: false });
-      $("in").addEventListener("click", () => zoom(1));
-      $("out").addEventListener("click", () => zoom(-1));
-      function zoom(by) {
-        view.zoom = Math.max(9, Math.min(18, view.zoom + by));
-        for (const img of tiles.values()) img.remove();
-        tiles.clear();
-        render();
-      }
-      addEventListener("resize", render);
-
-      // --- the query --------------------------------------------------------
       const EXAMPLES = [
         ["Tokyo Station", 35.681236, 139.767125],
         ["Tokyo Tower", 35.658581, 139.745433],
@@ -369,12 +234,11 @@
           return;
         }
 
-        marked = { lat, lon, result };
-        render();
+        draw(lat, lon, result);
 
         const [first] = result.answers;
         $("answer").textContent = first ? first.label : "Outside every polygon";
-        $("cell").textContent = `${result.cell} · ${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        $("cell").textContent = `${result.cell} \u00b7 ${lat.toFixed(6)}, ${lon.toFixed(6)}`;
         $("requests").textContent = index.stats.requests;
         $("bytes").textContent = bytes(index.stats.bytes);
         $("lookups").textContent = `${result.precisions.length} (${result.hits} hit)`;
@@ -388,6 +252,8 @@
             `${result.answers.length} contained the point.`
           : "No polygon in this index holds that point. Tokyo only.";
       }
+
+      map.on("click", (e) => query(e.latlng.lat, e.latlng.lng));
 
       (async () => {
         try {
@@ -407,13 +273,10 @@
         $("hints").addEventListener("click", (event) => {
           if (event.target.tagName !== "BUTTON") return;
           const [, lat, lon] = EXAMPLES[Number(event.target.dataset.i)];
-          view.lat = lat;
-          view.lon = lon;
-          render();
+          map.setView([lat, lon], Math.max(map.getZoom(), 15));
           query(lat, lon);
         });
 
-        render();
         query(35.681236, 139.767125);
       })();
     </script>
