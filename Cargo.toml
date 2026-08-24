@@ -15,7 +15,7 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/reearth/colex"
-authors = ["Eukarya Inc."]
+authors = ["Re:Earth and contributors"]
 
 [workspace.dependencies]
 colex-format = { path = "crates/colex-format", version = "0.0.0" }
