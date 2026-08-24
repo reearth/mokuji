@@ -27,6 +27,10 @@ produce the same tokens for the same input, and must name every parameter that
 changes the output. Identifiers are never redefined; a change in behaviour is a
 new identifier.
 
+That rule binds from the first published version. While this registry is a
+draft nothing depends on it, and `ja-address` has been changed once under that
+licence — variant folding was added to it — rather than being registered twice.
+
 Identifiers beginning `x-` are private and will never be registered here.
 
 ## Registered
@@ -66,7 +70,8 @@ Normalization, in order:
 
 1. Unicode Normalization Form KC (NFKC).
 2. Strip leading and trailing whitespace.
-3. Rewrite each maximal run of the characters
+3. Fold the variant spellings below.
+4. Rewrite each maximal run of the characters
    `〇零一二三四五六七八九十百千` that is **immediately followed by `丁目`**
    as its decimal value in ASCII digits. A run that cannot be read as a numeral
    by the rule below is left exactly as it was.
@@ -75,6 +80,47 @@ The numeral rule: `十`, `百`, and `千` multiply the digit before them, or one
 when there is none, so `十二` is 12 and `二十` is 20 and `百二十三` is 123. Two
 bare digits in sequence are positional notation, which this rule does not claim
 to read, and such a run is left alone.
+
+#### The variant folding
+
+| From | To | Condition |
+|---|---|---|
+| `ノ` | `の` | neither neighbour is in U+30A0–U+30FF |
+| `ケ` | `ヶ` | neither neighbour is in U+30A0–U+30FF |
+| `ヵ` | `ヶ` | neither neighbour is in U+30A0–U+30FF |
+| `之` | `の` | always |
+
+A character with no neighbour on one side — at either end of the input — is
+treated as having a non-katakana neighbour there.
+
+`丸ノ内` and `丸の内` are the same place, and the Address Base Registry spells
+both; so are `茅ケ崎` and `茅ヶ崎`, and `二之瀬` and `二の瀬`. Unfolded they sort
+in two places and neither is where the other's reader looks, which is the
+argument that already put the chome rewriting in this entry.
+
+The katakana condition is why this is a table and not a character map. Inside a
+katakana word these are letters, not connectives: `マルノウチ` is not
+`マルのウチ` and `ケーキ` is not `ヶーキ`. `之` is a kanji and never inside one,
+so it needs no condition.
+
+Each member was measured, on 725,855 nationwide addresses spelled the other way
+and looked up again with `ja-address-bigram`:
+
+| Folding | Terms it changes | Top-1 |
+|---|---|---|
+| none | 0 | 70% |
+| `ノ` | 45,709 | 88% |
+| `ノ` `ケ` `ヵ` | 61,159 | 92% |
+| `ノ` `ケ` `ヵ` `之` | 71,003 | 94% |
+
+Two candidates were measured and left out. Hiragana `が` is written for the same
+connective in `自由が丘`, and folding it moved nothing — a `が`/`ヶ` swap already
+scores what any single substitution scores, 81%, and `が` is an ordinary
+particle everywhere outside a place name. Katakana `ツ` in `四ツ谷` would fold
+`ハイツ` as well, and `ハイツ` is a word.
+
+Folding rewrites the key, so a reader sees the folded spelling unless the corpus
+carries the original — which is what the payload is for.
 
 #### Why only `丁目`
 
@@ -126,6 +172,26 @@ of words, and a two-character query matches substrings rather than words, so
 program, a Worker that can call `Intl.Segmenter` — a morphological or ICU-based
 tokenizer will do better, and belongs in this registry under its own
 identifier.
+
+### `ja-address-bigram`
+
+The normalization of `ja-address`, then the token boundary of `bigram`.
+
+Parameters: none.
+
+`東京都千代田区丸の内一丁目` normalizes to `東京都千代田区丸の内1丁目` and
+becomes `東京`, `京都`, `都千`, … `内1`, `1丁`, `丁目`.
+
+Two entries with the same normalization and different token boundaries, because
+an address is asked for in two ways. Looked up whole or by prefix it wants
+`ja-address`, and three range reads answer it exactly. Typed with a character
+wrong, or without the prefecture, it wants this: one character wrong leaves
+every bigram intact but two, so the union of the query's terms still ranks the
+address first. See `demo/fuzzy`.
+
+The cost is the cost of `bigram` — a larger index, and substring matches that a
+word tokenizer would not make — plus a read count that grows with the length of
+the query rather than staying at three.
 
 ## Why there is no ICU or morphological entry
 

@@ -221,10 +221,22 @@ Two further things the real data shows:
   it fixed the ordering for. Getting both means parsing the address into
   fields, which is a geocoder's job.
 
-- **41 addresses collided under normalization** and their lines were dropped,
-  reported by `build` rather than silently merged. Two registry rows spelling
-  the same chome differently are one address, and a key names one record — but
-  which payload survives is a data decision, so the count is printed.
+- **The registry spells place names two ways as well.** `保津町宮ノ上` and
+  `保津町宮の上` are both in it, in the same town, and so are `塔ケ崎` and
+  `塔ヶ崎` and `二之瀬` and `二の瀬`. `ja-address` folds those spellings onto one
+  (`TOKENIZERS.md`), which is why `丸ノ内` completes and why the payload — not
+  the key — is where the spelling the registry uses survives.
+
+- **424 addresses collided under normalization** and their lines were dropped,
+  reported by `build` rather than silently merged. 383 of them differ only in a
+  folded character, which is the collision the folding exists to cause: two rows
+  for one place become one record. Of the 413 folded keys with more than one
+  original, **411 give at most one coordinate or agree on it**; the two that
+  disagree — `塔ケ崎`/`塔ヶ崎` and `沢ケ内`/`沢ヶ内` — are two representative
+  points for the same place, 400 and 900 metres apart.
+
+  Which payload survives is still a data decision, so the count is printed
+  rather than assumed to be harmless.
 
 ### Queries are normalized too
 

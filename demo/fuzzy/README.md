@@ -1,8 +1,10 @@
 # Approximate address search
 
 The address index in [../addresses](../addresses) answers a prefix exactly, and
-that is all it answers. Type `丸ノ内` for `丸の内`, or leave off the prefecture,
-and it returns nothing — while being right about it.
+that is all it answers. Its tokenizer folds the spellings of a place name onto
+one, so `丸ノ内` does find `丸の内` — but leave off the prefecture, or mistype a
+character the folding says nothing about, and it returns nothing while being
+right about it.
 
 Approximate matching needs no new machinery. It is the same query with two
 changes: **the union of the terms instead of their intersection**, and terms
@@ -16,7 +18,7 @@ many were there.
 # see ../addresses for how to fetch the registry
 python3 ../addresses/abr.py town --fullset abr/mt_town_fullset_all.csv \
     --pos abr/pos/ --out town.tsv --echo-address
-mokuji build town.tsv fuzzy.mokuji --tokenizer bigram \
+mokuji build town.tsv fuzzy.mokuji --tokenizer ja-address-bigram \
     --source abr/mt_town_fullset_all.csv
 ```
 
@@ -26,29 +28,36 @@ $ mokuji search fuzzy.mokuji 東京都千代田区丸ノ内 --any --probe 6 --le
 371609  35.966  東京都千代田区丸の内三丁目|139.763476,35.676952
 371610  35.966  東京都千代田区丸の内二丁目|139.763447,35.680022
 
-probed:   丸ノ:33 都千:115 区丸:156 代田:1295 田区:1319 千代:1565
+probed:   都千:115 丸の:120 区丸:156 代田:1295 田区:1319 千代:1565
 skipped:  3 term(s) with more postings, without reading any of them
-3420 match(es), 3 shown, ranked by BM25
+3532 match(es), 3 shown, ranked by BM25
 query:    16 read(s) - 15 dictionary and postings, 1 payload
-bytes:    49261 of 17482113
+bytes:    49293 of 17429814
 ```
 
 ```
-$ mokuji search fuzzy.mokuji 渋谷区神南 --any --probe 6 --length-norm 0 -n 2
-374703  32.885  東京都渋谷区神南１丁目|139.700363,35.663127
-374704  32.885  東京都渋谷区神南２丁目|139.696982,35.666451
+$ mokuji search fuzzy.mokuji 茅ケ崎市 --any --probe 6 --length-norm 0 -n 2
+463906  23.348  神奈川県茅ヶ崎市茅ヶ崎|139.408975,35.339706
+463907  23.348  神奈川県茅ヶ崎市茅ヶ崎１丁目|139.40271,35.333515
 
-probed:   神南:37 渋谷:161 区神:394 谷区:607
-query:    9 read(s) - 8 dictionary and postings, 1 payload
+probed:   茅ヶ:156 ヶ崎:2107 崎市:17806
+query:    7 read(s) - 6 dictionary and postings, 1 payload
 ```
+
+The second one never reaches the approximate part: `ja-address-bigram` folds
+`茅ケ崎` and `茅ヶ崎` onto the same spelling, so the query is exact. The same
+folding makes the *exact* index in [../addresses](../addresses) answer it too —
+`mokuji prefix` on a `ja-address` file now completes `東京都千代田区丸ノ内`,
+which it could not before, and the payload still shows the spelling the registry
+uses.
 
 | | |
 |---|---|
 | Addresses | 725,855 町字, nationwide |
-| Tokenizer | `bigram` |
-| Terms | 157,285 |
-| Postings | 9,223,043 |
-| Index | 17.5 MB |
+| Tokenizer | `ja-address-bigram` |
+| Terms | 155,237 |
+| Postings | 9,223,112 |
+| Index | 17.4 MB |
 | A query | 9–17 range reads, 20–50 KB |
 
 ## Does it actually correct anything?
@@ -58,22 +67,26 @@ and looked up again, each query through the CLI against the real index:
 
 | What was done to the address | Top-1 | Top-5 | Reads |
 |---|---|---|---|
-| One character substituted | 81% | 92% | 19.8 |
-| One character deleted | 80% | 91% | 18.8 |
-| Two characters transposed | 70% | 82% | 20.0 |
-| Prefecture left off | 94% | 100% | 17.0 |
-| Kana variant (`の`↔`ノ`, `ヶ`↔`ケ`) | 70% | 83% | 21.4 |
+| One character substituted | 81% | 91% | 19.7 |
+| One character deleted | 80% | 91% | 18.6 |
+| Two characters transposed | 70% | 81% | 19.9 |
+| Prefecture left off | 94% | 100% | 16.9 |
+| Kana variant (`の`↔`ノ`, `ヶ`↔`ケ`, `の`↔`之`) | 91% | 99% | 21.1 |
+| `が`↔`ヶ` | 81% | 93% | 20.4 |
 
-The last row is the interesting one, because it is the error people actually
-make. It scores **worse than a random substitution**, and the reason is
-structural: `丸の内` → `丸ノ内` destroys `丸の` and `の内`, which are exactly the
-rare bigrams the probe was relying on. Damage a common character and the query
-barely notices; damage a distinctive one and it loses its best evidence.
+The kana row was the interesting one, because it is the error people actually
+make, and before the tokenizer folded those spellings it scored **70%** — worse
+than a random substitution. The reason was structural: `丸の内` → `丸ノ内`
+destroys `丸の` and `の内`, which are exactly the rare bigrams `--probe` relies
+on. Damage a common character and the query barely notices; damage a
+distinctive one and it loses its best evidence.
 
-The fix is not in the search. Folding the variants before tokenizing — the same
-corpus, the same index size, one preprocessing step — moves that row to **92% /
-99%** and leaves every other row unchanged. That is a tokenizer's job, and the
-registry in `TOKENIZERS.md` has no entry that does it yet.
+So the fix went where it belonged, which was not the search. `ja-address-bigram`
+folds `ノ`→`の`, `ケ`/`ヵ`→`ヶ` and `之`→`の` before tokenizing, and that row
+moved to 91% / 99% with every other row unchanged and the index slightly
+smaller. See `TOKENIZERS.md` for what is folded and what was measured and left
+out — `が` is the last row above, and it is already handled as well as any
+substitution is.
 
 ## What this demonstrates
 
@@ -83,12 +96,13 @@ read. `--probe 6` fetches the six rarest and reports the rest as skipped —
 without having read them. For `東京都渋谷区道玄坂` that is 943 postings instead
 of 47,538, **fifty times less**, with the same top three.
 
-| Query | All terms | Six rarest | Same top 3 |
-|---|---|---|---|
-| 東京都千代田区丸ノ内 | 54,153 postings | 4,483 | yes |
-| 大阪市中央区本町 | 45,483 | 26,261 | yes |
-| 東京都渋谷区道玄坂 | 47,538 | 943 | yes |
-| 札幌市中央区北一条西 | 45,037 | 14,011 | yes |
+| Query | All terms | Six rarest | Reads | Same top 3 |
+|---|---|---|---|---|
+| 東京都千代田区丸ノ内 | 56,053 postings | 4,570 | 16 | yes |
+| 大阪市中央区本町 | 45,483 | 26,261 | 14 | yes |
+| 東京都渋谷区道玄坂 | 47,538 | **943** | 17 | yes |
+| 札幌市中央区北一条西 | 44,912 | 13,886 | 15 | yes |
+| 渋谷区神南 | 1,199 | 1,199 | 9 | yes |
 
 **Skewed is what makes it work.** The median bigram names 2 addresses; the 99th
 percentile names 865; `島県` names 117,249. Almost every bigram is cheap, and

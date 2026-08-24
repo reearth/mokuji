@@ -153,3 +153,20 @@ test("exact costs one dictionary read", async () => {
   await index.exact("nowhere");
   assert.equal(reads - before, 2);
 });
+
+test("ja-address folds the spellings of a place name onto one", () => {
+  // The registry writes both, so a reader that folded only one of them would
+  // find the address it was not given.
+  assert.equal(jaAddress("東京都千代田区丸ノ内一丁目"), jaAddress("東京都千代田区丸の内1丁目"));
+  assert.equal(jaAddress("神奈川県茅ケ崎市"), jaAddress("神奈川県茅ヶ崎市"));
+  assert.equal(jaAddress("三重県いなべ市北勢町二之瀬"), jaAddress("三重県いなべ市北勢町二の瀬"));
+
+  // Left alone on purpose: `が` is an ordinary particle and folding it bought
+  // nothing measurable, and `ハイツ` is a word.
+  assert.notEqual(jaAddress("三重県亀山市みずきが丘"), jaAddress("三重県亀山市みずきヶ丘"));
+  assert.equal(jaAddress("三重県亀山市関町富士ハイツ"), "三重県亀山市関町富士ハイツ");
+
+  // Inside a katakana word these are letters, not connectives.
+  assert.equal(jaAddress("マルノウチ"), "マルノウチ");
+  assert.equal(jaAddress("ケーキ"), "ケーキ");
+});

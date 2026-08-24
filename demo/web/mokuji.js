@@ -130,9 +130,36 @@ function parseNumeral(run) {
   return total + (digit ?? 0);
 }
 
+// Characters a Japanese place name is written with in more than one way. See
+// TOKENIZERS.md: `丸ノ内` and `丸の内` are the same place and the registry
+// spells both, so both have to fold onto one before anything is compared.
+const JA_VARIANTS = new Map([
+  ["ノ", "の"],
+  ["ケ", "ヶ"],
+  ["ヵ", "ヶ"],
+]);
+
+const isKatakana = (c) => c !== undefined && c >= "\u30A0" && c <= "\u30FF";
+
+/** Folds the variant spellings, but only where they are connectives.
+ *
+ * Inside a katakana word these characters are letters: `マルノウチ` is not
+ * `マルのウチ`, and `ケーキ` is not `ヶーキ`.
+ */
+function foldVariants(chars) {
+  return chars.map((c, i) => {
+    // A kanji is never part of a katakana word, so it needs no guard.
+    if (c === "之") return "の";
+    const folded = JA_VARIANTS.get(c);
+    if (folded === undefined) return c;
+    if (isKatakana(chars[i - 1]) || isKatakana(chars[i + 1])) return c;
+    return folded;
+  });
+}
+
 /** The `ja-address` tokenizer, applied to a query. */
 export function jaAddress(text) {
-  const chars = [...text.normalize("NFKC").trim()];
+  const chars = foldVariants([...text.normalize("NFKC").trim()]);
   let out = "";
   let i = 0;
   while (i < chars.length) {
@@ -152,7 +179,11 @@ export function jaAddress(text) {
 const TOKENIZERS = {
   "space-split": (q) => q,
   identity: (q) => q,
+  bigram: (q) => q,
   "ja-address": jaAddress,
+  // The same normalization as `ja-address`; only the token boundary differs,
+  // and a prefix is not split in either.
+  "ja-address-bigram": jaAddress,
 };
 
 class Cursor {
