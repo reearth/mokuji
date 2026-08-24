@@ -26,6 +26,21 @@ pub trait RangeReader {
     fn read_range(&self, offset: u64, len: u32) -> impl Future<Output = Result<Vec<u8>>>;
 }
 
+/// Lets a shared reference stand in for a reader.
+///
+/// Opening an index consumes the reader, so this is what allows a
+/// [`CountingReader`](crate::CountingReader) to be kept in hand and questioned
+/// about what a query cost.
+impl<R: RangeReader> RangeReader for &R {
+    fn file_len(&self) -> u64 {
+        R::file_len(self)
+    }
+
+    fn read_range(&self, offset: u64, len: u32) -> impl Future<Output = Result<Vec<u8>>> {
+        R::read_range(self, offset, len)
+    }
+}
+
 /// Checks that `offset..offset + len` lies within a file of `file_len` bytes.
 ///
 /// Shared by implementations so that they reject the same ranges.

@@ -12,9 +12,15 @@
 
 pub mod block_on;
 mod counting;
+mod index;
+pub mod postings;
 mod reader;
 mod slice;
+pub mod term;
 
 pub use counting::{CountingReader, ReadStats};
+pub use index::{Index, Match};
+pub use postings::Postings;
 pub use reader::RangeReader;
 pub use slice::SliceReader;
+pub use term::{TermEntry, TermIndex};

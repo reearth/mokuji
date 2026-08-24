@@ -12,5 +12,9 @@ authors.workspace = true
 colex-codec.workspace = true
 colex-format.workspace = true
 
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
 [lints]
 workspace = true
