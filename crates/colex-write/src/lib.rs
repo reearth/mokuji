@@ -17,4 +17,4 @@
 
 mod builder;
 
-pub use builder::{Builder, Options};
+pub use builder::{Builder, Options, PayloadEncoding};

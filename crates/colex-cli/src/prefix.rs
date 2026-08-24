@@ -59,11 +59,11 @@ pub fn run(path: &Path, query: &str, limit: usize) -> Result<(), Error> {
     let payload_reads = reader.reads() - dictionary - postings_reads;
 
     for ((term, _), payload) in matches.iter().zip(&payloads) {
-        let term = String::from_utf8_lossy(term);
-        match std::str::from_utf8(payload) {
-            Ok(text) => println!("{term}\t{text}"),
-            Err(_) => println!("{term}\t<{} bytes>", payload.len()),
-        }
+        println!(
+            "{}\t{}",
+            String::from_utf8_lossy(term),
+            crate::payload::render(payload)
+        );
     }
 
     eprintln!();

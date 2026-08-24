@@ -13,7 +13,7 @@ mod error;
 mod header;
 mod section;
 
-pub use codec::{PostingsCodec, SectionCodec};
+pub use codec::{unzigzag, zigzag, PayloadCodec, PostingsCodec, SectionCodec};
 pub use error::{Error, Result};
 pub use header::{Flags, Header, HEADER_LEN, MAGIC, SPEC_MAJOR, SPEC_MINOR};
 pub use section::parse_section_table;

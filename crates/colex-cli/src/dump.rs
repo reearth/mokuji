@@ -43,7 +43,7 @@ async fn dump<R: RangeReader, W: Write>(index: &Index<R>, out: &mut W) -> Result
         for (term, payload) in terms.iter().zip(&payloads) {
             out.write_all(term)?;
             out.write_all(b"\t")?;
-            out.write_all(payload)?;
+            out.write_all(crate::payload::render(payload).as_bytes())?;
             out.write_all(b"\n")?;
         }
     }

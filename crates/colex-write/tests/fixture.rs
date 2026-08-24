@@ -18,6 +18,7 @@ fn options() -> Options {
         terms_per_block: 2,
         docs_per_payload_block: 2,
         has_freqs: true,
+        payload: colex_write::PayloadEncoding::Opaque,
         // The fixture is stored raw so that its hex dump can be read against
         // the specification by hand.
         compress: false,
@@ -66,7 +67,7 @@ fn build(meta: &[u8]) -> Vec<u8> {
     // no sort: a corpus larger than memory is sorted outside it.
     let mut postings: BTreeMap<String, BTreeMap<u64, u64>> = BTreeMap::new();
     for (text, payload) in corpus() {
-        let doc = builder.add_document(payload.as_bytes());
+        let doc = builder.add_document(payload.as_bytes()).unwrap();
         for token in text.split(' ') {
             *postings
                 .entry(token.to_string())
@@ -112,7 +113,7 @@ fn building_twice_produces_identical_bytes() {
 #[test]
 fn rejects_terms_out_of_order() {
     let mut builder = Builder::new(options()).unwrap();
-    builder.add_document(b"payload".to_vec());
+    builder.add_document(b"payload".to_vec()).unwrap();
     builder.add_posting(b"tokyo", 0, 1).unwrap();
     assert!(builder.add_posting(b"osaka", 0, 1).is_err());
 }
@@ -120,8 +121,8 @@ fn rejects_terms_out_of_order() {
 #[test]
 fn rejects_documents_out_of_order_within_a_term() {
     let mut builder = Builder::new(options()).unwrap();
-    builder.add_document(b"a".to_vec());
-    builder.add_document(b"b".to_vec());
+    builder.add_document(b"a".to_vec()).unwrap();
+    builder.add_document(b"b".to_vec()).unwrap();
     builder.add_posting(b"tokyo", 1, 1).unwrap();
     assert!(builder.add_posting(b"tokyo", 0, 1).is_err());
 }
@@ -129,13 +130,13 @@ fn rejects_documents_out_of_order_within_a_term() {
 #[test]
 fn rejects_a_posting_for_a_document_that_does_not_exist() {
     let mut builder = Builder::new(options()).unwrap();
-    builder.add_document(b"a".to_vec());
+    builder.add_document(b"a".to_vec()).unwrap();
     assert!(builder.add_posting(b"tokyo", 7, 1).is_err());
 }
 
 #[test]
 fn rejects_a_zero_frequency() {
     let mut builder = Builder::new(options()).unwrap();
-    builder.add_document(b"a".to_vec());
+    builder.add_document(b"a".to_vec()).unwrap();
     assert!(builder.add_posting(b"tokyo", 0, 0).is_err());
 }

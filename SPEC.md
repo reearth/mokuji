@@ -470,19 +470,27 @@ zero.
 
 ### 5.5 Payload (`0x0030`, `0x0031`)
 
-Payload is an opaque byte string per document. **Its contents are outside this
-specification**; only the framing is defined. An address index stores
-coordinates, a document index stores a title and a URL, and the format does not
-need to know which.
-
 Payload is stored in document ID order and grouped into fixed-size blocks, so
 that documents adjacent in ID order are retrieved together. This is what makes
 the `m'` term of §4 smaller than the number of results.
+
+**What payload means is outside this specification. How it is written down is
+not.** An address index stores coordinates and a document index stores a title;
+the format does not need to know which, and saying so would tie a general
+format to one use. But an encoding is not a meaning, and declining to specify
+one leaves every index storing numbers as text.
+
+The line is the one PMTiles draws around a tile: it declares the type and the
+compression without saying what the picture is of.
 
 #### 5.5.1 Payload offsets (`0x0031`)
 
 | Field | Encoding |
 |---|---|
+| `payload_codec` | `u8`, see below |
+| `values_per_doc` | `u8`, codec 1 only; zero otherwise |
+| `scale_exponent` | `i8`, codec 1 only; zero otherwise |
+| reserved | `u8`, MUST be zero |
 | `docs_per_block` | `u32`, non-zero |
 | `block_count` | `u32` |
 | `offsets` | `u64` × (`block_count` + 1), absolute, strictly increasing |
@@ -491,7 +499,14 @@ Document `d` lives in block `d / docs_per_block` at index `d mod docs_per_block`
 A fixed block size means the mapping is arithmetic rather than a lookup, so this
 section stays resident even for a large corpus.
 
-#### 5.5.2 Payload blocks (`0x0030`)
+| Codec | Name | Status |
+|---|---|---|
+| `0` | opaque | REQUIRED |
+| `1` | delta-coded integers | REQUIRED |
+
+#### 5.5.2 Codec 0, opaque
+
+A block is:
 
 | Field | Encoding |
 |---|---|
@@ -499,11 +514,48 @@ section stays resident even for a large corpus.
 | entries × `entry_count` | `varint len`, then `len` bytes |
 
 Entries are in document ID order starting at `block_ordinal * docs_per_block`.
-The final block MAY hold fewer than `docs_per_block` entries.
+The final block MAY hold fewer than `docs_per_block` entries. The bytes are
+returned as they were stored and mean nothing to the format.
 
-Payload is where general-purpose compression earns its place: coordinates
-delta-encoded against their block predecessor compress extremely well, whereas
-the term dictionary is already small for structural reasons and gains little.
+#### 5.5.3 Codec 1, delta-coded integers
+
+Each document carries exactly `values_per_doc` signed integers. A block is:
+
+| Field | Encoding |
+|---|---|
+| `entry_count` | `varint` |
+| entries × `entry_count` | `values_per_doc` zigzag `varint`s |
+
+Zigzag maps a signed value to an unsigned one as `(v << 1) ^ (v >> 63)`, so that
+a small negative number stays small.
+
+The first entry of a block stores its values as they are. Every later entry
+stores each value as the difference from the value in the same position of the
+entry before it. Deltas do not cross a block boundary, because a block is
+addressed on its own and must decode on its own.
+
+`scale_exponent` records that a stored integer `v` stands for `v × 10^exponent`.
+A reader MUST NOT interpret it further. It is the difference between an encoding
+and a meaning: the format states how a number was written down, and says nothing
+about what it measures or how accurate it is.
+
+##### Why delta
+
+Documents are in term order, and for a hierarchical key that ordering is not
+arbitrary. Addresses that sort together are near each other on the ground, so
+consecutive documents differ only in their low digits. Measured on 1,744,962
+Tokyo addresses (`tools/payload-encodings.py`), per address after per-block
+compression:
+
+| | per address |
+|---|---|
+| Coordinates as published text | 8.69 B |
+| The same rounded to six decimals | 5.61 B |
+| Fixed point, one `int32` pair | 5.05 B |
+| **Fixed point, delta-coded** | **3.39 B** |
+
+The monotonic ID rule (§3.2) was adopted to keep the dictionary small. It pays a
+second time here, in a section that does not know the dictionary exists.
 
 ### 5.6 Compression
 
@@ -719,11 +771,22 @@ that allows a wider-than-necessary field would allow two files to be equally
 valid and differently shaped, which would make a byte-identical rebuild
 unverifiable.
 
-**Payload contents are outside the specification.**
+**Payload contents are outside the specification; payload encodings are not.**
 The format frames payload and locates it; what is in it is an application's
-business. Specifying a coordinate encoding would tie a general format to one
-use, and the compression argument for grouping payload by document ID holds
-regardless of what the bytes mean.
+business, and specifying a coordinate encoding would tie a general format to one
+use. That argument covers meaning. It does not cover encoding, and letting it
+stand for both left every index storing numbers as decimal text — measured, 2.6x
+larger than the same numbers delta-coded, which is more than rounding them away
+to a precision nobody claimed would save.
+
+So the line moves to where PMTiles draws it: declare the encoding, say nothing
+about the subject. A codec identifier and a scale, and no opinion about what is
+being scaled.
+
+The precision question turns out not to be beyond the format either, once it is
+read as provenance rather than compression. An index that rounds and records
+that it rounded is a shortened copy that says so; one that rounds silently is a
+damaged one. `generator.params` is where that belongs.
 
 **The term dictionary is blocked rather than a single FST.**
 See §5.3. A monolithic FST cannot satisfy the I/O bound over a range-read
@@ -733,7 +796,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.colex` is 741 bytes and indexes four documents:
+`conformance/fixtures/tiny.colex` is 745 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -769,33 +832,33 @@ Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26b..0x281`.
+**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26f..0x285`.
 
-**Term block 0**, at 619, 22 bytes:
+**Term block 0**, at 623, 22 bytes:
 
 ```
-0000026b  02 00 00 07 63 68 69 79 6f 64 61 01 d8 04 00 02  |....chiyoda.....|
-0000027b  02 75 6f 02 00 05                                |.uo...|
+0000026f  02 00 00 07 63 68 69 79 6f 64 61 01 dc 04 00 02  |....chiyoda.....|
+0000027f  02 75 6f 02 00 05                                |.uo...|
 ```
 
 Two entries, first term ID 0.
 
 Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1;
-`postings_offset` `d8 04`, the first entry so absolute — 0x58 plus 4 shifted by
-seven is 600; and `postings_len` **0**. The length is what matters: this term's
+`postings_offset` `dc 04`, the first entry so absolute — 0x5c plus 4 shifted by
+seven is 604; and `postings_len` **0**. The length is what matters: this term's
 postings are implied (§5.3.4). It occurs in exactly one document, document 0,
 because its own term ID is 0. Nothing is stored and nothing is read.
 
 Entry 1: `shared_len` 2, `suffix_len` 2, `uo` — the term is `ch` + `uo`, which
 is the front-coding paying for itself on a two-term block; `doc_freq` 2;
 `postings_offset` delta 0, because the entry before it consumed no bytes, so
-600 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
+604 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
 rather than stored.
 
-**Postings** for `chuo`, at 600, 5 bytes:
+**Postings** for `chuo`, at 608, 5 bytes:
 
 ```
-00000258  00 02 01 03 00                                   |.....|
+00000260  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
@@ -806,6 +869,15 @@ stored as 0.
 
 Five bytes for a two-document posting list with frequencies, and the
 frequencies were free.
+
+**Payload offsets** (`0x0031`), at 568:
+
+```
+00000238  00 00 00 00 02 00 00 00 02 00 00 00 ab 02 00 00  |................|
+```
+
+Payload codec 0, opaque, so no value count and no scale; two documents to a
+block; two blocks; then the offsets. Document 1 is at index 1 of block 0.
 
 **Cost.** One term block read, one postings read, and one payload read per
 distinct payload block. For `tokyo AND chuo`, which matches document 1: four

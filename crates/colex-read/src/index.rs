@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use colex_codec::{block, varint};
 use colex_format::{
-    parse_section_table, Error, Flags, Header, Result, SectionCodec, SectionEntry, SectionId,
+    parse_section_table, unzigzag, Error, Flags, Header, PayloadCodec, Result, SectionCodec,
+    SectionEntry, SectionId,
 };
 
 use crate::term::{self, find_in_block, TermEntry, TermIndex};
@@ -25,16 +26,48 @@ const OPEN_PREFIX: u32 = 64 * 1024;
 /// reads it saves, and the reader falls back to fetching each on its own.
 const MAX_RESIDENT_SPAN: u64 = 8 * 1024 * 1024;
 
+/// One document's payload, as the file writes it down (`SPEC.md` §5.5).
+///
+/// What it means is still the application's business. This says only how it was
+/// stored, which is the difference between an encoding and a meaning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Payload {
+    /// Bytes, as stored.
+    Opaque(Vec<u8>),
+    /// A row of signed integers, each standing for `value * 10^exponent`.
+    Ints {
+        /// The values, already un-delta'd.
+        values: Vec<i64>,
+        /// The exponent the file declares. Recorded, not interpreted.
+        scale_exponent: i8,
+    },
+}
+
+impl Payload {
+    /// The bytes, for an opaque payload.
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match self {
+            Payload::Opaque(bytes) => Some(bytes),
+            Payload::Ints { .. } => None,
+        }
+    }
+
+    /// The values, for an integer payload.
+    pub fn values(&self) -> Option<&[i64]> {
+        match self {
+            Payload::Ints { values, .. } => Some(values),
+            Payload::Opaque(_) => None,
+        }
+    }
+}
+
 /// One match: a document and its payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
     /// Document ID.
     pub doc: u64,
-    /// The document's payload, or empty if the file carries none.
-    ///
-    /// Payload bytes are opaque to the format (`SPEC.md` §5.5); interpreting
-    /// them is the application's business.
-    pub payload: Vec<u8>,
+    /// The document's payload, empty and opaque if the file carries none.
+    pub payload: Payload,
 }
 
 /// An open COLex file.
@@ -190,7 +223,7 @@ impl<R: RangeReader> Index<R> {
     ///
     /// Each call reads a block. A query goes through [`Index::search`] instead,
     /// which shares a block between documents adjacent in ID order.
-    pub async fn read_payload(&self, doc: u64) -> Result<Vec<u8>> {
+    pub async fn read_payload(&self, doc: u64) -> Result<Payload> {
         self.payload(doc, &mut PayloadCache::default()).await
     }
 
@@ -346,7 +379,7 @@ impl<R: RangeReader> Index<R> {
     ///
     /// Blocks are shared between adjacent documents, so this costs one read per
     /// distinct block rather than one per document.
-    pub async fn payload_span(&self, docs: &[u64]) -> Result<Vec<Vec<u8>>> {
+    pub async fn payload_span(&self, docs: &[u64]) -> Result<Vec<Payload>> {
         let mut cache = PayloadCache::default();
         let mut out = Vec::with_capacity(docs.len());
         for &doc in docs {
@@ -391,16 +424,24 @@ impl<R: RangeReader> Index<R> {
     }
 
     /// Fetches one document's payload, reusing a block already read.
-    async fn payload(&self, doc: u64, cache: &mut PayloadCache) -> Result<Vec<u8>> {
+    async fn payload(&self, doc: u64, cache: &mut PayloadCache) -> Result<Payload> {
         if !self.header.flags.contains(Flags::HAS_PAYLOAD) {
-            return Ok(Vec::new());
+            return Ok(Payload::Opaque(Vec::new()));
         }
         let section = &self.payload_offsets;
-        let head = section.get(0..8).ok_or(Error::Malformed {
+        let head = section.get(0..12).ok_or(Error::Malformed {
             detail: "payload offsets section is too short",
         })?;
-        let per_block = u64::from(u32::from_le_bytes(head[0..4].try_into().expect("length")));
-        let block_count = u32::from_le_bytes(head[4..8].try_into().expect("length"));
+        let codec = PayloadCodec::from_byte(head[0])?;
+        let values_per_doc = head[1];
+        let scale_exponent = head[2] as i8;
+        if head[3] != 0 {
+            return Err(Error::Malformed {
+                detail: "reserved payload offset bytes are non-zero",
+            });
+        }
+        let per_block = u64::from(u32::from_le_bytes(head[4..8].try_into().expect("length")));
+        let block_count = u32::from_le_bytes(head[8..12].try_into().expect("length"));
         if per_block == 0 {
             return Err(Error::Malformed {
                 detail: "payload block size is zero",
@@ -415,13 +456,22 @@ impl<R: RangeReader> Index<R> {
             });
         }
 
+        // Results are visited in document ID order and payload is stored in
+        // that order, so documents sharing a block share a read. This is the
+        // difference between m and m' in SPEC.md §4.
         if cache.ordinal != Some(ordinal) {
-            let (offset, len) = bounds(section, 8, ordinal as usize)?;
+            let (offset, len) = bounds(section, 12, ordinal as usize)?;
             let bytes = self.reader.read_range(offset, len).await?;
             cache.block = decode_unit(self.payload_codec, bytes)?;
             cache.ordinal = Some(ordinal);
         }
-        entry_in_payload_block(&cache.block, index)
+        match codec {
+            PayloadCodec::Opaque => Ok(Payload::Opaque(opaque_entry(&cache.block, index)?)),
+            PayloadCodec::DeltaInts => Ok(Payload::Ints {
+                values: int_entry(&cache.block, index, values_per_doc)?,
+                scale_exponent,
+            }),
+        }
     }
 
     fn term_block_bounds(&self, ordinal: u32, block_count: u32) -> Result<(u64, u32)> {
@@ -470,7 +520,8 @@ fn bounds(table: &[u8], base: usize, index: usize) -> Result<(u64, u32)> {
     Ok((start, len))
 }
 
-fn entry_in_payload_block(block: &[u8], index: u64) -> Result<Vec<u8>> {
+/// Reads one entry from an opaque payload block.
+fn opaque_entry(block: &[u8], index: u64) -> Result<Vec<u8>> {
     let (count, mut pos) = varint::decode(block)?;
     if index >= count {
         return Err(Error::Malformed {
@@ -493,6 +544,36 @@ fn entry_in_payload_block(block: &[u8], index: u64) -> Result<Vec<u8>> {
         pos += len;
     }
     unreachable!("index was bounds-checked against count")
+}
+
+/// Reads one entry from a delta-coded integer payload block.
+///
+/// Every entry up to the wanted one has to be decoded, because each is a
+/// difference from the one before it. Blocks are sized so that is cheap, and a
+/// block is the unit a reader fetches anyway.
+fn int_entry(block: &[u8], index: u64, values_per_doc: u8) -> Result<Vec<i64>> {
+    let (count, mut pos) = varint::decode(block)?;
+    if index >= count {
+        return Err(Error::Malformed {
+            detail: "payload block holds fewer entries than expected",
+        });
+    }
+
+    let width = usize::from(values_per_doc);
+    let mut current = vec![0i64; width];
+    for entry in 0..=index {
+        for slot in current.iter_mut().take(width) {
+            let (raw, n) = varint::decode(&block[pos.min(block.len())..])?;
+            pos += n;
+            let delta = unzigzag(raw);
+            *slot = if entry == 0 {
+                delta
+            } else {
+                slot.wrapping_add(delta)
+            };
+        }
+    }
+    Ok(current)
 }
 
 fn intersect(a: &[u64], b: &[u64]) -> Vec<u64> {

@@ -31,6 +31,7 @@ fn options_strategy() -> impl Strategy<Value = Options> {
             terms_per_block: terms,
             docs_per_payload_block: docs,
             has_freqs,
+            payload: colex_write::PayloadEncoding::Opaque,
             compress,
         },
     )
@@ -45,7 +46,9 @@ fn build(
     let mut expected: BTreeMap<String, BTreeMap<u64, u64>> = BTreeMap::new();
 
     for (i, tokens) in corpus.iter().enumerate() {
-        let doc = builder.add_document(format!("payload-{i}").into_bytes());
+        let doc = builder
+            .add_document(format!("payload-{i}").into_bytes())
+            .unwrap();
         for &token in tokens {
             *expected
                 .entry(VOCABULARY[token].to_string())
@@ -137,7 +140,7 @@ proptest! {
         prop_assert_eq!(matches.iter().map(|m| m.doc).collect::<Vec<_>>(), wanted.clone());
         for m in &matches {
             let expected_payload = format!("payload-{}", m.doc);
-            prop_assert_eq!(m.payload.as_slice(), expected_payload.as_bytes());
+            prop_assert_eq!(m.payload.bytes().unwrap(), expected_payload.as_bytes());
         }
 
         let bound = 2 * query.len() as u32 + wanted.len() as u32;

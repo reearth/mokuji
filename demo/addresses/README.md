@@ -78,39 +78,39 @@ is what a street address is actually written at.
 ./fetch-abr.sh abr 13
 python3 abr.py rsdt --rsdt abr/mt_rsdtdsp_rsdt_pref13.csv \
   --pos abr/mt_rsdtdsp_rsdt_pos_pref13.csv --pref 東京都 --out tokyo.tsv
-colex build tokyo.tsv tokyo.colex --tokenizer ja-address \
+colex build tokyo.tsv tokyo.colex --tokenizer ja-address --payload ints:6 \
   --source abr/mt_rsdtdsp_rsdt_pref13.csv --source abr.py
 colex prefix tokyo.colex "東京都千代田区丸の内一丁目"
 ```
 
 ```
 query normalized to '東京都千代田区丸の内1丁目' by the 'ja-address' tokenizer
-東京都千代田区丸の内1丁目10番10号	139.765575675,35.678505258
-東京都千代田区丸の内1丁目10番11号	139.765623217,35.678634717
+東京都千代田区丸の内1丁目10番10号	139.765576,35.678505
+東京都千代田区丸の内1丁目10番11号	139.765623,35.678635
 ...
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    832 of 18283401
+bytes:    471 of 9121905
 ```
 
-**1,744,962 addresses, every one with coordinates, in 18 MB. Two range reads.**
+**1,744,962 addresses, every one with coordinates, in 9.1 MB. Two range reads.**
 
 | | |
 |---|---|
 | Source | 225 MB of CSV, two tables |
 | Corpus | 120 MB |
-| Index | 18.3 MB |
-| Build | 5.0 s |
+| Index | 9.1 MB |
+| Build | 5.5 s |
 
 | Results | Dictionary | Postings | Payload | Total reads | Bytes |
 |---|---|---|---|---|---|
-| 20 | 1 | 0 | 1 | 2 | 795 B |
-| 100 | 2 | 0 | 2 | 4 | 1.6 KB |
-| 500 | 5 | 0 | 9 | 14 | 6.2 KB |
-| 2,000 | 17 | 0 | 32 | 49 | 22 KB |
+| 20 | 1 | 0 | 1 | 2 | 435 B |
+| 100 | 2 | 0 | 2 | 4 | 858 B |
+| 500 | 5 | 0 | 9 | 14 | 3.0 KB |
+| 2,000 | 17 | 0 | 32 | 49 | 11 KB |
 
-Two range reads and under a kilobyte, from a file ten times the size of the
-town-level one holding two and a half times as many addresses. Nothing in the
-read column moved.
+Two range reads and under half a kilobyte, from a file holding two and a half
+times as many addresses as the town-level one. Nothing in the read column
+moved.
 
 ### The dictionary gets cheaper as addresses get more specific
 
@@ -131,10 +131,10 @@ addresses would be a dictionary of roughly 40 MB. That is well under the
 50–150 MB estimated earlier from synthetic data — the estimate was
 conservative, which is what estimates from synthetic data usually are.
 
-### Payload is now the whole problem
+### Payload was the whole problem
 
-15.1 MB of the 18.3 MB — 83% of the file — is coordinate text, and the registry
-publishes nine and ten decimal places:
+Before the payload codec, 15.1 MB of an 18.3 MB index was coordinate text, and
+the registry publishes nine and ten decimal places:
 
 ```
 139.765575675,35.678505258
@@ -143,23 +143,44 @@ publishes nine and ten decimal places:
 The tenth decimal place of a longitude is a tenth of a millimetre. That is
 almost certainly not a claim about accuracy: it is what printing a `float64`
 looks like after converting from a plane rectangular coordinate system, and the
-registry is being faithful rather than boastful. The fault is ours for carrying
+registry is being faithful rather than boastful. The fault was ours for carrying
 the residue of someone else's coordinate conversion into an index and then
 compressing it.
 
-Rounding to six decimals, which is about eleven centimetres, gives:
+`--payload ints:6` stores each coordinate as an integer number of microdegrees,
+delta-coded against the previous document (`SPEC.md` §5.5.3):
 
-| | index |
-|---|---|
-| As published | 18.3 MB |
-| Coordinates at six decimals | **12.9 MB** |
+| | payload | index |
+|---|---|---|
+| Text, as published | 15.1 MB | 18.3 MB |
+| **Fixed point, delta-coded, six decimals** | **6.0 MB** | **9.1 MB** |
 
-A 29% smaller file for precision nobody has. The format has nothing to say
-about this — payload contents are outside the specification (`SPEC.md` §5.5) —
-which is exactly why it is worth saying here: the largest remaining saving in
-this index is not the format's to make.
+Half the file, and the read counts are unchanged. The stored payload is not even
+compressed: delta-coded varints leave deflate nothing to find, so the writer
+measured and stored them raw, which also means a payload read decompresses
+nothing.
 
-### What the real data changed
+It works because of the monotonic ID rule (`SPEC.md` §3.2). Documents are in
+term order, addresses sort hierarchically, and a hierarchy of addresses is very
+nearly a spatial ordering — so consecutive documents are metres apart and their
+coordinates differ only in the last digits. A rule adopted to keep the
+dictionary small pays a second time in a section that does not know the
+dictionary exists.
+
+Of the two halves of the saving, only one was ever the publisher's:
+
+| | whose | worth |
+|---|---|---|
+| Structure — what the ordering makes possible | the format | taken |
+| Encoding — how a number is written down | the format | 2.6x, now taken |
+| Precision — how many digits are real | the publisher | 1.5x, and theirs |
+
+And the precision half is not beyond the format either, once it is read as
+provenance rather than compression. The metadata records `payload: ints:6`, so
+an index that rounds says that it rounded. A shortened copy that declares the
+shortening is still a true copy; one that shortens silently is not.
+
+### What the real data changed### What the real data changed
 
 The dictionary costs **5.3 bytes per address** compressed, against 1.9 on the
 synthetic corpus — 2.7x worse, and the reason the synthetic numbers are
@@ -242,15 +263,15 @@ only the bytes moved shrink.
 
 ```
                       stored         raw     codec
-meta                    503 B       503 B    raw       resident
+meta                    274 B       274 B    raw       resident
 term_index             45.8 KB     178.6 KB  deflate   resident
 term_block_offsets    109.1 KB     109.1 KB  raw       resident
 payload_offsets       218.1 KB     218.1 KB  raw       resident
 postings                    0           0    raw       implied
 term_blocks             2.8 MB      16.7 MB  deflate
-payload                15.1 MB      46.0 MB  deflate
+payload                 6.0 MB       6.0 MB  raw       delta-coded integers
                        -------     -------
-                       18.3 MB      63.3 MB   from a 120 MB corpus
+                        9.1 MB      23.2 MB   from a 120 MB corpus
 ```
 
 The offset tables and the metadata are stored raw on purpose. Metadata stays
@@ -269,37 +290,12 @@ taken: browsers cannot supply a preset dictionary through their native
 decompression, so it would cost a decompressor in the page. See `SPEC.md`
 §5.6.1.
 
-**Payload is coordinate text**, and on the Tokyo index it is 83% of the file.
-Rounding is not the largest saving available, and most of what remains *is* the
-format's to make. Measured on the Tokyo payloads (`tools/payload-encodings.py`),
-per address after per-block deflate:
+**The dictionary is now most of the file** — 2.8 MB of 9.1 MB — and a finite
+state transducer would be about a fifth of that. See the correction in
+`SPEC.md`'s decision log: the measurement is taken, the question is open, and it
+is the largest thing left.
 
-| encoding | index payload | per address |
-|---|---|---|
-| Text, as published | 15.2 MB | 8.69 B |
-| Text, rounded to six decimals | 9.8 MB | 5.61 B |
-| Fixed point 1e-6, `int32` pair | 8.8 MB | 5.05 B |
-| **Fixed point 1e-6, zigzag varint delta** | **5.9 MB** | **3.39 B** |
-| Fixed point 1e-5 (about a metre), delta | 3.7 MB | 2.11 B |
-
-Delta encoding wins because of the monotonic ID rule (`SPEC.md` §3.2), not
-despite it. Documents are in term order, addresses sort hierarchically, and a
-hierarchy of addresses is very nearly a spatial ordering — so consecutive
-documents are metres apart and their coordinates differ in the last few digits.
-The rule was adopted to keep the dictionary small; it turns out to pay a second
-time, in a section that does not know the dictionary exists.
-
-That splits the problem three ways, and only the last part is genuinely outside
-the format:
-
-| | whose | measured here |
-|---|---|---|
-| Structure — what the ordering makes possible | the format | taken |
-| Encoding — how a coordinate is written down | the format | **not taken: 2.6x** |
-| Precision — how many digits are real | the publisher | 1.5x, correctly theirs |
-
-The encoding layer wants a declared payload codec, the way PMTiles declares a
-tile type without saying what a tile means. And the precision layer is not
-beyond the format either, once it is understood as provenance rather than
-compression: an index that rounds and *records that it rounded* is a shortened
-copy that says so. One that rounds silently is a damaged one.
+**A coarser scale is available and is a decision, not an optimization.**
+`ints:5` is about a metre and would take payload from 6.0 MB to 3.7 MB. Whether
+a metre is enough is the publisher's call; the format's part is that the choice
+ends up in the metadata either way.

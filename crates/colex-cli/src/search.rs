@@ -37,11 +37,7 @@ pub fn run(path: &Path, terms: &[&str]) -> Result<(), Error> {
     let matches = block_on(index.search(&query))?;
 
     for m in &matches {
-        match std::str::from_utf8(&m.payload) {
-            Ok(text) => println!("{}\t{text}", m.doc),
-            // Payload is opaque to the format, so it is not necessarily text.
-            Err(_) => println!("{}\t<{} bytes>", m.doc, m.payload.len()),
-        }
+        println!("{}\t{}", m.doc, crate::payload::render(&m.payload));
     }
 
     let bound = 2 * terms.len() + matches.len();

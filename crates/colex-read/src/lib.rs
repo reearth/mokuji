@@ -19,7 +19,7 @@ mod slice;
 pub mod term;
 
 pub use counting::{CountingReader, ReadStats};
-pub use index::{Index, Match};
+pub use index::{Index, Match, Payload};
 pub use postings::Postings;
 pub use reader::RangeReader;
 pub use slice::SliceReader;

@@ -13,13 +13,18 @@ Open <http://localhost:8787/> and type a prefix. The panel counts the range
 requests as you type.
 
 Completing a prefix over Tokyo's 1,744,962 addresses costs **two to four
-`Range` requests and a kilobyte or two** from a 17.4 MB file, and the same
+`Range` requests and well under a kilobyte** from an 8.7 MB file, and the same
 number at any file size. One request per dictionary block the matches span and
 one per payload block; there is no postings request at all, because in an index
 of a dictionary the entry states its own postings (`SPEC.md` §5.3.4).
 
 Opening costs two requests and 365 KB — the header, the term index, and the
 offset tables for 1.7 million addresses — and is paid once.
+
+Coordinates arrive as delta-coded integers (`SPEC.md` §5.5.3) and the page turns
+them back into decimals using the scale the file declares. The format states how
+a number was written down; what it measures is still nobody's business but the
+application's.
 
 ## Normalization happens here too
 

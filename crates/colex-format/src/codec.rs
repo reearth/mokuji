@@ -118,3 +118,80 @@ mod tests {
         assert!(!PostingsCodec::Roaring.is_required());
     }
 }
+
+/// How a document's payload is written down (`SPEC.md` §5.5).
+///
+/// Not what it means. The format states the encoding and says nothing about the
+/// subject, which is the line PMTiles draws around a tile: declare the type,
+/// say nothing about the picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PayloadCodec {
+    /// Bytes, returned as stored.
+    Opaque = 0,
+    /// A fixed number of signed integers per document, delta-coded against the
+    /// previous document in the block.
+    DeltaInts = 1,
+}
+
+impl PayloadCodec {
+    /// Parses the codec byte.
+    pub fn from_byte(b: u8) -> Result<Self> {
+        Ok(match b {
+            0 => PayloadCodec::Opaque,
+            1 => PayloadCodec::DeltaInts,
+            _ => {
+                return Err(Error::Malformed {
+                    detail: "unknown payload codec",
+                })
+            }
+        })
+    }
+}
+
+/// Maps a signed value onto an unsigned one, keeping small negatives small.
+pub fn zigzag(v: i64) -> u64 {
+    ((v << 1) ^ (v >> 63)) as u64
+}
+
+/// The inverse of [`zigzag`].
+pub fn unzigzag(v: u64) -> i64 {
+    ((v >> 1) as i64) ^ -((v & 1) as i64)
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+
+    #[test]
+    fn payload_codec_round_trips() {
+        for c in [PayloadCodec::Opaque, PayloadCodec::DeltaInts] {
+            assert_eq!(PayloadCodec::from_byte(c as u8).unwrap(), c);
+        }
+        assert!(PayloadCodec::from_byte(2).is_err());
+    }
+
+    #[test]
+    fn zigzag_round_trips() {
+        for v in [
+            0,
+            1,
+            -1,
+            2,
+            -2,
+            i64::MAX,
+            i64::MIN,
+            139_765_575,
+            -35_678_505,
+        ] {
+            assert_eq!(unzigzag(zigzag(v)), v);
+        }
+    }
+
+    #[test]
+    fn zigzag_keeps_small_negatives_small() {
+        assert_eq!(zigzag(-1), 1);
+        assert_eq!(zigzag(1), 2);
+        assert!(zigzag(-3) < 8);
+    }
+}

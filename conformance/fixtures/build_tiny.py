@@ -275,7 +275,7 @@ def build():
         + len(meta)
         + len(term_index)
         + 8 * (len(term_chunks) + 1)
-        + 8
+        + 12
         + 8 * (len(payload_blocks) + 1)
     )
 
@@ -294,7 +294,7 @@ def build():
         SEC_META: len(meta),
         SEC_TERM_INDEX: len(term_index),
         SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
-        SEC_PAYLOAD_OFFSETS: 8 + 8 * (len(payload_blocks) + 1),
+        SEC_PAYLOAD_OFFSETS: 12 + 8 * (len(payload_blocks) + 1),
         SEC_POSTINGS: sum(len(runs[t]) for t in terms),
         SEC_TERM_BLOCKS: sum(len(b) for b in blocks),
         SEC_PAYLOAD: sum(len(b) for b in payload_blocks),
@@ -310,7 +310,8 @@ def build():
         for o in running_offsets(blocks)
     )
     payload_offsets = (
-        DOCS_PER_PAYLOAD_BLOCK.to_bytes(4, "little")
+        bytes([0, 0, 0, 0])  # codec 0 (opaque), no values, no scale, reserved
+        + DOCS_PER_PAYLOAD_BLOCK.to_bytes(4, "little")
         + len(payload_blocks).to_bytes(4, "little")
         + b"".join(
             (placed[SEC_PAYLOAD] + o).to_bytes(8, "little")
@@ -477,13 +478,14 @@ def decode_postings(run, has_freqs, term_id, doc_freq, num_docs):
 
 def payload_of(f, resident, doc_id, cache):
     section = resident[SEC_PAYLOAD_OFFSETS]
-    per_block = int.from_bytes(section[0:4], "little")
+    assert section[0] == 0, "this fixture stores payload opaquely"
+    per_block = int.from_bytes(section[4:8], "little")
     ordinal, index = divmod(doc_id, per_block)
     # Results are visited in document ID order and payload is stored in that
     # order, so documents sharing a block share a read. This is the difference
     # between m and m' in SPEC section 4.
     if ordinal not in cache:
-        base = 8 + ordinal * 8
+        base = 12 + ordinal * 8
         start = int.from_bytes(section[base : base + 8], "little")
         end = int.from_bytes(section[base + 8 : base + 16], "little")
         cache[ordinal] = f.read(start, end - start)

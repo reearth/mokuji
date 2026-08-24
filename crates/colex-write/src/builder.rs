@@ -1,7 +1,7 @@
 use colex_codec::{bitpack, block, front_coded, varint};
 use colex_format::{
-    Error, Flags, Header, Result, SectionCodec, SectionEntry, SectionId, HEADER_LEN,
-    SECTION_ENTRY_LEN, SPEC_MAJOR, SPEC_MINOR,
+    zigzag, Error, Flags, Header, PayloadCodec, Result, SectionCodec, SectionEntry, SectionId,
+    HEADER_LEN, SECTION_ENTRY_LEN, SPEC_MAJOR, SPEC_MINOR,
 };
 
 /// Build parameters.
@@ -25,6 +25,11 @@ pub struct Options {
     /// An address dictionary, where a term occurs at most once per document,
     /// omits them rather than storing a run of ones.
     pub has_freqs: bool,
+    /// How payload is written down.
+    ///
+    /// Not what it means — see `SPEC.md` §5.5. The format states the encoding
+    /// and has no opinion about the subject.
+    pub payload: PayloadEncoding,
     /// Whether to compress the sections that can be compressed.
     ///
     /// Each addressed unit is compressed on its own, so a reader still fetches
@@ -40,9 +45,29 @@ impl Default for Options {
             terms_per_block: 128,
             docs_per_payload_block: 64,
             has_freqs: true,
+            payload: PayloadEncoding::Opaque,
             compress: true,
         }
     }
+}
+
+/// How payload is written down (`SPEC.md` §5.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PayloadEncoding {
+    /// Bytes, stored as given.
+    Opaque,
+    /// A fixed number of signed integers per document, delta-coded.
+    ///
+    /// Worth taking whenever documents that sort together hold similar numbers,
+    /// which for a hierarchical key they do: addresses that sort together are
+    /// near each other on the ground.
+    Ints {
+        /// How many integers each document carries.
+        values_per_doc: u8,
+        /// A stored `v` stands for `v * 10^exponent`. Recorded, not
+        /// interpreted.
+        scale_exponent: i8,
+    },
 }
 
 /// Builds a COLex file from documents and a sorted stream of postings.
@@ -55,6 +80,7 @@ impl Default for Options {
 pub struct Builder {
     options: Options,
     payloads: Vec<Vec<u8>>,
+    values: Vec<Vec<i64>>,
     sum_doclen: u64,
     terms: Vec<Term>,
     open: Option<OpenTerm>,
@@ -85,18 +111,46 @@ impl Builder {
         Ok(Builder {
             options,
             payloads: Vec::new(),
+            values: Vec::new(),
             sum_doclen: 0,
             terms: Vec::new(),
             open: None,
         })
     }
 
-    /// Appends a document, returning its ID.
-    ///
-    /// Payload bytes are opaque to the format (`SPEC.md` §5.5).
-    pub fn add_document(&mut self, payload: impl Into<Vec<u8>>) -> u64 {
+    /// Appends a document whose payload is opaque bytes, returning its ID.
+    pub fn add_document(&mut self, payload: impl Into<Vec<u8>>) -> Result<u64> {
+        if self.options.payload != PayloadEncoding::Opaque {
+            return Err(Error::Malformed {
+                detail: "this index encodes payload as integers",
+            });
+        }
         self.payloads.push(payload.into());
-        self.payloads.len() as u64 - 1
+        Ok(self.documents() - 1)
+    }
+
+    /// Appends a document whose payload is a fixed row of integers.
+    pub fn add_document_values(&mut self, values: &[i64]) -> Result<u64> {
+        let PayloadEncoding::Ints { values_per_doc, .. } = self.options.payload else {
+            return Err(Error::Malformed {
+                detail: "this index encodes payload as opaque bytes",
+            });
+        };
+        if values.len() != usize::from(values_per_doc) {
+            return Err(Error::Malformed {
+                detail: "a document carries the wrong number of values",
+            });
+        }
+        self.values.push(values.to_vec());
+        Ok(self.documents() - 1)
+    }
+
+    /// How many documents have been added.
+    pub fn documents(&self) -> u64 {
+        match self.options.payload {
+            PayloadEncoding::Opaque => self.payloads.len() as u64,
+            PayloadEncoding::Ints { .. } => self.values.len() as u64,
+        }
     }
 
     /// Records that `term` occurs `freq` times in `doc`.
@@ -109,7 +163,7 @@ impl Builder {
                 detail: "a posting with zero frequency is not a posting",
             });
         }
-        if doc >= self.payloads.len() as u64 {
+        if doc >= self.documents() {
             return Err(Error::Malformed {
                 detail: "posting refers to a document that was never added",
             });
@@ -157,19 +211,44 @@ impl Builder {
         }
 
         let term_chunks: Vec<&[Term]> = self.terms.chunks(self.options.terms_per_block).collect();
-        let raw_payload_blocks: Vec<Vec<u8>> = self
-            .payloads
-            .chunks(self.options.docs_per_payload_block as usize)
-            .map(|group| {
-                let mut block = Vec::new();
-                varint::encode(group.len() as u64, &mut block);
-                for payload in group {
-                    varint::encode(payload.len() as u64, &mut block);
-                    block.extend_from_slice(payload);
-                }
-                block
-            })
-            .collect();
+        let per_block = self.options.docs_per_payload_block as usize;
+        let raw_payload_blocks: Vec<Vec<u8>> = match self.options.payload {
+            PayloadEncoding::Opaque => self
+                .payloads
+                .chunks(per_block)
+                .map(|group| {
+                    let mut block = Vec::new();
+                    varint::encode(group.len() as u64, &mut block);
+                    for payload in group {
+                        varint::encode(payload.len() as u64, &mut block);
+                        block.extend_from_slice(payload);
+                    }
+                    block
+                })
+                .collect(),
+            PayloadEncoding::Ints { .. } => self
+                .values
+                .chunks(per_block)
+                .map(|group| {
+                    let mut block = Vec::new();
+                    varint::encode(group.len() as u64, &mut block);
+                    // Deltas never cross a block boundary: a block is addressed
+                    // on its own and must decode on its own.
+                    let mut previous: Option<&Vec<i64>> = None;
+                    for row in group {
+                        for (i, &value) in row.iter().enumerate() {
+                            let delta = match previous {
+                                None => value,
+                                Some(previous) => value.wrapping_sub(previous[i]),
+                            };
+                            varint::encode(zigzag(delta), &mut block);
+                        }
+                        previous = Some(row);
+                    }
+                    block
+                })
+                .collect(),
+        };
         let (payload_blocks, payload_codec) = self.pack(raw_payload_blocks)?;
 
         let mut term_index = (term_chunks.len() as u32).to_le_bytes().to_vec();
@@ -207,7 +286,7 @@ impl Builder {
             + meta.len() as u64
             + term_index.len() as u64
             + 8 * (term_chunks.len() as u64 + 1)
-            + 8
+            + 12
             + 8 * (payload_blocks.len() as u64 + 1);
 
         let (blocks, term_blocks_codec) = self.pack(self.term_blocks(&term_chunks, postings_at))?;
@@ -219,7 +298,7 @@ impl Builder {
                 SectionId::META => meta.len() as u64,
                 SectionId::TERM_INDEX => term_index.len() as u64,
                 SectionId::TERM_BLOCK_OFFSETS => 8 * (term_chunks.len() as u64 + 1),
-                SectionId::PAYLOAD_OFFSETS => 8 + 8 * (payload_blocks.len() as u64 + 1),
+                SectionId::PAYLOAD_OFFSETS => 12 + 8 * (payload_blocks.len() as u64 + 1),
                 SectionId::POSTINGS => postings_len,
                 SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
                 SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
@@ -239,7 +318,15 @@ impl Builder {
         debug_assert_eq!(at(SectionId::POSTINGS).0, postings_at);
 
         let term_block_offsets = offset_table(at(SectionId::TERM_BLOCKS).0, &blocks);
-        let mut payload_offsets = self.options.docs_per_payload_block.to_le_bytes().to_vec();
+        let (codec, values_per_doc, scale_exponent) = match self.options.payload {
+            PayloadEncoding::Opaque => (PayloadCodec::Opaque, 0u8, 0i8),
+            PayloadEncoding::Ints {
+                values_per_doc,
+                scale_exponent,
+            } => (PayloadCodec::DeltaInts, values_per_doc, scale_exponent),
+        };
+        let mut payload_offsets = vec![codec as u8, values_per_doc, scale_exponent as u8, 0];
+        payload_offsets.extend_from_slice(&self.options.docs_per_payload_block.to_le_bytes());
         payload_offsets.extend_from_slice(&(payload_blocks.len() as u32).to_le_bytes());
         payload_offsets.extend_from_slice(&offset_table(at(SectionId::PAYLOAD).0, &payload_blocks));
 
@@ -252,7 +339,7 @@ impl Builder {
             spec_minor: SPEC_MINOR,
             flags,
             section_count: order.len() as u32,
-            num_docs: self.payloads.len() as u64,
+            num_docs: self.documents(),
             sum_doclen: self.sum_doclen,
             section_table_offset: HEADER_LEN as u64,
             section_table_len: table_len as u32,

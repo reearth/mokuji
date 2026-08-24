@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use colex_write::Options;
+use colex_write::{Options, PayloadEncoding};
 
 use corpus::Tokenizer;
 
@@ -11,6 +11,7 @@ mod build;
 mod corpus;
 mod dump;
 mod info;
+mod payload;
 mod prefix;
 mod search;
 mod verify;
@@ -25,6 +26,9 @@ usage:
         --terms-per-block <n>          terms per dictionary block (default 128)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
+        --payload <how>                text (default), or ints:<decimals> to
+                                       store the payload as delta-coded fixed
+                                       point numbers
         --tokenizer <id>               space-split (default) or identity
         --source <path>                record this file's hash as a source too;
                                        repeatable, for the register a corpus
@@ -105,6 +109,33 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .ok_or_else(|| Error::Usage("--source needs a path".into()))?;
                 rest = tail;
                 origins.push(path);
+            }
+            "--payload" => {
+                let (how, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--payload needs a value".into()))?;
+                rest = tail;
+                options.payload = match how.split_once(':') {
+                    Some(("ints", decimals)) => {
+                        let decimals: u8 = decimals.parse().map_err(|_| {
+                            Error::Usage(format!("'{decimals}' is not a number of decimals"))
+                        })?;
+                        if decimals > 18 {
+                            return Err(Error::Usage("at most 18 decimals".into()));
+                        }
+                        PayloadEncoding::Ints {
+                            // Counted from the corpus once it is read.
+                            values_per_doc: 0,
+                            scale_exponent: -(decimals as i8),
+                        }
+                    }
+                    _ if *how == "text" => PayloadEncoding::Opaque,
+                    _ => {
+                        return Err(Error::Usage(format!(
+                            "'{how}' is not a payload encoding; use text or ints:<decimals>"
+                        )))
+                    }
+                };
             }
             "--tokenizer" => {
                 let (id, tail) = rest

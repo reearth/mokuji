@@ -66,7 +66,10 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
         let docs: Vec<u64> = matches.iter().map(|m| m.doc).collect();
         let payloads: Vec<String> = matches
             .iter()
-            .map(|m| String::from_utf8(m.payload.clone()).expect("fixture payloads are text"))
+            .map(|m| {
+                String::from_utf8(m.payload.bytes().expect("the fixture is opaque").to_vec())
+                    .expect("fixture payloads are text")
+            })
             .collect();
 
         assert_eq!(docs, case.docs, "{}: documents", case.name);

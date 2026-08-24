@@ -6,3 +6,4 @@
 
 # Working notes, kept out of the repository
 /tmp
+__pycache__/

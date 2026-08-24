@@ -29,6 +29,24 @@ const SECTION = {
 const CODEC_RAW = 0;
 const CODEC_DEFLATE = 1;
 
+const PAYLOAD_OPAQUE = 0;
+const PAYLOAD_DELTA_INTS = 1;
+
+function unzigzag(v) {
+  return v % 2 === 0 ? v / 2 : -(v + 1) / 2;
+}
+
+/** Writes `value * 10^exponent` in full, keeping the zeros the file claims. */
+function scaled(value, exponent) {
+  if (exponent >= 0) return String(value) + "0".repeat(exponent);
+  const digits = -exponent;
+  const unit = 10 ** digits;
+  const sign = value < 0 ? "-" : "";
+  const magnitude = Math.abs(value);
+  const whole = Math.floor(magnitude / unit);
+  return `${sign}${whole}.${String(magnitude % unit).padStart(digits, "0")}`;
+}
+
 // How much to ask for when opening. The resident set is sized to be fetched in
 // one request; this is a reader's guess at how large that is, not a property of
 // the format.
@@ -475,9 +493,14 @@ export class ColexIndex {
 
   /** Payload for documents given in ascending order, sharing blocks. */
   async payloadSpan(docs) {
-    if (!(this.flags & FLAG_HAS_PAYLOAD)) return docs.map(() => new Uint8Array(0));
-    const view = new DataView(this.payloadOffsets.buffer, this.payloadOffsets.byteOffset);
-    const perBlock = view.getUint32(0, true);
+    if (!(this.flags & FLAG_HAS_PAYLOAD)) return docs.map(() => "");
+    const header = this.payloadOffsets;
+    const view = new DataView(header.buffer, header.byteOffset);
+    const codec = header[0];
+    const valuesPerDoc = header[1];
+    // A signed byte: the stored integers stand for value * 10^exponent.
+    const exponent = (header[2] << 24) >> 24;
+    const perBlock = view.getUint32(4, true);
 
     const out = [];
     let cachedOrdinal = null;
@@ -485,22 +508,40 @@ export class ColexIndex {
     for (const doc of docs) {
       const ordinal = Math.floor(doc / perBlock);
       if (ordinal !== cachedOrdinal) {
-        const [offset, length] = this.offsetPair(this.payloadOffsets, 8, ordinal);
+        const [offset, length] = this.offsetPair(header, 12, ordinal);
         const raw = await this.read(offset, length);
         cached = await this.unit(raw, this.sections.get(SECTION.PAYLOAD).codec);
         cachedOrdinal = ordinal;
       }
+
       const cursor = new Cursor(cached);
       const count = cursor.varint();
       const index = doc % perBlock;
       if (index >= count) throw new Error("payload block is shorter than expected");
-      for (let i = 0; i < count; i++) {
-        const length = cursor.varint();
-        if (i === index) {
-          out.push(cached.subarray(cursor.pos, cursor.pos + length));
-          break;
+
+      if (codec === PAYLOAD_OPAQUE) {
+        for (let i = 0; i < count; i++) {
+          const length = cursor.varint();
+          if (i === index) {
+            out.push(utf8.decode(cached.subarray(cursor.pos, cursor.pos + length)));
+            break;
+          }
+          cursor.pos += length;
         }
-        cursor.pos += length;
+      } else if (codec === PAYLOAD_DELTA_INTS) {
+        // Every entry up to the wanted one has to be decoded, because each is a
+        // difference from the one before it. A block is what gets fetched
+        // anyway, and it is sized so that this is cheap.
+        const values = new Array(valuesPerDoc).fill(0);
+        for (let entry = 0; entry <= index; entry++) {
+          for (let i = 0; i < valuesPerDoc; i++) {
+            const delta = unzigzag(cursor.varint());
+            values[i] = entry === 0 ? delta : values[i] + delta;
+          }
+        }
+        out.push(values.map((v) => scaled(v, exponent)).join(","));
+      } else {
+        throw new Error(`payload codec ${codec} is not implemented here`);
       }
     }
     return out;
@@ -522,7 +563,7 @@ export class ColexIndex {
       results: entries.map((entry, i) => ({
         term: utf8.decode(entry.term),
         doc: docs[i],
-        payload: utf8.decode(payloads[i]),
+        payload: payloads[i],
       })),
     };
   }

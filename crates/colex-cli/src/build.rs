@@ -5,7 +5,7 @@ use std::path::Path;
 use colex_meta::{
     cbor_map, ContentHash, Generator, Meta, Source, Tokenizer as MetaTokenizer, Value,
 };
-use colex_write::{Builder, Options};
+use colex_write::{Builder, Options, PayloadEncoding};
 use sha2::{Digest, Sha256};
 
 use crate::corpus::{self, Tokenizer};
@@ -21,7 +21,7 @@ pub fn run(
     input: &Path,
     output: &Path,
     origins: &[&Path],
-    options: Options,
+    mut options: Options,
     tokenizer: Tokenizer,
     generation: u64,
 ) -> Result<(), Error> {
@@ -34,6 +34,25 @@ pub fn run(
     // checkable against the file itself.
     let digest = Sha256::digest(&raw);
 
+    // How many values a document carries is a property of the corpus, not
+    // something to make the caller count. Taken from the first document and
+    // then required of the rest by the builder.
+    if let PayloadEncoding::Ints {
+        values_per_doc: values_per_doc @ 0,
+        scale_exponent,
+    } = &mut options.payload
+    {
+        let first = corpus
+            .payloads
+            .first()
+            .ok_or(Error::Corpus("the corpus is empty".into()))?;
+        let text = std::str::from_utf8(first)
+            .map_err(|_| Error::Corpus("a payload is not UTF-8".into()))?;
+        let count = crate::payload::parse_values(text, scale_exponent.unsigned_abs())?.len();
+        *values_per_doc = u8::try_from(count)
+            .map_err(|_| Error::Corpus("a document carries too many values".into()))?;
+    }
+
     // A dictionary index earns implied postings only when a term's document ID
     // is the term's own, which means the documents have to be in term order.
     // Requiring the caller to have sorted the corpus that way would be a
@@ -41,15 +60,19 @@ pub fn run(
     // are — so the ordering is done here instead.
     let order = dictionary_order(&corpus);
     let mut builder = Builder::new(options)?;
-    match &order {
-        Some(order) => {
-            for &doc in order {
-                builder.add_document(corpus.payloads[doc as usize].clone());
+    let identity: Vec<u64> = (0..corpus.payloads.len() as u64).collect();
+    let sequence = order.as_ref().unwrap_or(&identity);
+    for &doc in sequence {
+        let payload = &corpus.payloads[doc as usize];
+        match options.payload {
+            PayloadEncoding::Opaque => {
+                builder.add_document(payload.clone())?;
             }
-        }
-        None => {
-            for payload in &corpus.payloads {
-                builder.add_document(payload.clone());
+            PayloadEncoding::Ints { scale_exponent, .. } => {
+                let text = std::str::from_utf8(payload)
+                    .map_err(|_| Error::Corpus("a payload is not UTF-8".into()))?;
+                let values = crate::payload::parse_values(text, scale_exponent.unsigned_abs())?;
+                builder.add_document_values(&values)?;
             }
         }
     }
@@ -99,6 +122,7 @@ pub fn run(
                     Value::Uint(u64::from(options.docs_per_payload_block)),
                 ),
                 ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
+                ("payload", Value::Text(describe(options.payload))),
             ]),
         },
         tokenizer: MetaTokenizer {
@@ -131,6 +155,21 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+/// How the payload encoding is recorded in the metadata.
+///
+/// A reader does not need this — the payload offsets section declares the codec
+/// — but a rebuild does. And where the scale is a decision about precision, as
+/// it is for coordinates, recording it turns a shortened copy into one that
+/// says it was shortened.
+fn describe(payload: PayloadEncoding) -> String {
+    match payload {
+        PayloadEncoding::Opaque => "opaque".to_string(),
+        PayloadEncoding::Ints { scale_exponent, .. } => {
+            format!("ints:{}", scale_exponent.unsigned_abs())
+        }
+    }
 }
 
 /// The documents in term order, if this corpus is a dictionary.
