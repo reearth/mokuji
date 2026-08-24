@@ -29,12 +29,15 @@ payloads = ["35.671,139.772"]
 reads = 5 # 2 term blocks, 2 postings, 1 payload
 
 [[case]]
-name = "term in one document"
+name = "implied postings"
 fixture = "tiny"
 query = ["chiyoda"]
 docs = [0]
 payloads = ["35.694,139.754"]
-reads = 3
+# `chiyoda` names document 0 and is term 0, so SPEC.md §5.3.4 lets the
+# dictionary entry state its postings. One term block, one payload, and no
+# postings read at all.
+reads = 2
 
 [[case]]
 name = "empty intersection"

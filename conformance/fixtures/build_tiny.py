@@ -175,8 +175,14 @@ def build_index():
     return {term: postings[term] for term in sorted(postings)}
 
 
-def encode_postings(docs):
+def encode_postings(docs, term_id):
     doc_ids = sorted(docs)
+    # The dictionary can state this by itself: one document, whose ID is this
+    # term's own, at frequency one (SPEC.md section 5.3.4). Writing it out would
+    # record nothing and cost a range read to read back.
+    if doc_ids == [term_id] and docs[term_id] == 1:
+        return b""
+
     values = [doc_ids[0]] + [
         doc_ids[i] - doc_ids[i - 1] - 1 for i in range(1, len(doc_ids))
     ]
@@ -213,7 +219,7 @@ def chunk(items, size):
 def build():
     index = build_index()
     terms = list(index)
-    runs = {term: encode_postings(index[term]) for term in terms}
+    runs = {term: encode_postings(index[term], i) for i, term in enumerate(terms)}
     term_chunks = chunk(terms, TERMS_PER_BLOCK)
 
     payload_blocks = [
@@ -449,7 +455,11 @@ def lookup(f, resident, ordinal, term):
     return None
 
 
-def decode_postings(run, has_freqs):
+def decode_postings(run, has_freqs, term_id, doc_freq, num_docs):
+    if not run:
+        assert doc_freq == 1, "implied postings must have a doc_freq of 1"
+        assert term_id < num_docs, "implied postings name a document outside the index"
+        return {term_id: 1}
     assert run[0] == 0, "unexpected postings codec"
     count, pos = read_varint(run, 1)
     values, pos = unpack_values(run, pos, count)
@@ -504,8 +514,11 @@ def search(data, query):
         entry = lookup(f, resident, ordinal, term.encode())
         if entry is None:
             return {}, f.reads
-        _, doc_freq, offset, length = entry
-        docs = decode_postings(f.read(offset, length), has_freqs)
+        term_id, doc_freq, offset, length = entry
+        num_docs = int.from_bytes(header[16:24], "little")
+        docs = decode_postings(
+            f.read(offset, length) if length else b"", has_freqs, term_id, doc_freq, num_docs
+        )
         assert len(docs) == doc_freq, "doc_freq disagrees with the postings run"
         results = docs.keys() if results is None else results & docs.keys()
 
@@ -545,7 +558,9 @@ def main():
         # query, expected result, expected reads
         (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
         (["tokyo", "chuo"], {1: "35.671,139.772"}, 5),
-        (["chiyoda"], {0: "35.694,139.754"}, 3),
+        # `chiyoda` names document 0 and is term 0, so its postings are implied
+        # and cost no read: the term block and the payload, and nothing else.
+        (["chiyoda"], {0: "35.694,139.754"}, 2),
         (["osaka", "tokyo"], {}, 4),
         # An absent term still costs the block read that proves it absent.
         (["kyoto"], {}, 1),

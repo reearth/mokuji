@@ -365,6 +365,33 @@ term-ID-to-postings-offset table, because consulting one would cost an extra
 range read per term and break the bound in §4. Postings runs are written in
 term order, so the offset deltas are small and positive.
 
+##### Implied postings
+
+A `postings_len` of zero means the term occurs in **exactly one document, whose
+ID is the term's own ID, with frequency one**. No postings run is stored and
+none is read.
+
+Such an entry MUST have `doc_freq` of 1, and its term ID MUST be less than
+`num_docs`. A reader MUST reject an entry that does not.
+
+Its `postings_offset` is not used by a reader. A writer MUST still encode the
+field as the running position — an implied entry simply consumes no bytes — so
+that the offset chain stays a plain running total and the encoding rule has no
+special case.
+
+This is what an index of a dictionary rather than a document collection looks
+like: an address, a path, or a statute number occurs in exactly the one record
+that is about it. Written out, such postings say only "term *i* names document
+*i*" — measured at 300,000 addresses, 2.0 MB saying nothing, in a section that
+cannot be compressed because its addressed unit is a single run (§5.6). Stating
+the equivalence in the dictionary removes both the bytes and one range read per
+query.
+
+A writer MAY use implied postings for any term whose postings are exactly the
+document with that term's ID at frequency one, and MUST write a normal run
+otherwise. It is decided per term, so an index whose terms mostly name one
+record each still benefits from the terms that do.
+
 Terms MUST be strictly increasing across the whole dictionary, blocks MUST
 partition the terms in order, and the first term of block `i` MUST equal
 boundary key `i`.
@@ -436,6 +463,10 @@ packs to nothing.
 
 A reader MUST reject a run whose decoded document IDs are not strictly
 increasing or exceed `num_docs`.
+
+A term whose postings are implied (§5.3.4) has no run at all. If every term in
+an index has implied postings, the postings section is present with a length of
+zero.
 
 ### 5.5 Payload (`0x0030`, `0x0031`)
 
@@ -617,6 +648,22 @@ own central structure to one. The transducer remains available under
 The property that motivated it, order preservation, comes from the dictionary
 being sorted and is unaffected.
 
+**Implied postings are a dictionary entry, not a postings codec.**
+A codec that encoded "this term names its own document" compactly would still
+cost a byte per term and, worse, a range read per query to fetch that byte. The
+saving worth having is not writing it down at all, and the place to say so is
+the entry that is already being read.
+
+It is stated per term rather than as a header flag so that an index whose terms
+mostly name one record each still benefits from the terms that do, without
+splitting the format into a dictionary mode and a document mode.
+
+That the term and document ID spaces coincide for such a term is a recorded,
+checkable equivalence rather than a coupling. §3.1 requires that a reader
+resolve a term without touching payload; nothing there asks two identifier
+spaces never to agree, and a reader that does not implement the case still
+reads every other index correctly.
+
 **Deflate is the required codec, not zstd.**
 Measured, the two are within noise on the term dictionary and 1.4x apart on
 payload, while a shared dictionary is worth 3.4x to either. Since the algorithm
@@ -654,7 +701,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.colex` is 745 bytes and indexes four documents:
+`conformance/fixtures/tiny.colex` is 741 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -690,30 +737,33 @@ Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26f..0x285`.
+**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26b..0x281`.
 
-**Term block 0**, at 623, 22 bytes:
+**Term block 0**, at 619, 22 bytes:
 
 ```
-0000026f  02 00 00 07 63 68 69 79 6f 64 61 01 d8 04 04 02  |....chiyoda.....|
-0000027f  02 75 6f 02 04 05                                |.uo...|
+0000026b  02 00 00 07 63 68 69 79 6f 64 61 01 d8 04 00 02  |....chiyoda.....|
+0000027b  02 75 6f 02 00 05                                |.uo...|
 ```
 
 Two entries, first term ID 0.
 
-Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1; postings
-offset `d8 04`, the first entry so absolute — 0x58 plus 4 shifted by seven is
-600; `postings_len` 4.
+Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1;
+`postings_offset` `d8 04`, the first entry so absolute — 0x58 plus 4 shifted by
+seven is 600; and `postings_len` **0**. The length is what matters: this term's
+postings are implied (§5.3.4). It occurs in exactly one document, document 0,
+because its own term ID is 0. Nothing is stored and nothing is read.
 
 Entry 1: `shared_len` 2, `suffix_len` 2, `uo` — the term is `ch` + `uo`, which
 is the front-coding paying for itself on a two-term block; `doc_freq` 2;
-postings offset delta 4, so 604; `postings_len` 5. Its term ID is 0 + 1 = 1,
-carried by position rather than stored.
+`postings_offset` delta 0, because the entry before it consumed no bytes, so
+600 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
+rather than stored.
 
-**Postings** for `chuo`, at 604, 5 bytes:
+**Postings** for `chuo`, at 600, 5 bytes:
 
 ```
-0000025c  00 02 01 03 00                                   |.....|
+00000258  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
@@ -728,3 +778,6 @@ frequencies were free.
 **Cost.** One term block read, one postings read, and one payload read per
 distinct payload block. For `tokyo AND chuo`, which matches document 1: four
 reads plus one, against a bound of `2k + m` = 5.
+
+For `chiyoda` alone: one term block read and one payload read. The postings
+read does not happen, because there were no postings to read.

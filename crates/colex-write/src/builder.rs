@@ -370,6 +370,19 @@ impl Builder {
         let Some(open) = self.open.take() else {
             return;
         };
+        // The dictionary can state this term's postings by itself: it names one
+        // document, that document's ID is the ID this term is about to be
+        // given, and it occurs there once (SPEC.md §5.3.4). Writing a run would
+        // record nothing and cost a range read to read back.
+        let term_id = self.terms.len() as u64;
+        if open.docs == [term_id] && open.freqs == [1] {
+            self.terms.push(Term {
+                term: open.term,
+                doc_freq: 1,
+                run: Vec::new(),
+            });
+            return;
+        }
         let mut run = vec![0u8]; // codec 0
         varint::encode(open.docs.len() as u64, &mut run);
 

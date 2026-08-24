@@ -216,8 +216,33 @@ impl<R: RangeReader> Index<R> {
         find_in_block(&block, term)
     }
 
-    /// Reads and decodes one term's postings, at a cost of one range read.
+    /// The postings a dictionary entry implies by carrying no run.
+    ///
+    /// `SPEC.md` §5.3.4: the term names exactly one document, whose ID is the
+    /// term's own, at frequency one.
+    fn implied(&self, entry: &TermEntry) -> Result<postings::Postings> {
+        if entry.doc_freq != 1 {
+            return Err(Error::Malformed {
+                detail: "an entry with implied postings must have a doc_freq of 1",
+            });
+        }
+        if entry.term_id >= self.header.num_docs {
+            return Err(Error::Malformed {
+                detail: "implied postings name a document outside the index",
+            });
+        }
+        Ok(postings::Postings {
+            docs: vec![entry.term_id],
+            freqs: vec![1],
+        })
+    }
+
+    /// Reads and decodes one term's postings, or no read at all when the
+    /// dictionary entry already said everything (`SPEC.md` §5.3.4).
     pub async fn postings(&self, entry: &TermEntry) -> Result<postings::Postings> {
+        if entry.postings_len == 0 {
+            return self.implied(entry);
+        }
         let len = u32::try_from(entry.postings_len).map_err(|_| Error::Malformed {
             detail: "postings run is implausibly long",
         })?;
@@ -285,31 +310,41 @@ impl<R: RangeReader> Index<R> {
     /// which is why completing a prefix costs a constant number of reads rather
     /// than one per match.
     pub async fn postings_span(&self, entries: &[TermEntry]) -> Result<Vec<postings::Postings>> {
-        let Some(first) = entries.first() else {
-            return Ok(Vec::new());
-        };
-        let last = entries.last().expect("non-empty");
-        let start = first.postings_offset;
-        let end = last.postings_offset + last.postings_len;
-        for pair in entries.windows(2) {
+        // Entries whose postings are implied contribute no bytes, so an index
+        // of a dictionary — where every entry is implied — spends no read here
+        // at all.
+        let stored: Vec<&TermEntry> = entries.iter().filter(|e| e.postings_len > 0).collect();
+        for pair in stored.windows(2) {
             if pair[1].postings_offset < pair[0].postings_offset {
                 return Err(Error::Malformed {
                     detail: "postings runs are not in term order",
                 });
             }
         }
-        let len = u32::try_from(end - start).map_err(|_| Error::Malformed {
-            detail: "postings span is implausibly long",
-        })?;
-        let span = self.reader.read_range(start, len).await?;
+        let span = match (stored.first(), stored.last()) {
+            (Some(first), Some(last)) => {
+                let start = first.postings_offset;
+                let end = last.postings_offset + last.postings_len;
+                let len = u32::try_from(end - start).map_err(|_| Error::Malformed {
+                    detail: "postings span is implausibly long",
+                })?;
+                Some((start, self.reader.read_range(start, len).await?))
+            }
+            _ => None,
+        };
 
         let has_freqs = self.header.flags.contains(Flags::HAS_FREQS);
         entries
             .iter()
             .map(|entry| {
+                if entry.postings_len == 0 {
+                    return self.implied(entry);
+                }
+                let (start, bytes) = span.as_ref().expect("a stored entry implies a span");
                 let at = (entry.postings_offset - start) as usize;
                 let run =
-                    span.get(at..at + entry.postings_len as usize)
+                    bytes
+                        .get(at..at + entry.postings_len as usize)
                         .ok_or(Error::Malformed {
                             detail: "a postings run lies outside its span",
                         })?;
