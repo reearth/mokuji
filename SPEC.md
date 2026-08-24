@@ -177,20 +177,30 @@ makes an index safe to publish as a static file.
 | Fixed header (64 bytes)                          |
 | Section table                                    |
 | Metadata (provenance, tokenizer, parameters)     |  resident
-| Term index (FST over block boundary keys)        |
+| Term index (block boundary keys)                 |
+| Term block offsets                               |
+| Payload offsets                                  |
++--------------------------------------------------+
+| Postings                                         |
 +--------------------------------------------------+
 | Term blocks (front-coded)                        |
-+--------------------------------------------------+
-| Postings blocks                                  |
 +--------------------------------------------------+
 | Payload blocks (document ID order)               |
 +--------------------------------------------------+
 ```
 
 Sections other than the fixed header MAY appear in any order; the section table
-is authoritative. The order above is RECOMMENDED, because it places the
-resident set contiguously at the head of the file, so a cold start can populate
-it with one range request.
+is authoritative. The order above is RECOMMENDED for two reasons.
+
+It places the resident set contiguously at the head, so a cold start can
+populate it with one range request.
+
+And it places postings **before** the term blocks that point into them, so that
+a postings offset is known before any term block is built and a writer can emit
+the file in one pass. With the opposite order each section's size depends on
+the other's, and once blocks are compressed that dependency has no fixed point
+to converge on: a changed offset changes a varint, which changes what the
+compressor emits, which moves the offset again.
 
 ### 5.1 Fixed header
 
@@ -466,14 +476,64 @@ the term dictionary is already small for structural reasons and gains little.
 
 ### 5.6 Compression
 
-Whole-section compression MUST NOT be applied to any section that is addressed
-at block granularity, since it would defeat range reads entirely. Compression
-is applied per block, optionally against the shared dictionary in section
-`0x0040`.
+Compression is applied per **addressed unit**: one block of a block-addressed
+section, or the whole of a section that is read in one go. Never across the
+file, and never across a run of blocks — compressing more than a reader can
+address would force it to fetch bytes it does not want, which is the thing this
+format exists to avoid.
+
+The codec is recorded per section (§5.2). A compressed unit is:
+
+| Field | Encoding |
+|---|---|
+| `decompressed_len` | `varint` |
+| `payload` | codec-specific |
+
+The length comes first so that a reader can bound the allocation before making
+it, rather than discovering the size mid-stream from attacker-controlled input
+(§8). A reader MUST reject a unit whose output does not match its declared
+length, and MAY refuse a declared length larger than it is willing to allocate.
+
+Offsets in the offset sections address **compressed** bytes, which is what makes
+a block reachable without decompressing anything before it.
+
+The **postings section MUST be stored raw**. Its addressed unit is a single
+term's run — a handful of bytes — so compressing each would enlarge the section,
+and it would break the property that a contiguous range of terms can be fetched
+in one request (§4.1).
 
 This specification does not use a seekable compression framing. Block offsets
 are already carried by the offset sections, which makes a second framing layer
 redundant.
+
+#### 5.6.1 What the codec choice costs
+
+Measured on 300,000 Japanese addresses (`demo/addresses`), per block:
+
+| | term blocks | payload |
+|---|---|---|
+| deflate | 7.06x | 4.38x |
+| zstd | 7.20x | 6.12x |
+| zstd with a trained shared dictionary | 27.2x | 7.51x |
+| deflate with a preset dictionary | 24.3x | — |
+
+Two things follow. Between deflate and zstd without a dictionary the difference
+is small — noise on the dictionary, 1.4x on payload. Against that, a shared
+dictionary is worth 3.4x, and it is worth roughly as much to deflate as to zstd:
+**the dictionary matters far more than the algorithm**.
+
+Deflate is therefore the required codec. It is not the best compressor; it is
+the one every language runtime already has and every browser decompresses
+natively, so a reader in a page needs no bundled decompressor. zstd is
+registered as optional for publishers who would rather have the payload ratio
+than the reach.
+
+A dictionary-using codec is the obvious next addition, and section `0x0040` is
+reserved for the dictionary it would need. It is deliberately not in this
+version: browsers cannot supply a preset dictionary through their native
+decompression, so a dictionary codec requires a decompressor in the page no
+matter which algorithm it uses, and that trade is worth making deliberately
+rather than by default.
 
 ## 6. Metadata (`0x0001`)
 
@@ -557,6 +617,23 @@ own central structure to one. The transducer remains available under
 The property that motivated it, order preservation, comes from the dictionary
 being sorted and is unaffected.
 
+**Deflate is the required codec, not zstd.**
+Measured, the two are within noise on the term dictionary and 1.4x apart on
+payload, while a shared dictionary is worth 3.4x to either. Since the algorithm
+choice buys so little, it is decided on reach rather than ratio: every language
+runtime has zlib and every browser decompresses raw deflate natively, so a
+reader in a page needs nothing bundled. zstd is registered as optional, and a
+dictionary-using codec is left for a later version because it costs a
+decompressor in the page whichever algorithm it uses.
+
+**Postings are placed before the term blocks that point into them.**
+Term block entries carry absolute postings offsets, so with the opposite order
+each section's size depends on the other's. Uncompressed that converges after a
+round or two; compressed it need not converge at all, since a changed offset
+changes a varint, which changes what the compressor emits, which moves the
+offset again. Ordering the file so it can be written in one pass is better than
+iterating toward a layout that may not settle.
+
 **Minimal bit widths are required, not merely permitted.**
 Determinism (§3.4) needs exactly one valid encoding of a given input. A codec
 that allows a wider-than-necessary field would allow two files to be equally
@@ -586,8 +663,9 @@ tokyo shibuya    35.664,139.698
 osaka chuo       34.681,135.513
 ```
 
-Its full annotated hex dump is in `conformance/fixtures/tiny.hex`. What
-follows walks one query through it, `chuo`, using nothing but §5.
+Its full annotated hex dump is in `conformance/fixtures/tiny.hex`. The fixture
+is stored raw, so that it can be read against §5 by hand. What follows walks one
+query through it, `chuo`.
 
 **Header**, at offset 0:
 
@@ -612,30 +690,30 @@ Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 536: block 0 spans `0x258..0x26e`.
+**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26f..0x285`.
 
-**Term block 0**, at 600, 22 bytes:
+**Term block 0**, at 623, 22 bytes:
 
 ```
-00000258  02 00 00 07 63 68 69 79 6f 64 61 01 94 05 04 02  |....chiyoda.....|
-00000268  02 75 6f 02 04 05                                |.uo...|
+0000026f  02 00 00 07 63 68 69 79 6f 64 61 01 d8 04 04 02  |....chiyoda.....|
+0000027f  02 75 6f 02 04 05                                |.uo...|
 ```
 
 Two entries, first term ID 0.
 
 Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1; postings
-offset `94 05`, the first entry so absolute — 0x14 plus 5 shifted by seven is
-660; `postings_len` 4.
+offset `d8 04`, the first entry so absolute — 0x58 plus 4 shifted by seven is
+600; `postings_len` 4.
 
 Entry 1: `shared_len` 2, `suffix_len` 2, `uo` — the term is `ch` + `uo`, which
 is the front-coding paying for itself on a two-term block; `doc_freq` 2;
-postings offset delta 4, so 664; `postings_len` 5. Its term ID is 0 + 1 = 1,
+postings offset delta 4, so 604; `postings_len` 5. Its term ID is 0 + 1 = 1,
 carried by position rather than stored.
 
-**Postings** for `chuo`, at 664, 5 bytes:
+**Postings** for `chuo`, at 604, 5 bytes:
 
 ```
-00000298  00 02 01 03 00                                   |.....|
+0000025c  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
