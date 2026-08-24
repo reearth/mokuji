@@ -440,6 +440,56 @@ export class MokujiIndex {
     return entries;
   }
 
+  /** The dictionary block a term would be in, from the resident index alone. */
+  blockFor(term) {
+    let start = 0;
+    for (let i = 0; i < this.boundaries.length; i++) {
+      if (compare(this.boundaries[i], term) <= 0) start = i;
+    }
+    return start;
+  }
+
+  /** One term, exactly, or null.
+   *
+   * A prefix scan would answer this, and would cost more: `xn76ur` is a prefix
+   * of every cell inside it, so completing it fetches postings for all of them
+   * when the caller wanted one. Exactly one block is read, always.
+   */
+  async exact(termText) {
+    const term = encoder.encode(termText);
+    for (const entry of await this.termBlock(this.blockFor(term))) {
+      const order = compare(entry.term, term);
+      if (order === 0) return entry;
+      if (order > 0) break;
+    }
+    return null;
+  }
+
+  /** Several terms at once, each exactly, in one read per dictionary block.
+   *
+   * Cells one geohash precision apart are neighbours in the dictionary, so the
+   * lookups a point needs usually land in the same block. Asking for them
+   * together is the difference between reading it once and reading it twice.
+   */
+  async exactMany(termTexts) {
+    const wanted = termTexts.map((text) => {
+      const term = encoder.encode(text);
+      return { term, block: this.blockFor(term) };
+    });
+    const blocks = new Map();
+    for (const { block } of wanted) {
+      if (!blocks.has(block)) blocks.set(block, await this.termBlock(block));
+    }
+    return wanted.map(({ term, block }) => {
+      for (const entry of blocks.get(block)) {
+        const order = compare(entry.term, term);
+        if (order === 0) return entry;
+        if (order > 0) break;
+      }
+      return null;
+    });
+  }
+
   /** Terms beginning with `prefix`, at most `limit` of them. */
   async prefix(prefixText, limit = 20) {
     const prefix = encoder.encode(prefixText);

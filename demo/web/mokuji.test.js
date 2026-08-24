@@ -119,3 +119,37 @@ test("ja-address agrees with the other implementations", () => {
     assert.equal(jaAddress(input), expected, input);
   }
 });
+
+test("exact finds a term without completing it", async () => {
+  const index = await MokujiIndex.open(await fileSource("tiny"));
+
+  // `tiny` is a document collection, so a term is a word.
+  const entry = await index.exact("tokyo");
+  assert.ok(entry, "expected 'tokyo' to be in the dictionary");
+  assert.equal(new TextDecoder().decode(entry.term), "tokyo");
+
+  assert.equal(await index.exact("toky"), null, "a proper prefix is not a term");
+  assert.equal(await index.exact("tokyoo"), null, "an extension is not a term");
+  assert.equal(await index.exact(""), null, "the empty string is not a term");
+});
+
+test("exact costs one dictionary read", async () => {
+  const bytes = new Uint8Array(
+    await readFile(`${CONFORMANCE}fixtures/tiny.mokuji`),
+  );
+  let reads = 0;
+  const index = await MokujiIndex.open({
+    read: (offset, length) => {
+      reads += 1;
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+
+  // The block a term would be in is answerable from the resident index, so a
+  // term that is absent costs exactly what a term that is present does.
+  const before = reads;
+  await index.exact("tokyo");
+  assert.equal(reads - before, 1);
+  await index.exact("nowhere");
+  assert.equal(reads - before, 2);
+});

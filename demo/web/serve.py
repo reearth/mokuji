@@ -6,7 +6,7 @@ file has to be downloaded whole, which is the one thing the format exists to
 avoid. Twenty lines of handler are cheaper than explaining why the demo appears
 to work but transfers four megabytes.
 
-Usage: python3 serve.py [--index PATH] [--port N]
+Usage: python3 serve.py [--index PATH] [--reverse PATH] [--port N]
 """
 
 import argparse
@@ -20,11 +20,15 @@ HERE = pathlib.Path(__file__).parent
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     index_path: pathlib.Path
+    reverse_path: pathlib.Path | None = None
 
     def translate_path(self, path):
-        if path.split("?")[0] == "/index.mokuji":
+        name = path.split("?")[0]
+        if name == "/index.mokuji":
             return str(self.index_path)
-        return str(HERE / path.split("?")[0].lstrip("/"))
+        if name == "/reverse.mokuji" and self.reverse_path:
+            return str(self.reverse_path)
+        return str(HERE / name.lstrip("/"))
 
     def do_GET(self):
         path = pathlib.Path(self.translate_path(self.path))
@@ -69,14 +73,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", default="addresses.mokuji")
+    parser.add_argument("--reverse", help="the index reverse.html reads")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
 
     Handler.index_path = pathlib.Path(args.index).resolve()
     if not Handler.index_path.is_file():
         raise SystemExit(f"no index at {Handler.index_path}")
+    served = [Handler.index_path.name]
+    if args.reverse:
+        Handler.reverse_path = pathlib.Path(args.reverse).resolve()
+        if not Handler.reverse_path.is_file():
+            raise SystemExit(f"no index at {Handler.reverse_path}")
+        served.append(f"{Handler.reverse_path.name} at /reverse.html")
 
-    print(f"serving {Handler.index_path.name} at http://localhost:{args.port}/")
+    print(f"serving {', '.join(served)} at http://localhost:{args.port}/")
     http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
 
 

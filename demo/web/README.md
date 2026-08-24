@@ -1,16 +1,22 @@
-# Address lookup in a browser
+# Two pages, one reader
 
 The same `.mokuji` file, read by a page. No server logic, no API, no
 WebAssembly, and no bundled decompressor.
 
-Build the Tokyo index first — see [../addresses](../addresses) — then:
+`index.html` completes an address prefix. `reverse.html` does the other
+direction on a map: click a point, get the 町丁目 that holds it. Both are the
+same 300 lines of `mokuji.js` over the same file layout.
+
+Build the indexes first — [../addresses](../addresses) and
+[../reverse](../reverse) — then:
 
 ```sh
-python3 serve.py --index ../addresses/tokyo.mokuji
+python3 serve.py --index ../addresses/tokyo.mokuji --reverse ../reverse/reverse.mokuji
 ```
 
-Open <http://localhost:8787/> and type a prefix. The panel counts the range
-requests as you type.
+Open <http://localhost:8787/> and type a prefix, or
+<http://localhost:8787/reverse.html> and click the map. The panel counts the
+range requests either way.
 
 Completing a prefix over Tokyo's 1,744,962 addresses costs **two to four
 `Range` requests and well under a kilobyte** from an 8.7 MB file, and the same
@@ -25,6 +31,30 @@ Coordinates arrive as delta-coded integers (`SPEC.md` §5.5.3) and the page turn
 them back into decimals using the scale the file declares. The format states how
 a number was written down; what it measures is still nobody's business but the
 application's.
+
+## Clicking a map is a term lookup
+
+`reverse.html` has no spatial index and does not need one. A geohash cell is a
+string whose prefixes are the cells containing it, so the polygon under a point
+is found by looking up two terms — the cell and its parent — and the page
+finishes the job with a point-in-polygon test against the geometry that came
+back. **3 to 5 range requests over 6,021 boundaries in 2.6 MB.**
+
+The map draws both halves of that: orange for what the index returned, blue for
+what survived the test. A cell straddling a boundary names every polygon it
+touches, so at Shibuya crossing four candidates come back and one is the answer.
+The index narrows; the client decides. See [../reverse](../reverse) for how the
+covering is built and what it costs.
+
+`reverse.js` is that client half — geohash, geometry decoding, point-in-polygon
+— and none of it is in `mokuji.js`, because none of it is the format's business.
+What the format contributes is `exactMany`: several terms in one read per
+dictionary block, which is what makes two lookups cost one request rather than
+two.
+
+The basemap tiles are the only requests on that page that are not range reads
+into the one file. There is no tile server in this repository, and the demo
+would work without a basemap — it would just be harder to know where you clicked.
 
 ## Normalization happens here too
 

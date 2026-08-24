@@ -59,6 +59,17 @@ answer    東京都小笠原村父島字西町
 | Index | 2.6 MB, from a 19 MB GeoJSON |
 | One point | 4–5 range reads |
 
+## In a browser
+
+`../web/reverse.html` is the same query on a map: click a point, watch the range
+requests. It draws the candidates the index returned in orange and the one that
+survived the point-in-polygon test in blue, which is the whole design in one
+picture.
+
+```sh
+python3 ../web/serve.py --index ../addresses/tokyo.mokuji --reverse reverse.mokuji
+```
+
 ## Choosing how tightly to cover
 
 The only tuning knob is how fine the boundary cells go. Finer means the covering
