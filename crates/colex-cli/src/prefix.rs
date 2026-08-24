@@ -16,11 +16,16 @@ pub fn run(path: &Path, prefix: &[u8], limit: usize) -> Result<(), Error> {
     let open_reads = reader.reads();
     reader.reset();
 
+    // Each phase is measured rather than assumed. An index whose entries carry
+    // implied postings spends no read on them at all, and a breakdown that
+    // asserted one would be reporting the code's expectations instead of what
+    // the file cost.
     let matches = block_on(index.prefix(prefix, limit))?;
-    let dictionary_reads = reader.reads();
+    let dictionary = reader.reads();
 
     let entries: Vec<_> = matches.iter().map(|(_, entry)| *entry).collect();
     let postings = block_on(index.postings_span(&entries))?;
+    let postings_reads = reader.reads() - dictionary;
 
     // A term in a dictionary index names one document. Collecting the documents
     // first lets the payload reads share blocks, which for keys that sort
@@ -30,6 +35,7 @@ pub fn run(path: &Path, prefix: &[u8], limit: usize) -> Result<(), Error> {
         .filter_map(|p| p.docs.first().copied())
         .collect();
     let payloads = block_on(index.payload_span(&docs))?;
+    let payload_reads = reader.reads() - dictionary - postings_reads;
 
     for ((term, _), payload) in matches.iter().zip(&payloads) {
         let term = String::from_utf8_lossy(term);
@@ -43,10 +49,9 @@ pub fn run(path: &Path, prefix: &[u8], limit: usize) -> Result<(), Error> {
     eprintln!("{} match(es)", matches.len());
     eprintln!("open:     {open_reads} read(s)");
     eprintln!(
-        "query:    {} read(s) total - {dictionary_reads} dictionary, {} postings, {} payload",
-        reader.reads(),
-        if entries.is_empty() { 0 } else { 1 },
-        reader.reads() - dictionary_reads - usize::from(!entries.is_empty()) as u32,
+        "query:    {} read(s) total - {dictionary} dictionary, {postings_reads} postings, \
+         {payload_reads} payload",
+        reader.reads()
     );
     eprintln!(
         "bytes:    {} of {}",
