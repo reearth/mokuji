@@ -64,6 +64,20 @@ impl Default for Options {
     }
 }
 
+/// One column of numbers, one value per document (`SPEC.md` §5.8).
+///
+/// Payload that can be read in bulk and read early: the few numbers a reader
+/// needs about many documents before it decides whose payload to fetch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    /// What the column is called. Meaning is the application's business.
+    pub name: String,
+    /// A stored `v` stands for `v * 10^exponent`. Recorded, not interpreted.
+    pub scale_exponent: i8,
+    /// One value per document, in document ID order.
+    pub values: Vec<i64>,
+}
+
 /// How payload is written down (`SPEC.md` §5.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadEncoding {
@@ -94,6 +108,7 @@ pub struct Builder {
     options: Options,
     payloads: Vec<Vec<u8>>,
     values: Vec<Vec<i64>>,
+    columns: Vec<Column>,
     sum_doclen: u64,
     doc_lengths: Vec<u64>,
     terms: Vec<Term>,
@@ -126,6 +141,7 @@ impl Builder {
             options,
             payloads: Vec::new(),
             values: Vec::new(),
+            columns: Vec::new(),
             sum_doclen: 0,
             doc_lengths: Vec::new(),
             terms: Vec::new(),
@@ -166,6 +182,20 @@ impl Builder {
             PayloadEncoding::Opaque => self.payloads.len() as u64,
             PayloadEncoding::Ints { .. } => self.values.len() as u64,
         }
+    }
+
+    /// Adds a column of per-document numbers.
+    ///
+    /// Checked at [`Builder::finish`] against the document count, since the
+    /// documents may not all have been added yet.
+    pub fn add_column(&mut self, column: Column) -> Result<()> {
+        if self.columns.iter().any(|c| c.name == column.name) {
+            return Err(Error::Malformed {
+                detail: "two document attribute columns share a name",
+            });
+        }
+        self.columns.push(column);
+        Ok(())
     }
 
     /// Records that `term` occurs `freq` times in `doc`.
@@ -304,6 +334,28 @@ impl Builder {
             None
         };
 
+        let attributes = if self.columns.is_empty() {
+            None
+        } else {
+            let mut out = Vec::new();
+            varint::encode(self.columns.len() as u64, &mut out);
+            for column in &self.columns {
+                if column.values.len() as u64 != self.documents() {
+                    return Err(Error::Malformed {
+                        detail: "a document attribute column does not have one value per document",
+                    });
+                }
+                varint::encode(column.name.len() as u64, &mut out);
+                out.extend_from_slice(column.name.as_bytes());
+                out.push(column.scale_exponent as u8);
+            }
+            for column in &self.columns {
+                let zigzagged: Vec<u64> = column.values.iter().map(|&v| zigzag(v)).collect();
+                bitpack::encode(&zigzagged, &mut out);
+            }
+            Some(out)
+        };
+
         let mut order = vec![
             SectionId::META,
             SectionId::TERM_INDEX,
@@ -312,6 +364,9 @@ impl Builder {
         ];
         if doc_lengths.is_some() {
             order.push(SectionId::DOC_LENGTHS);
+        }
+        if attributes.is_some() {
+            order.push(SectionId::DOC_ATTRIBUTES);
         }
         order.extend([
             SectionId::POSTINGS,
@@ -327,7 +382,8 @@ impl Builder {
             + 8 * (term_chunks.len() as u64 + 1)
             + 12
             + 8 * (payload_blocks.len() as u64 + 1)
-            + doc_lengths.as_ref().map_or(0, |d| d.len() as u64);
+            + doc_lengths.as_ref().map_or(0, |d| d.len() as u64)
+            + attributes.as_ref().map_or(0, |a| a.len() as u64);
 
         let (blocks, term_blocks_codec) = self.pack(self.term_blocks(&term_chunks, postings_at))?;
 
@@ -341,6 +397,9 @@ impl Builder {
                 SectionId::PAYLOAD_OFFSETS => 12 + 8 * (payload_blocks.len() as u64 + 1),
                 SectionId::DOC_LENGTHS => {
                     doc_lengths.as_ref().expect("present when ordered").len() as u64
+                }
+                SectionId::DOC_ATTRIBUTES => {
+                    attributes.as_ref().expect("present when ordered").len() as u64
                 }
                 SectionId::POSTINGS => postings_len,
                 SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
@@ -429,6 +488,9 @@ impl Builder {
                 SectionId::PAYLOAD_OFFSETS => out.extend_from_slice(&payload_offsets),
                 SectionId::DOC_LENGTHS => {
                     out.extend_from_slice(doc_lengths.as_ref().expect("present when ordered"))
+                }
+                SectionId::DOC_ATTRIBUTES => {
+                    out.extend_from_slice(attributes.as_ref().expect("present when ordered"))
                 }
                 SectionId::TERM_BLOCKS => blocks.iter().for_each(|b| out.extend_from_slice(b)),
                 SectionId::POSTINGS => self

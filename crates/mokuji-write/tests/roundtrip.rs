@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use mokuji_read::{block_on::block_on, CountingReader, Index, SliceReader};
-use mokuji_write::{Builder, Options};
+use mokuji_write::{Builder, Column, Options};
 use proptest::prelude::*;
 
 /// An empty CBOR map. Metadata is opaque to the writer, so a round-trip has no
@@ -195,4 +195,80 @@ proptest! {
             }
         }
     }
+}
+
+proptest! {
+    #[test]
+    fn attribute_columns_read_back_as_they_were_written(
+        corpus in corpus_strategy(),
+        options in options_strategy(),
+        scale in -6i8..6,
+    ) {
+        let mut builder = Builder::new(options).unwrap();
+        let mut expected: BTreeMap<String, BTreeMap<u64, u64>> = BTreeMap::new();
+        for (i, tokens) in corpus.iter().enumerate() {
+            let doc = builder.add_document(format!("payload-{i}").into_bytes()).unwrap();
+            for &token in tokens {
+                *expected.entry(VOCABULARY[token].to_string()).or_default()
+                    .entry(doc).or_default() += 1;
+            }
+        }
+        for (term, docs) in &expected {
+            for (&doc, &freq) in docs {
+                builder.add_posting(term.as_bytes(), doc, freq).unwrap();
+            }
+        }
+
+        // Negative and positive, small and large: the values go through zigzag
+        // and bit-packing, and both halves have to survive.
+        let importance: Vec<i64> = (0..corpus.len() as i64).map(|i| i * 7 - 13).collect();
+        let cell: Vec<i64> = (0..corpus.len() as i64).map(|i| 1_000_000 + i).collect();
+        builder.add_column(Column {
+            name: "importance".into(),
+            scale_exponent: scale,
+            values: importance.clone(),
+        }).unwrap();
+        builder.add_column(Column {
+            name: "cell".into(),
+            scale_exponent: 0,
+            values: cell.clone(),
+        }).unwrap();
+
+        let index = block_on(Index::open(SliceReader::new(builder.finish(META).unwrap()))).unwrap();
+
+        prop_assert_eq!(index.columns().len(), 2);
+        let a = index.column("importance").expect("present");
+        prop_assert_eq!(&a.values, &importance);
+        prop_assert_eq!(a.scale_exponent, scale);
+        prop_assert_eq!(&index.column("cell").expect("present").values, &cell);
+        prop_assert!(index.column("missing").is_none());
+    }
+}
+
+#[test]
+fn a_column_must_have_one_value_per_document() {
+    let mut builder = Builder::new(Options::default()).unwrap();
+    builder.add_document(b"a".to_vec()).unwrap();
+    builder.add_document(b"b".to_vec()).unwrap();
+    builder.add_posting(b"t", 0, 1).unwrap();
+    builder
+        .add_column(Column {
+            name: "short".into(),
+            scale_exponent: 0,
+            values: vec![1],
+        })
+        .unwrap();
+    assert!(builder.finish(META).is_err());
+}
+
+#[test]
+fn columns_must_have_distinct_names() {
+    let mut builder = Builder::new(Options::default()).unwrap();
+    let column = || Column {
+        name: "x".into(),
+        scale_exponent: 0,
+        values: vec![],
+    };
+    builder.add_column(column()).unwrap();
+    assert!(builder.add_column(column()).is_err());
 }

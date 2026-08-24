@@ -37,6 +37,7 @@ SEC_POSTINGS = 0x0020
 SEC_PAYLOAD = 0x0030
 SEC_PAYLOAD_OFFSETS = 0x0031
 SEC_DOC_LENGTHS = 0x0032
+SEC_DOC_ATTRIBUTES = 0x0033
 
 # Small enough that every structure in the format appears more than once, which
 # is what makes a fixture worth having: a single-block dictionary would never
@@ -264,7 +265,7 @@ def chunk(items, size):
 
 
 def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
-          tokenizer_id="space-split", doc_lengths=False):
+          tokenizer_id="space-split", doc_lengths=False, columns=None):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, whole)
     terms = list(index)
@@ -282,6 +283,18 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     lengths = None
     if doc_lengths:
         lengths = pack_values([len(tokenize(t, whole)) for t, _ in documents])
+
+    # Named columns of per-document numbers (SPEC.md 5.8): payload that can be
+    # read in bulk and read early.
+    attributes = None
+    if columns:
+        out = bytearray(varint(len(columns)))
+        for name, exponent, _ in columns:
+            raw = name.encode()
+            out += varint(len(raw)) + raw + bytes([exponent & 0xFF])
+        for _, _, values in columns:
+            out += pack_values([zigzag(v) for v in values])
+        attributes = bytes(out)
 
     term_index = bytearray(len(term_chunks).to_bytes(4, "little"))
     previous = b""
@@ -308,6 +321,11 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
                     "docs_per_payload_block": DOCS_PER_PAYLOAD_BLOCK,
                     "payload": "opaque" if decimals is None else f"ints:{decimals}",
                     "doc_lengths": 1 if doc_lengths else 0,
+                    **(
+                        {"attributes": [f"{n}:{-e}" for n, e, _ in columns]}
+                        if columns
+                        else {}
+                    ),
                 },
             },
             "tokenizer": {"id": tokenizer_id, "params": {}},
@@ -326,6 +344,8 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     ]
     if lengths is not None:
         order.append(SEC_DOC_LENGTHS)
+    if attributes is not None:
+        order.append(SEC_DOC_ATTRIBUTES)
     order += [SEC_POSTINGS, SEC_TERM_BLOCKS, SEC_PAYLOAD]
     head = HEADER_LEN + SECTION_ENTRY_LEN * len(order)
     postings_at = (
@@ -336,6 +356,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         + 12
         + 8 * (len(payload_blocks) + 1)
         + (len(lengths) if lengths is not None else 0)
+        + (len(attributes) if attributes is not None else 0)
     )
 
     offsets, cursor = {}, postings_at
@@ -352,6 +373,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     sizes = {
         SEC_META: len(meta),
         **({SEC_DOC_LENGTHS: len(lengths)} if lengths is not None else {}),
+        **({SEC_DOC_ATTRIBUTES: len(attributes)} if attributes is not None else {}),
         SEC_TERM_INDEX: len(term_index),
         SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
         SEC_PAYLOAD_OFFSETS: 12 + 8 * (len(payload_blocks) + 1),
@@ -389,6 +411,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     bodies = {
         SEC_META: meta,
         **({SEC_DOC_LENGTHS: lengths} if lengths is not None else {}),
+        **({SEC_DOC_ATTRIBUTES: attributes} if attributes is not None else {}),
         SEC_TERM_INDEX: term_index,
         SEC_TERM_BLOCK_OFFSETS: term_block_offsets,
         SEC_PAYLOAD_OFFSETS: payload_offsets,
@@ -448,6 +471,7 @@ def section_name(sid):
         SEC_PAYLOAD: "payload",
         SEC_PAYLOAD_OFFSETS: "payload offsets",
         SEC_DOC_LENGTHS: "document lengths",
+        SEC_DOC_ATTRIBUTES: "document attributes",
     }[sid]
 
 
@@ -670,6 +694,9 @@ FIXTURES = [
         "whole": True,
         "decimals": 6,
         "tokenizer_id": "identity",
+        # A dictionary of places wants a ranking prior, and this is where one
+        # goes: read for many records at once, before any payload is fetched.
+        "columns": [("importance", 0, [40, 90, 85, 70, 60])],
         "cases": [
             (["東京都千代田区丸の内1丁目1番1号"], {1: "139.767201,35.681560"}, 2),
             (["大阪府大阪市中央区本町1丁目1番1号"], {0: "135.501000,34.682000"}, 2),
@@ -707,6 +734,7 @@ def main():
             corpus_name=corpus_name,
             tokenizer_id=spec["tokenizer_id"],
             doc_lengths=spec.get("doc_lengths", False),
+            columns=spec.get("columns"),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

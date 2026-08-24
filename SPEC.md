@@ -324,6 +324,7 @@ Section IDs:
 | `0x0030` | Payload | if `HAS_PAYLOAD` |
 | `0x0031` | Payload offsets | if `HAS_PAYLOAD` |
 | `0x0032` | Document lengths | no |
+| `0x0033` | Document attributes | no |
 | `0x0040` | Shared zstd dictionary | if any `codec` is 2 |
 | `0x0050` | Term pair cache | reserved, not defined in this version |
 | `0x0060` | Positions | reserved, not defined in this version |
@@ -693,6 +694,49 @@ documents, adding the section cost 4,359 bytes and took a three-term query from
 
 That is the line the format draws: it supplies what a scorer needs and has no
 opinion about the scorer.
+
+### 5.8 Document attributes (`0x0033`)
+
+Optional. Named columns of numbers, one value per document, in document ID
+order.
+
+| Field | Encoding |
+|---|---|
+| `column_count` | `varint` |
+| per column | `varint name_len`, `name_len` bytes, then `i8 scale_exponent` |
+| per column | bit-packed groups (§5.4.1) of exactly `num_docs` zigzag values |
+
+Column names are bytes; ASCII is recommended and nothing is required. Values are
+zigzag-encoded (§5.5.3) before packing, so a column may be negative. A stored
+`v` stands for `v × 10^exponent`, recorded and not interpreted, exactly as for
+payload.
+
+Columns MUST have distinct names, and a reader MUST reject a section whose
+values do not fill it exactly.
+
+#### What this is for, and what it is not
+
+It is payload that can be read in bulk and read early. Payload proper is
+addressed one document at a time and holds whatever the application likes;
+these are for the few numbers a reader needs about *many* documents **before**
+it decides which payload to fetch at all — a ranking prior, a date to prefer
+recency by, a cell to filter by position.
+
+The format does not interpret them. That is the same line drawn around payload
+in §5.5: how a number is written down is declared, what it measures is not.
+
+It is deliberately **not** the document lengths section (§5.7). Lengths have a
+meaning this specification defines, because scorers depend on it; a reader finds
+them without matching a name against a string. These have no meaning to the
+format at all.
+
+#### Cost
+
+The same as any bit-packed column: the width of the largest value it holds.
+Document lengths, which are one such column, measured at 1.7 bytes a document
+over 2,523 documents. A column of small integers costs less; a column of
+timestamps costs about five bytes a document, and is still resident for a corpus
+of millions.
 
 ## 6. Metadata (`0x0001`)
 

@@ -226,6 +226,11 @@ pub struct Corpus {
     pub payloads: Vec<Vec<u8>>,
     /// Term to document to frequency, sorted, ready to stream to the builder.
     pub postings: BTreeMap<Vec<u8>, BTreeMap<u64, u64>>,
+    /// One column of raw attribute fields per declared column, per document.
+    ///
+    /// Kept as text: how many decimals a column carries is a build parameter,
+    /// not something the corpus states.
+    pub attributes: Vec<Vec<String>>,
     /// Lines dropped because their key was already taken.
     ///
     /// Only a key tokenizer produces these. Reported rather than silent: it is
@@ -239,8 +244,9 @@ pub struct Corpus {
 /// A line without a tab is an error rather than a document with empty payload:
 /// silently indexing a malformed file is how a corpus and its index drift
 /// apart.
-pub fn parse(text: &str, tokenizer: Tokenizer) -> Result<Corpus, String> {
+pub fn parse(text: &str, tokenizer: Tokenizer, columns: usize) -> Result<Corpus, String> {
     let mut payloads: Vec<Vec<u8>> = Vec::new();
+    let mut attributes: Vec<Vec<String>> = vec![Vec::new(); columns];
     let mut postings: BTreeMap<Vec<u8>, BTreeMap<u64, u64>> = BTreeMap::new();
     let mut duplicate_keys = 0usize;
 
@@ -248,9 +254,27 @@ pub fn parse(text: &str, tokenizer: Tokenizer) -> Result<Corpus, String> {
         if line.is_empty() {
             continue;
         }
-        let (body, payload) = line
-            .split_once('\t')
-            .ok_or_else(|| format!("line {} has no tab separator", line_number + 1))?;
+        // With attribute columns declared, a line is exactly text, payload and
+        // one field each; without them the payload is whatever follows the
+        // first tab, tabs included.
+        let (body, payload, fields) = if columns == 0 {
+            let (body, payload) = line
+                .split_once('\t')
+                .ok_or_else(|| format!("line {} has no tab separator", line_number + 1))?;
+            (body, payload, Vec::new())
+        } else {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() != columns + 2 {
+                return Err(format!(
+                    "line {} has {} fields; {} declared attribute column(s) need {}",
+                    line_number + 1,
+                    parts.len(),
+                    columns,
+                    columns + 2
+                ));
+            }
+            (parts[0], parts[1], parts[2..].to_vec())
+        };
 
         let doc = payloads.len() as u64;
         let tokens = tokenizer.split(body);
@@ -283,6 +307,9 @@ pub fn parse(text: &str, tokenizer: Tokenizer) -> Result<Corpus, String> {
                 .or_default() += 1;
         }
         payloads.push(payload.as_bytes().to_vec());
+        for (column, field) in attributes.iter_mut().zip(&fields) {
+            column.push((*field).to_string());
+        }
     }
 
     if payloads.is_empty() {
@@ -291,6 +318,7 @@ pub fn parse(text: &str, tokenizer: Tokenizer) -> Result<Corpus, String> {
     Ok(Corpus {
         payloads,
         postings,
+        attributes,
         duplicate_keys,
     })
 }
@@ -300,7 +328,7 @@ mod tests {
     use super::*;
 
     fn parse_split(text: &str) -> Result<Corpus, String> {
-        parse(text, Tokenizer::SpaceSplit)
+        parse(text, Tokenizer::SpaceSplit, 0)
     }
 
     #[test]
@@ -336,7 +364,12 @@ mod tests {
     #[test]
     fn a_key_tokenizer_drops_lines_whose_key_is_taken() {
         // The two forms the Address Base Registry uses for the same chome.
-        let corpus = parse("丸の内一丁目\tA\n丸の内１丁目\tB\n", Tokenizer::JaAddress).unwrap();
+        let corpus = parse(
+            "丸の内一丁目\tA\n丸の内１丁目\tB\n",
+            Tokenizer::JaAddress,
+            0,
+        )
+        .unwrap();
         assert_eq!(corpus.duplicate_keys, 1);
         assert_eq!(corpus.payloads, [b"A".to_vec()]);
         assert_eq!(corpus.postings.len(), 1);
@@ -345,14 +378,19 @@ mod tests {
 
     #[test]
     fn a_splitting_tokenizer_still_shares_terms_between_documents() {
-        let corpus = parse("tokyo chuo\t1\ntokyo kita\t2\n", Tokenizer::SpaceSplit).unwrap();
+        let corpus = parse("tokyo chuo\t1\ntokyo kita\t2\n", Tokenizer::SpaceSplit, 0).unwrap();
         assert_eq!(corpus.duplicate_keys, 0);
         assert_eq!(corpus.postings[b"tokyo".as_slice()].len(), 2);
     }
 
     #[test]
     fn identity_keeps_the_line_whole() {
-        let corpus = parse("東京都千代田区丸の内\t35.68,139.76\n", Tokenizer::Identity).unwrap();
+        let corpus = parse(
+            "東京都千代田区丸の内\t35.68,139.76\n",
+            Tokenizer::Identity,
+            0,
+        )
+        .unwrap();
         assert_eq!(corpus.postings.len(), 1);
         assert!(corpus
             .postings
@@ -417,6 +455,18 @@ mod tests {
             "東京都千代田区丸の内1丁目"
         );
         assert_eq!(Tokenizer::Identity.normalize_query("一丁目"), "一丁目");
+    }
+
+    #[test]
+    fn attribute_columns_come_from_extra_fields() {
+        let corpus = parse("a b\tP\t7\t-2\nc\tQ\t8\t3\n", Tokenizer::SpaceSplit, 2).unwrap();
+        assert_eq!(corpus.attributes, vec![vec!["7", "8"], vec!["-2", "3"]]);
+    }
+
+    #[test]
+    fn a_line_missing_a_declared_column_is_an_error() {
+        assert!(parse("a\tP\t7\n", Tokenizer::SpaceSplit, 2).is_err());
+        assert!(parse("a\tP\t7\t1\t9\n", Tokenizer::SpaceSplit, 2).is_err());
     }
 
     #[test]

@@ -191,6 +191,15 @@ mod dictionary {
         for (doc, (term, _)) in rows.iter().enumerate() {
             builder.add_posting(term.as_bytes(), doc as u64, 1).unwrap();
         }
+        // A ranking prior, which is what an attribute column is for: read for
+        // many records at once, before any payload is fetched.
+        builder
+            .add_column(mokuji_write::Column {
+                name: "importance".into(),
+                scale_exponent: 0,
+                values: vec![40, 90, 85, 70, 60],
+            })
+            .unwrap();
         builder.finish(meta).unwrap()
     }
 

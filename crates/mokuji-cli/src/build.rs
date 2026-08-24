@@ -23,11 +23,12 @@ pub fn run(
     origins: &[&Path],
     mut options: Options,
     tokenizer: Tokenizer,
+    declared: &[(String, u8)],
     generation: u64,
 ) -> Result<(), Error> {
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
-    let corpus = corpus::parse(text, tokenizer).map_err(Error::Corpus)?;
+    let corpus = corpus::parse(text, tokenizer, declared.len()).map_err(Error::Corpus)?;
 
     // Hash the source bytes as they were read, not the parsed corpus. The claim
     // being recorded is "this index was derived from that file", and it is only
@@ -82,6 +83,29 @@ pub fn run(
         }
     }
 
+    // Attribute columns follow the documents, reordering and all.
+    for (i, (name, decimals)) in declared.iter().enumerate() {
+        let raw = &corpus.attributes[i];
+        let mut values = Vec::with_capacity(sequence.len());
+        for &doc in sequence {
+            let field = &raw[doc as usize];
+            let parsed = crate::payload::parse_values(field, *decimals)?;
+            match parsed.as_slice() {
+                [one] => values.push(*one),
+                _ => {
+                    return Err(Error::Corpus(format!(
+                        "attribute column '{name}' holds '{field}', which is not one number"
+                    )))
+                }
+            }
+        }
+        builder.add_column(mokuji_write::Column {
+            name: name.clone(),
+            scale_exponent: -(*decimals as i8),
+            values,
+        })?;
+    }
+
     let renumbered = match &order {
         Some(order) => {
             let mut map = vec![0u64; corpus.payloads.len()];
@@ -109,27 +133,42 @@ pub fn run(
         });
     }
 
+    // Recorded only when there are any: an empty list is noise in a record
+    // whose whole job is to be exact.
+    let mut params = vec![
+        (
+            "terms_per_block",
+            Value::Uint(options.terms_per_block as u64),
+        ),
+        (
+            "docs_per_payload_block",
+            Value::Uint(u64::from(options.docs_per_payload_block)),
+        ),
+        ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
+        ("payload", Value::Text(describe(options.payload))),
+        ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
+    ];
+    if !declared.is_empty() {
+        params.push((
+            "attributes",
+            Value::Array(
+                declared
+                    .iter()
+                    .map(|(name, decimals)| Value::Text(format!("{name}:{decimals}")))
+                    .collect(),
+            ),
+        ));
+    }
+
     let meta = Meta {
         generation,
         sources,
         generator: Generator {
             name: "mokuji".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            // Everything the writer branches on. SPEC.md §3.4 requires these to
-            // be sufficient, with the source hash, to rebuild the file.
-            params: cbor_map([
-                (
-                    "terms_per_block",
-                    Value::Uint(options.terms_per_block as u64),
-                ),
-                (
-                    "docs_per_payload_block",
-                    Value::Uint(u64::from(options.docs_per_payload_block)),
-                ),
-                ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
-                ("payload", Value::Text(describe(options.payload))),
-                ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
-            ]),
+            // Everything the writer branches on. SPEC.md §3.4 requires these
+            // to be sufficient, with the source hash, to rebuild the file.
+            params: cbor_map(params),
         },
         tokenizer: MetaTokenizer {
             id: tokenizer.id().into(),

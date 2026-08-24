@@ -17,6 +17,10 @@ usage:
         --terms-per-block <n>          terms per dictionary block (default 128)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
+        --attribute <name>[:<decimals>]
+                                       read one more tab-separated field per
+                                       line as a column of numbers, readable
+                                       without fetching payload; repeatable
         --payload <how>                text (default), or ints:<decimals> to
                                        store the payload as delta-coded fixed
                                        point numbers
@@ -86,6 +90,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut tokenizer = Tokenizer::default();
     let mut generation = 1u64;
     let mut origins: Vec<&str> = Vec::new();
+    let mut attributes: Vec<(String, u8)> = Vec::new();
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -104,6 +109,25 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .ok_or_else(|| Error::Usage("--source needs a path".into()))?;
                 rest = tail;
                 origins.push(path);
+            }
+            "--attribute" => {
+                let (spec, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--attribute needs a name".into()))?;
+                rest = tail;
+                let (name, decimals) = match spec.split_once(':') {
+                    Some((name, decimals)) => (
+                        name,
+                        decimals.parse::<u8>().map_err(|_| {
+                            Error::Usage(format!("'{decimals}' is not a number of decimals"))
+                        })?,
+                    ),
+                    None => (*spec, 0),
+                };
+                if decimals > 18 {
+                    return Err(Error::Usage("at most 18 decimals".into()));
+                }
+                attributes.push((name.to_string(), decimals));
             }
             "--payload" => {
                 let (how, tail) = rest
@@ -153,6 +177,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
         &origins,
         options,
         tokenizer,
+        &attributes,
         generation,
     )
 }

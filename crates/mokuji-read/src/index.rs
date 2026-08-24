@@ -26,6 +26,76 @@ const OPEN_PREFIX: u32 = 64 * 1024;
 /// reads it saves, and the reader falls back to fetching each on its own.
 const MAX_RESIDENT_SPAN: u64 = 8 * 1024 * 1024;
 
+/// One column of per-document numbers (`SPEC.md` §5.8).
+///
+/// What the numbers mean is the application's business; the file says only how
+/// they were written down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    /// What the column is called.
+    pub name: String,
+    /// A stored `v` stands for `v * 10^exponent`. Recorded, not interpreted.
+    pub scale_exponent: i8,
+    /// One value per document, in document ID order.
+    pub values: Vec<i64>,
+}
+
+/// Decodes the document attributes section.
+fn decode_columns(bytes: &[u8], num_docs: u64) -> Result<Vec<Column>> {
+    let (count, mut pos) = varint::decode(bytes)?;
+    let count = usize::try_from(count).map_err(|_| Error::Malformed {
+        detail: "attribute column count overflows",
+    })?;
+
+    let mut headers = Vec::with_capacity(count.min(64));
+    for _ in 0..count {
+        let (len, n) = varint::decode(&bytes[pos.min(bytes.len())..])?;
+        pos += n;
+        let len = usize::try_from(len).map_err(|_| Error::Malformed {
+            detail: "attribute column name is implausibly long",
+        })?;
+        let name = bytes.get(pos..pos + len).ok_or(Error::Truncated {
+            expected: pos + len,
+            found: bytes.len(),
+        })?;
+        let name = std::str::from_utf8(name).map_err(|_| Error::Malformed {
+            detail: "attribute column name is not valid UTF-8",
+        })?;
+        pos += len;
+        let exponent = *bytes.get(pos).ok_or(Error::Truncated {
+            expected: pos + 1,
+            found: bytes.len(),
+        })? as i8;
+        pos += 1;
+        if headers.iter().any(|(n, _): &(String, i8)| n == name) {
+            return Err(Error::Malformed {
+                detail: "two attribute columns share a name",
+            });
+        }
+        headers.push((name.to_string(), exponent));
+    }
+
+    let docs = usize::try_from(num_docs).map_err(|_| Error::Malformed {
+        detail: "document count overflows",
+    })?;
+    let mut columns = Vec::with_capacity(headers.len());
+    for (name, scale_exponent) in headers {
+        let (packed, next) = bitpack::decode(bytes, pos, docs)?;
+        pos = next;
+        columns.push(Column {
+            name,
+            scale_exponent,
+            values: packed.into_iter().map(unzigzag).collect(),
+        });
+    }
+    if pos != bytes.len() {
+        return Err(Error::Malformed {
+            detail: "trailing bytes in the document attributes section",
+        });
+    }
+    Ok(columns)
+}
+
 /// One document's payload, as the file writes it down (`SPEC.md` §5.5).
 ///
 /// What it means is still the application's business. This says only how it was
@@ -157,6 +227,7 @@ pub struct Index<R> {
     term_block_offsets: Vec<u8>,
     payload_offsets: Vec<u8>,
     doc_lengths: Option<Vec<u64>>,
+    columns: Vec<Column>,
     term_blocks_codec: SectionCodec,
     payload_codec: SectionCodec,
     /// The whole term blocks section, if it is being held rather than fetched.
@@ -262,6 +333,19 @@ impl<R: RangeReader> Index<R> {
             None => None,
         };
 
+        // Read whole for the same reason as the lengths: they exist to be
+        // consulted about many documents at once.
+        let columns = match sections.iter().find(|s| s.id == SectionId::DOC_ATTRIBUTES) {
+            Some(section) => {
+                let bytes = decode_unit(
+                    section.codec,
+                    fetch(&reader, &head, section.offset, section.length).await?,
+                )?;
+                decode_columns(&bytes, header.num_docs)?
+            }
+            None => Vec::new(),
+        };
+
         let term_blocks_codec = find(&sections, SectionId::TERM_BLOCKS)?.codec;
         let payload_codec = if header.flags.contains(Flags::HAS_PAYLOAD) {
             find(&sections, SectionId::PAYLOAD)?.codec
@@ -300,6 +384,7 @@ impl<R: RangeReader> Index<R> {
             payload_codec,
             term_blocks,
             doc_lengths,
+            columns,
             sections,
             reader,
         })
@@ -329,6 +414,16 @@ impl<R: RangeReader> Index<R> {
         self.doc_lengths
             .as_ref()
             .and_then(|lengths| lengths.get(doc as usize).copied())
+    }
+
+    /// The document attribute columns the file carries (`SPEC.md` §5.8).
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    /// One attribute column by name.
+    pub fn column(&self, name: &str) -> Option<&Column> {
+        self.columns.iter().find(|c| c.name == name)
     }
 
     /// The metadata section, as canonical CBOR.

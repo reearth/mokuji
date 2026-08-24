@@ -231,3 +231,22 @@ fn an_index_without_lengths_says_so() {
     assert_eq!(index.doc_lengths(), None);
     assert_eq!(index.doc_length(0), None);
 }
+
+#[test]
+fn the_attribute_column_is_the_one_the_fixture_recorded() {
+    let index = block_on(Index::open(SliceReader::new(load("dict")))).unwrap();
+
+    // Written by the Python implementation, read by this one.
+    let column = index.column("importance").expect("present");
+    assert_eq!(column.values, [40, 90, 85, 70, 60]);
+    assert_eq!(column.scale_exponent, 0);
+    assert_eq!(index.columns().len(), 1);
+    assert!(index.column("popularity").is_none());
+
+    // Available without touching payload, which is the whole point.
+    let reader = CountingReader::new(SliceReader::new(load("dict")));
+    let index = block_on(Index::open(&reader)).unwrap();
+    reader.reset();
+    assert_eq!(index.column("importance").unwrap().values.len(), 5);
+    assert_eq!(reader.reads(), 0);
+}

@@ -28,6 +28,8 @@ impl SectionId {
     pub const PAYLOAD_OFFSETS: SectionId = SectionId(0x0031);
     /// Length in tokens of each document, in document ID order. Optional.
     pub const DOC_LENGTHS: SectionId = SectionId(0x0032);
+    /// Named columns of numbers, one value per document. Optional.
+    pub const DOC_ATTRIBUTES: SectionId = SectionId(0x0033);
     /// Shared compression dictionary, for codecs that take one.
     pub const SHARED_DICT: SectionId = SectionId(0x0040);
     /// Reserved for precomputed postings of frequent term pairs.
@@ -54,6 +56,7 @@ impl SectionId {
             Self::PAYLOAD => "payload",
             Self::PAYLOAD_OFFSETS => "payload_offsets",
             Self::DOC_LENGTHS => "doc_lengths",
+            Self::DOC_ATTRIBUTES => "doc_attributes",
             Self::SHARED_DICT => "shared_dict",
             Self::PAIR_CACHE => "pair_cache",
             Self::POSITIONS => "positions",
