@@ -2,11 +2,11 @@
 
 Forward geocoding from a single static file, over range reads, with no server.
 
-There are two corpora here. The real one is Japan's Address Base Registry; the
-synthetic one exists to make the shape of the problem visible at a size that is
-quick to rebuild, and it is reported separately because it flatters the format.
+The corpus is Japan's Address Base Registry, at two levels: town level for the
+whole country, and residence level — the level a street address is actually
+written at — for one prefecture.
 
-## Real data: the Address Base Registry
+## Town level: the whole country
 
 ```sh
 ./fetch-abr.sh abr
@@ -76,9 +76,8 @@ is what a street address is actually written at.
 
 ```sh
 ./fetch-abr.sh abr 13
-python3 abr.py --out tokyo.tsv rsdt \
-  --rsdt abr/mt_rsdtdsp_rsdt_pref13.csv \
-  --pos abr/mt_rsdtdsp_rsdt_pos_pref13.csv --pref 東京都
+python3 abr.py rsdt --rsdt abr/mt_rsdtdsp_rsdt_pref13.csv \
+  --pos abr/mt_rsdtdsp_rsdt_pos_pref13.csv --pref 東京都 --out tokyo.tsv
 colex build tokyo.tsv tokyo.colex --tokenizer ja-address \
   --source abr/mt_rsdtdsp_rsdt_pref13.csv --source abr.py
 colex prefix tokyo.colex "東京都千代田区丸の内一丁目"
@@ -203,41 +202,6 @@ Without that, an index built from `一丁目` is unreachable by anyone typing
 format does not specify how text becomes terms, but it does make sure a reader
 can find out what was done and do the same.
 
-## Synthetic corpus
-
-```sh
-python3 generate.py --count 300000 --out addresses.tsv
-colex build addresses.tsv addresses.colex --tokenizer identity
-colex prefix addresses.colex "東京都上足立区丸の内一丁目"
-```
-
-300,000 addresses, `--tokenizer identity`, default block sizes (128 terms,
-64 documents).
-
-| Results | Dictionary | Postings | Payload | Total reads | Bytes |
-|---|---|---|---|---|---|
-| 8 | 1 | 0 | 1 | 2 | 541 B |
-| 20 | 1 | 0 | 1 | 2 | 541 B |
-| 100 | 2 | 0 | 2 | 4 | 1.0 KB |
-| 500 | 5 | 0 | 7 | 12 | 3.5 KB |
-| 2,000 | 17 | 0 | 32 | 49 | 13 KB |
-
-The dictionary column is `ceil(results / 128) + 1` and the payload column is
-`ceil(results / 64)`, which is what `SPEC.md` §4.1 states.
-
-**Postings is always 0.** Every term here names exactly the one record that is
-about it, and its document ID is its own term ID, so the dictionary entry states
-the postings and none are stored (`SPEC.md` §5.3.4). The section is present with
-a length of zero.
-
-Nothing here grows with the size of the file. The same query costs the same two
-reads against 300,000 addresses or 19 million.
-
-This corpus draws town and city names from small pools, so neighbouring
-addresses share far longer prefixes than real ones do. It is kept because it
-rebuilds in a second and makes the read-count behaviour easy to see, not because
-its byte counts mean anything.
-
 ## Why prefix and not search
 
 An address is a hierarchical key. It is looked up whole or by prefix, never by
@@ -257,22 +221,30 @@ no bundled decompressor, because the required codec is one browsers already
 have.
 
 ```sh
-cd ../web && python3 serve.py --index ../addresses/abr.colex
+cd ../web && python3 serve.py --index ../addresses/tokyo.colex
 ```
 
-## Sections, synthetic corpus
+Typing `一丁目` finds `1丁目`, because the page reads the tokenizer identifier
+out of the metadata and applies the same normalization the addresses went
+through.
+
+## Sections
+
+The Tokyo index. Blocks are deflated individually, so a reader still fetches one
+block and decompresses one block; read counts are unchanged by compression and
+only the bytes moved shrink.
 
 ```
-                      stored      raw     codec
-meta                    261 B    261 B    raw     resident
-term_index              5.5 KB    77 KB   deflate resident
-term_block_offsets       19 KB    19 KB   raw     resident
-payload_offsets          37 KB    37 KB   raw     resident
-postings                    0    2.0 MB   raw     implied
-term_blocks              570 KB  4.1 MB   deflate
-payload                 1.3 MB   5.7 MB   deflate
-                        ------  ------
-                        1.9 MB  12.0 MB   from a 20 MB corpus
+                      stored         raw     codec
+meta                    503 B       503 B    raw       resident
+term_index             45.8 KB     178.6 KB  deflate   resident
+term_block_offsets    109.1 KB     109.1 KB  raw       resident
+payload_offsets       218.1 KB     218.1 KB  raw       resident
+postings                    0           0    raw       implied
+term_blocks             2.8 MB      16.7 MB  deflate
+payload                15.1 MB      46.0 MB  deflate
+                       -------     -------
+                       18.3 MB      63.3 MB   from a 120 MB corpus
 ```
 
 The offset tables and the metadata are stored raw on purpose. Metadata stays
@@ -284,14 +256,12 @@ settled layout to build on.
 
 ## Still missing
 
-**Compression uses no shared dictionary.** Measured on these very blocks, a
-trained shared dictionary takes term blocks from 7.06x to 27.2x. That is by far
-the largest remaining win, and it is deliberately not taken: browsers cannot
-supply a preset dictionary through their native decompression, so it would cost
-a decompressor in the page. See `SPEC.md` §5.6.1.
+**Compression uses no shared dictionary.** A trained shared dictionary takes
+term blocks from about 7x to about 27x, measured on blocks of this kind. That is
+by far the largest remaining win in the dictionary, and it is deliberately not
+taken: browsers cannot supply a preset dictionary through their native
+decompression, so it would cost a decompressor in the page. See `SPEC.md`
+§5.6.1.
 
-**Payload is coordinate text.** On the real index, 1.7 MB of 5.7 MB, holding
-`139.767201,35.68156` where a scaled integer pair would be eight bytes before
-compression. The format has nothing to say about that — payload contents are
-outside the specification — but that is where the next large saving is, and it
-belongs to whoever builds the address product.
+**Payload is coordinate text**, and on the Tokyo index it is 83% of the file.
+See above: the saving is real, it is large, and it is not the format's to make.

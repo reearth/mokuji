@@ -162,21 +162,23 @@ def report(total, addresses, duplicates, missing):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--out", default="abr.tsv")
+    common.add_argument(
         "--require-position",
         action="store_true",
         help="drop addresses with no representative point",
     )
-    parser.add_argument("--out", default="abr.tsv")
+
+    parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="level", required=True)
 
-    t = sub.add_parser("town", help="nationwide, town level")
+    t = sub.add_parser("town", parents=[common], help="nationwide, town level")
     t.add_argument("--fullset", default="mt_town_fullset_all.csv")
     t.add_argument("--pos", default="pos")
     t.set_defaults(run=town)
 
-    r = sub.add_parser("rsdt", help="one prefecture, residence level")
+    r = sub.add_parser("rsdt", parents=[common], help="one prefecture, residence level")
     r.add_argument("--rsdt", required=True)
     r.add_argument("--pos", required=True)
     r.add_argument(
