@@ -109,6 +109,9 @@ fn format_flags(flags: Flags) -> String {
     if flags.contains(Flags::HAS_PAYLOAD) {
         names.push("has_payload");
     }
+    if flags.contains(Flags::HAS_FREQS) {
+        names.push("has_freqs");
+    }
     if names.is_empty() {
         "none".to_string()
     } else {

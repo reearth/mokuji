@@ -31,8 +31,14 @@ impl Flags {
     pub const TERMDICT_MONOLITHIC: Flags = Flags(1 << 0);
     /// A payload section is present.
     pub const HAS_PAYLOAD: Flags = Flags(1 << 1);
+    /// Postings runs carry a term frequency per document.
+    ///
+    /// An index whose terms occur at most once per document — an address
+    /// dictionary, typically — omits them entirely rather than storing a run
+    /// of ones.
+    pub const HAS_FREQS: Flags = Flags(1 << 2);
 
-    const KNOWN: u16 = 0b11;
+    const KNOWN: u16 = 0b111;
 
     /// Builds flags from the raw field, rejecting reserved bits.
     pub fn from_bits(bits: u16) -> Result<Self> {
@@ -231,6 +237,16 @@ mod tests {
         let mut buf = sample().encode();
         buf[9] = SPEC_MINOR + 9;
         assert_eq!(Header::parse(&buf).unwrap().spec_minor, SPEC_MINOR + 9);
+    }
+
+    #[test]
+    fn accepts_every_defined_flag() {
+        let all = Flags::TERMDICT_MONOLITHIC
+            .with(Flags::HAS_PAYLOAD)
+            .with(Flags::HAS_FREQS);
+        let mut buf = sample().encode();
+        buf[10..12].copy_from_slice(&all.bits().to_le_bytes());
+        assert_eq!(Header::parse(&buf).unwrap().flags, all);
     }
 
     #[test]
