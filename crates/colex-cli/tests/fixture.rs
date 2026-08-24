@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use colex_format::{parse_section_table, Flags, Header, SectionId, HEADER_LEN};
+use colex_format::{parse_section_table, Flags, Header, SectionId};
 use colex_read::{block_on::block_on, CountingReader, RangeReader, SliceReader};
 
 fn fixture() -> Vec<u8> {
