@@ -54,10 +54,10 @@ impl Value {
 }
 
 /// Builds a map value, sorting its entries into canonical order.
-pub fn map(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+pub fn map<K: Into<String>>(entries: impl IntoIterator<Item = (K, Value)>) -> Value {
     let mut entries: Vec<(Value, Value)> = entries
         .into_iter()
-        .map(|(k, v)| (Value::Text(k.to_string()), v))
+        .map(|(k, v)| (Value::Text(k.into()), v))
         .collect();
     entries.sort_by_cached_key(|(k, _)| encode(k));
     Value::Map(entries)
@@ -259,7 +259,7 @@ mod tests {
         round_trip(Value::Text("tokyo".into()));
         round_trip(Value::Array(vec![]));
         round_trip(Value::Array(vec![Value::Uint(1), Value::Text("a".into())]));
-        round_trip(map([]));
+        round_trip(map::<&str>([]));
         round_trip(map([("b", Value::Uint(2)), ("a", Value::Uint(1))]));
     }
 

@@ -30,6 +30,10 @@ usage:
         --payload <how>                text (default), or ints:<decimals> to
                                        store the payload as delta-coded fixed
                                        point numbers
+        --meta <key>=<value>           record one application-defined entry in
+                                       the metadata; repeatable, for a
+                                       parameter a reader needs but the format
+                                       has no opinion about
         --tokenizer <id>               space-split (default) or identity
         --source <path>                record this file's hash as a source too;
                                        repeatable, for the register a corpus
@@ -99,6 +103,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut origins: Vec<&str> = Vec::new();
     options.doc_lengths = true;
     let mut attributes: Vec<(String, u8)> = Vec::new();
+    let mut attrs: Vec<(String, String)> = Vec::new();
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -138,6 +143,19 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     return Err(Error::Usage("at most 18 decimals".into()));
                 }
                 attributes.push((name.to_string(), decimals));
+            }
+            "--meta" => {
+                let (spec, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--meta needs <key>=<value>".into()))?;
+                rest = tail;
+                let (key, value) = spec
+                    .split_once('=')
+                    .ok_or_else(|| Error::Usage(format!("'{spec}' is not <key>=<value>")))?;
+                if key.is_empty() {
+                    return Err(Error::Usage("--meta needs a key".into()));
+                }
+                attrs.push((key.to_string(), value.to_string()));
             }
             "--payload" => {
                 let (how, tail) = rest
@@ -184,11 +202,14 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     build::run(
         input.as_ref(),
         output.as_ref(),
-        &origins,
+        &build::Recipe {
+            origins: &origins,
+            columns: &attributes,
+            attrs: &attrs,
+            generation,
+        },
         options,
         tokenizer,
-        &attributes,
-        generation,
     )
 }
 

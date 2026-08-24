@@ -242,7 +242,7 @@ mod tests {
             },
             tokenizer: Tokenizer {
                 id: "space-split".into(),
-                params: cbor::map([]),
+                params: cbor::map::<&str>([]),
             },
             attrs: None,
         }

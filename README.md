@@ -120,6 +120,12 @@ postal codes and addresses in **one** dictionary, answering in both directions,
 because the two key spaces sort into disjoint ranges and neither disturbs the
 other's prefixes.
 
+[demo/reverse](demo/reverse) takes that further and goes the other way round the
+map. A geohash cell is a string whose prefixes are the cells containing it, so
+*which polygon holds this point* is a term lookup: 6,021 Tokyo 町丁目 boundaries
+in 2.6 MB, a point answered in 4–5 reads, and the address key alongside the
+cells for 44 KB more — one file, both directions.
+
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are
 two thirds and payload is a rounding error. Nothing in the format had to choose

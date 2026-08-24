@@ -11,21 +11,36 @@ use sha2::{Digest, Sha256};
 use crate::corpus::{self, Tokenizer};
 use crate::info::Error;
 
+/// Everything a build records about itself, as opposed to what it encodes.
+#[derive(Default)]
+pub struct Recipe<'a> {
+    /// Further files to record as sources. An index is often derived from
+    /// something the builder never sees — here, a corpus converted from a
+    /// published register — and recording only the file it read would make the
+    /// provenance true but useless: it would name an intermediate nobody keeps.
+    pub origins: &'a [&'a Path],
+    /// Attribute columns to read from the corpus, as (name, decimals).
+    pub columns: &'a [(String, u8)],
+    /// Application-defined metadata entries.
+    pub attrs: &'a [(String, String)],
+    /// Generation number.
+    pub generation: u64,
+}
+
 /// Builds `input` into `output`.
-///
-/// `origins` are further files to record as sources. An index is often derived
-/// from something the builder never sees — here, a corpus converted from a
-/// published register — and recording only the file it read would make the
-/// provenance true but useless: it would name an intermediate nobody keeps.
 pub fn run(
     input: &Path,
     output: &Path,
-    origins: &[&Path],
+    recipe: &Recipe<'_>,
     mut options: Options,
     tokenizer: Tokenizer,
-    declared: &[(String, u8)],
-    generation: u64,
 ) -> Result<(), Error> {
+    let Recipe {
+        origins,
+        columns: declared,
+        attrs,
+        generation,
+    } = *recipe;
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
     let corpus =
@@ -186,9 +201,19 @@ pub fn run(
         },
         tokenizer: MetaTokenizer {
             id: tokenizer.id().into(),
-            params: cbor_map([]),
+            params: cbor_map::<&str>([]),
         },
-        attrs: None,
+        // Application-defined, and recorded only when there is something to
+        // record. The format has no opinion about what goes here; a reader
+        // that needs a parameter the format does not define — which geohash
+        // precisions an index uses, say — has nowhere else to find it.
+        attrs: (!attrs.is_empty()).then(|| {
+            cbor_map(
+                attrs
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Value::Text(value.clone()))),
+            )
+        }),
     };
 
     let bytes = builder.finish(&meta.encode())?;

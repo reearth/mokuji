@@ -25,6 +25,18 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
         meta.generator.name, meta.generator.version
     );
     println!("tokenizer       {}", meta.tokenizer.id);
+    if let Some(mokuji_meta::Value::Map(entries)) = &meta.attrs {
+        for (key, value) in entries {
+            let key = match key {
+                mokuji_meta::Value::Text(text) => text.clone(),
+                other => format!("{other:?}"),
+            };
+            match value {
+                mokuji_meta::Value::Text(text) => println!("attr            {key} = {text}"),
+                other => println!("attr            {key} = {other:?}"),
+            }
+        }
+    }
     for entry in &meta.sources {
         println!("derived from    {}", entry.content_hash);
         if let Some(uri) = &entry.uri {

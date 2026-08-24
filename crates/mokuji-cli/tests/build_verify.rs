@@ -337,3 +337,58 @@ fn build_records_the_register_a_corpus_came_from() {
     ]);
     assert!(output.status.success());
 }
+
+#[test]
+fn an_application_parameter_is_recorded_in_the_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--meta",
+        "geohash-precisions=6,7",
+    ]);
+
+    // The format has no opinion about what an application needs to know to
+    // query an index it did not build. It only has to carry it.
+    let output = mokuji(&["verify", index.to_str().unwrap()]);
+    assert!(stdout(&output).contains("attr            geohash-precisions = 6,7"));
+}
+
+#[test]
+fn build_rejects_a_meta_entry_that_is_not_a_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    std::fs::write(&corpus, CORPUS).unwrap();
+
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        dir.path().join("out.mokuji").to_str().unwrap(),
+        "--meta",
+        "precisions",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("<key>=<value>"));
+}
+
+#[test]
+fn application_metadata_does_not_change_a_file_that_declares_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    let plain = dir.path().join("plain.mokuji");
+    let again = dir.path().join("again.mokuji");
+    mokuji(&["build", corpus.to_str().unwrap(), plain.to_str().unwrap()]);
+    mokuji(&["build", corpus.to_str().unwrap(), again.to_str().unwrap()]);
+
+    // An empty map would be a difference in the metadata of every index ever
+    // built, for a feature almost none of them use.
+    assert_eq!(
+        std::fs::read(&plain).unwrap(),
+        std::fs::read(&again).unwrap()
+    );
+}
