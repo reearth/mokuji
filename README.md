@@ -77,4 +77,12 @@ morphological analysis and n-grams.
 
 ## License
 
-Code is MIT. The specification is [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Code is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE)
+or [MIT license](LICENSE-MIT) at your option.
+
+The specification is [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/),
+so that an independent implementation can quote it freely.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this work shall be dual licensed as above, without any
+additional terms or conditions.
