@@ -96,38 +96,27 @@ impl<R: RangeReader> Index<R> {
 
         // The recommended layout puts the resident sections together at the
         // head of the file, so when the opening prefix does not reach far
-        // enough the remedy is one wider read, not one read per section.
-        let span_start = wanted
-            .iter()
-            .map(|(_, o, _, _)| *o)
-            .min()
-            .expect("non-empty");
+        // enough the remedy is to extend it once rather than to fetch each
+        // section on its own. Extending rather than re-reading also keeps a
+        // section that straddles the boundary from costing a read of its own.
         let span_end = wanted
             .iter()
             .map(|(_, o, l, _)| o + l)
             .max()
             .expect("non-empty");
-        let span = if span_end <= prefix.len() as u64 || span_end - span_start > MAX_RESIDENT_SPAN {
-            // Either the prefix already covers everything, or the sections are
-            // scattered widely enough that reading the gaps between them would
-            // cost more than the reads it saves.
-            None
-        } else {
-            Some((
-                span_start,
-                fetch(&reader, &prefix, span_start, span_end - span_start).await?,
-            ))
-        };
+        let mut head = prefix;
+        let held = head.len() as u64;
+        if span_end > held && span_end - held <= MAX_RESIDENT_SPAN {
+            let len = u32::try_from(span_end - held).expect("bounded above");
+            let tail = reader.read_range(held, len).await?;
+            head.extend_from_slice(&tail);
+        }
 
         let mut resident = BTreeMap::new();
         for (id, offset, length, codec) in wanted {
-            let bytes = match &span {
-                Some((start, buf)) => {
-                    let at = (offset - start) as usize;
-                    buf[at..at + length as usize].to_vec()
-                }
-                None => fetch(&reader, &prefix, offset, length).await?,
-            };
+            // A file whose resident sections are scattered too widely to gather
+            // is still readable; it just costs a read each.
+            let bytes = fetch(&reader, &head, offset, length).await?;
             // A resident section is read whole, so the whole of it is one unit.
             resident.insert(id, decode_unit(codec, bytes)?);
         }
