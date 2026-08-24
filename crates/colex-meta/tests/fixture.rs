@@ -52,7 +52,7 @@ fn the_fixture_records_where_it_came_from() {
 
     assert_eq!(meta.generation, 1);
     assert_eq!(meta.tokenizer.id, "space-split");
-    assert_eq!(meta.generator.name, "build_tiny.py");
+    assert_eq!(meta.generator.name, "build_fixtures.py");
 
     let source = &meta.sources[0];
     assert_eq!(source.content_hash.algorithm, ContentHash::SHA2_256);

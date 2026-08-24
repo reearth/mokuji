@@ -99,9 +99,16 @@ consumer can verify which source of truth a given generation corresponds to.
 
 ### 3.4 Deterministic build
 
-Given identical input and identical generator parameters, a writer MUST
-produce a byte-identical file. Provenance is only meaningful if the derivation
-can be re-run and checked.
+Given identical input and identical generator parameters, a writer MUST produce
+a byte-identical file. Provenance is only meaningful if the derivation can be
+re-run and checked.
+
+This is a property of **a** writer, not of the format. Two conformant writers
+using different compression libraries produce different, equally valid files
+from the same input, because no specification of deflate fixes which of the
+valid encodings a compressor emits. That is why the metadata records
+`generator.name` and `generator.version` (§6): a rebuild is checkable against
+the writer that made it, and the file says which one that was.
 
 ## 4. The I/O contract
 
@@ -677,11 +684,17 @@ bytes, and if the resulting file is accepted by a conformant reader.
 
 ## 8. Security considerations
 
-A COLex file is untrusted input. Every offset and length in the header, the
-section table, and the offset sections is attacker-controlled. A reader MUST
-validate that every offset and length lies within the file before use, MUST NOT
-allocate based on a length field without bounding it against the remaining file
-size, and MUST fail cleanly rather than panic on malformed input.
+A COLex file is untrusted input. Every offset, length, and count in the header,
+the section table, and the offset sections is attacker-controlled.
+
+A reader MUST validate that every offset and length lies within the file before
+use, MUST fail cleanly rather than crash on malformed input, and MUST NOT
+allocate based on a count or length taken from the file without bounding it.
+
+The last is easy to agree with and easy to get wrong: a four-byte block count
+can ask for gigabytes before a single byte of the blocks has arrived. Reserving
+a bounded amount and letting the structure grow as bytes actually arrive costs
+nothing and removes the whole class.
 
 ## Appendix A. Decision log
 
@@ -837,7 +850,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.colex` is 745 bytes and indexes four documents:
+`conformance/fixtures/tiny.colex` is 764 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -846,7 +859,9 @@ tokyo shibuya    35.664,139.698
 osaka chuo       34.681,135.513
 ```
 
-Its full annotated hex dump is in `conformance/fixtures/tiny.hex`. The fixture
+Its full annotated hex dump is in `conformance/fixtures/tiny.hex`, and
+`dict.colex` alongside it is the same walk for a dictionary index — postings
+implied throughout, payload stored as delta-coded integers. The fixture
 is stored raw, so that it can be read against §5 by hand. What follows walks one
 query through it, `chuo`.
 
@@ -862,31 +877,31 @@ Magic `COLEXv00`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
 `HAS_FREQS`; seven sections; four documents totalling eight tokens; the section
 table is 0xa8 bytes at offset 0x40.
 
-**Term index** (`0x0010`), at offset 509:
+**Term index** (`0x0010`), at offset 528:
 
 ```
-000001fd  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
-0000020d  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
+00000210  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
+00000220  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
 ```
 
 Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 536: block 0 spans `0x26f..0x285`.
+**Term block offsets** (`0x0012`), at 555: block 0 spans `0x282..0x298`.
 
-**Term block 0**, at 623, 22 bytes:
+**Term block 0**, at 642, 22 bytes:
 
 ```
-0000026f  02 00 00 07 63 68 69 79 6f 64 61 01 dc 04 00 02  |....chiyoda.....|
-0000027f  02 75 6f 02 00 05                                |.uo...|
+00000282  02 00 00 07 63 68 69 79 6f 64 61 01 ef 04 00 02  |....chiyoda.....|
+00000292  02 75 6f 02 00 05                                |.uo...|
 ```
 
 Two entries, first term ID 0.
 
 Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1;
-`postings_offset` `dc 04`, the first entry so absolute — 0x5c plus 4 shifted by
-seven is 604; and `postings_len` **0**. The length is what matters: this term's
+`postings_offset` `ef 04`, the first entry so absolute — 0x6f plus 4 shifted by
+seven is 623; and `postings_len` **0**. The length is what matters: this term's
 postings are implied (§5.3.4). It occurs in exactly one document, document 0,
 because its own term ID is 0. Nothing is stored and nothing is read.
 
@@ -896,10 +911,10 @@ is the front-coding paying for itself on a two-term block; `doc_freq` 2;
 604 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
 rather than stored.
 
-**Postings** for `chuo`, at 608, 5 bytes:
+**Postings** for `chuo`, at 627, 5 bytes:
 
 ```
-00000260  00 02 01 03 00                                   |.....|
+00000273  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
@@ -911,10 +926,10 @@ stored as 0.
 Five bytes for a two-document posting list with frequencies, and the
 frequencies were free.
 
-**Payload offsets** (`0x0031`), at 568:
+**Payload offsets** (`0x0031`), at 587:
 
 ```
-00000238  00 00 00 00 02 00 00 00 02 00 00 00 ab 02 00 00  |................|
+0000024b  00 00 00 00 02 00 00 00 02 00 00 00 be 02 00 00  |................|
 ```
 
 Payload codec 0, opaque, so no value count and no scale; two documents to a

@@ -4,7 +4,7 @@
 //! The I/O bound is the property the format exists to provide, so it is checked
 //! the way correctness is; a change that quietly adds a fetch fails here.
 //!
-//! The fixtures were built by `conformance/fixtures/build_tiny.py`, an
+//! The fixtures were built by `conformance/fixtures/build_fixtures.py`, an
 //! independent implementation written from the specification. This test is
 //! therefore a comparison between two readings of the document, not a
 //! round-trip through one implementation.
@@ -64,13 +64,7 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
         let matches = block_on(index.search(&query)).expect(&case.name);
 
         let docs: Vec<u64> = matches.iter().map(|m| m.doc).collect();
-        let payloads: Vec<String> = matches
-            .iter()
-            .map(|m| {
-                String::from_utf8(m.payload.bytes().expect("the fixture is opaque").to_vec())
-                    .expect("fixture payloads are text")
-            })
-            .collect();
+        let payloads: Vec<String> = matches.iter().map(|m| m.payload.to_string()).collect();
 
         assert_eq!(docs, case.docs, "{}: documents", case.name);
         assert_eq!(payloads, case.payloads, "{}: payloads", case.name);

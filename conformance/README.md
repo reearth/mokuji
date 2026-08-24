@@ -7,32 +7,48 @@ the expected number of range reads**. The read count is checked the same way
 the result is, because the I/O bound in `SPEC.md` §4 is the property the format
 exists to provide, and a bound that is not tested is a bound that drifts.
 
+## The fixtures
+
+| | shape |
+|---|---|
+| `tiny` | A document collection: several terms per document, postings stored, payload opaque, every section raw |
+| `dict` | A dictionary: one term per record, postings implied throughout, payload as delta-coded integers, every section raw |
+| `dict-deflate` | `dict` again, compressed |
+
 ```
-fixtures/build_tiny.py    builds the fixture, independently of colex-write
-fixtures/tiny.corpus.txt  the source the fixture is derived from
-fixtures/tiny.colex       the fixture
-fixtures/tiny.hex         its annotated hex dump
-cases.toml                query, expected result, expected read count
+fixtures/build_fixtures.py   builds tiny and dict, independently of colex-write
+fixtures/*.corpus.txt        the sources they are derived from
+fixtures/*.colex             the fixtures
+fixtures/*.hex               annotated hex dumps
+cases.toml                   query, expected result, expected read count
 ```
 
-## Why the fixture is not built by the writer
+`tiny` and `dict` are stored raw so that they can be read against the
+specification by hand — and so that two writers can be compared byte for byte,
+which compression makes impossible (`SPEC.md` §3.4). `dict-deflate` exists so
+that decompression is exercised on the read side, where interoperability
+actually matters; it is written by `colex-write` and kept current by a test.
 
-If `colex-write` emitted the fixtures, a mistake in the writer would be
-mirrored by the reader developed against it, and the two would agree with each
-other rather than with the specification. `build_tiny.py` is a second
-implementation, in another language, written from the prose alone. Where the
-two disagree, one of them is wrong about the specification — which is the whole
-point of having a specification.
+## Who answers to these cases
 
-It doubles as the first evidence that `SPEC.md` is implementable by someone who
-has only the document.
+| implementation | how |
+|---|---|
+| `colex-read` | `cargo test -p colex-read --test conformance` |
+| `build_fixtures.py` | checks every case before writing a fixture |
+| `demo/web/colex.js` | `node --test 'demo/web/*.test.js'` |
+
+## Why the fixtures are not built by the writer
+
+If `colex-write` emitted them, a mistake in the writer would be mirrored by the
+reader developed against it, and the two would agree with each other rather than
+with the specification. `build_fixtures.py` is a second implementation, in
+another language, written from the prose alone. Where the two disagree, one of
+them is wrong about the specification — which is the whole point of having one.
 
 ## Regenerating
 
 ```sh
-python3 fixtures/build_tiny.py           # rebuild
-python3 fixtures/build_tiny.py --check   # verify, as CI does
+python3 fixtures/build_fixtures.py           # rebuild
+python3 fixtures/build_fixtures.py --check   # verify, as CI does
+COLEX_REGENERATE=1 cargo test                # rewrite dict-deflate.colex
 ```
-
-The builder checks every case in `cases.toml` before writing, so the fixture
-and the expectations cannot drift apart unnoticed.

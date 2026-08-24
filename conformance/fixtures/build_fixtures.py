@@ -10,7 +10,7 @@ prose alone, a disagreement is visible.
 It also serves as the first check that the specification is implementable by
 someone holding nothing but the document.
 
-Usage: python3 build_tiny.py [--check]
+Usage: python3 build_fixtures.py [--check]
 """
 
 import argparse
@@ -44,8 +44,26 @@ SEC_PAYLOAD_OFFSETS = 0x0031
 TERMS_PER_BLOCK = 2
 DOCS_PER_PAYLOAD_BLOCK = 2
 
+PAYLOAD_OPAQUE = 0
+PAYLOAD_DELTA_INTS = 1
+
 # The corpus. Deliberately shaped so that the dictionary has a shared prefix to
 # front-code ("chiyoda" / "chuo"), a term in every document, and a term in one.
+# A dictionary index rather than a document collection: one term names one
+# record, the terms are already normalized, and the payload is a pair of
+# coordinates rather than bytes. This is the shape an address index has, and
+# the one the `tiny` fixture does not exercise.
+# In term order, which for a dictionary is the order the documents have to be
+# in: a term's postings are implied only when the document it names carries the
+# term's own ID (SPEC.md 5.3.4).
+DICT_DOCUMENTS = [
+    ("大阪府大阪市中央区本町1丁目1番1号", "135.501000,34.682000"),
+    ("東京都千代田区丸の内1丁目1番1号", "139.767201,35.681560"),
+    ("東京都千代田区丸の内1丁目1番2号", "139.767258,35.681604"),
+    ("東京都千代田区丸の内2丁目1番1号", "139.763447,35.680022"),
+    ("東京都港区赤坂1丁目1番1号", "139.740331,35.667012"),
+]
+
 DOCUMENTS = [
     ("tokyo chiyoda", "35.694,139.754"),
     ("tokyo chuo", "35.671,139.772"),
@@ -161,18 +179,34 @@ def cbor(value):
 # --- index construction ----------------------------------------------------
 
 
-def tokenize(text):
-    """The fixture's tokenizer: split on spaces. Recorded, not specified."""
-    return text.split(" ")
+def tokenize(text, whole):
+    """The fixture's tokenizer. Recorded, not specified."""
+    return [text] if whole else text.split(" ")
 
 
-def build_index():
+def build_index(documents, whole):
     postings = {}
-    for doc_id, (text, _) in enumerate(DOCUMENTS):
-        for token in tokenize(text):
+    for doc_id, (text, _) in enumerate(documents):
+        for token in tokenize(text, whole):
             postings.setdefault(token, {})
             postings[token][doc_id] = postings[token].get(doc_id, 0) + 1
     return {term: postings[term] for term in sorted(postings)}
+
+
+def zigzag(v):
+    return (v << 1) ^ (v >> 63) if v < 0 else v << 1
+
+
+def scale(text, decimals):
+    """A decimal number as an integer of 10^-decimals units, rounded half up."""
+    negative = text.startswith("-")
+    whole, _, fraction = text.lstrip("+-").partition(".")
+    value = int(whole or 0)
+    for i in range(decimals):
+        value = value * 10 + (int(fraction[i]) if i < len(fraction) else 0)
+    if len(fraction) > decimals and fraction[decimals] >= "5":
+        value += 1
+    return -value if negative else value
 
 
 def encode_postings(docs, term_id):
@@ -204,11 +238,23 @@ def encode_term_block(entries, first_term_id, postings_offsets):
     return bytes(out)
 
 
-def encode_payload_block(values):
+def encode_payload_block(values, decimals=None):
+    """One payload block, opaque or as delta-coded integers (SPEC.md 5.5)."""
     out = bytearray(varint(len(values)))
+    if decimals is None:
+        for value in values:
+            raw = value.encode()
+            out += varint(len(raw)) + raw
+        return bytes(out)
+
+    previous = None
     for value in values:
-        raw = value.encode()
-        out += varint(len(raw)) + raw
+        row = [scale(field, decimals) for field in value.split(",")]
+        for i, v in enumerate(row):
+            # Deltas never cross a block boundary: a block is addressed on its
+            # own and must decode on its own.
+            out += varint(zigzag(v if previous is None else v - previous[i]))
+        previous = row
     return bytes(out)
 
 
@@ -216,16 +262,19 @@ def chunk(items, size):
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def build():
-    index = build_index()
+def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
+          tokenizer_id="space-split"):
+    documents = DOCUMENTS if documents is None else documents
+    index = build_index(documents, whole)
     terms = list(index)
     runs = {term: encode_postings(index[term], i) for i, term in enumerate(terms)}
     term_chunks = chunk(terms, TERMS_PER_BLOCK)
 
     payload_blocks = [
-        encode_payload_block([p for _, p in group])
-        for group in chunk(DOCUMENTS, DOCS_PER_PAYLOAD_BLOCK)
+        encode_payload_block([p for _, p in group], decimals)
+        for group in chunk(documents, DOCS_PER_PAYLOAD_BLOCK)
     ]
+    values_per_doc = 0 if decimals is None else len(documents[0][1].split(","))
 
     term_index = bytearray(len(term_chunks).to_bytes(4, "little"))
     previous = b""
@@ -234,25 +283,26 @@ def build():
         previous = group[0].encode()
     term_index = bytes(term_index)
 
-    corpus = (HERE / "tiny.corpus.txt").read_bytes()
+    corpus = (HERE / corpus_name).read_bytes()
     meta = cbor(
         {
             "generation": 1,
             "source": [
                 {
                     "content_hash": "sha2-256:" + hashlib.sha256(corpus).hexdigest(),
-                    "uri": "conformance/fixtures/tiny.corpus.txt",
+                    "uri": f"conformance/fixtures/{corpus_name}",
                 }
             ],
             "generator": {
-                "name": "build_tiny.py",
+                "name": "build_fixtures.py",
                 "version": "0.1",
                 "params": {
                     "terms_per_block": TERMS_PER_BLOCK,
                     "docs_per_payload_block": DOCS_PER_PAYLOAD_BLOCK,
+                    "payload": "opaque" if decimals is None else f"ints:{decimals}",
                 },
             },
-            "tokenizer": {"id": "space-split", "params": {}},
+            "tokenizer": {"id": tokenizer_id, "params": {}},
         }
     )
 
@@ -310,7 +360,14 @@ def build():
         for o in running_offsets(blocks)
     )
     payload_offsets = (
-        bytes([0, 0, 0, 0])  # codec 0 (opaque), no values, no scale, reserved
+        bytes(
+            [
+                PAYLOAD_OPAQUE if decimals is None else PAYLOAD_DELTA_INTS,
+                values_per_doc,
+                (-decimals) & 0xFF if decimals is not None else 0,
+                0,  # reserved
+            ]
+        )
         + DOCS_PER_PAYLOAD_BLOCK.to_bytes(4, "little")
         + len(payload_blocks).to_bytes(4, "little")
         + b"".join(
@@ -337,8 +394,8 @@ def build():
     header[9] = SPEC_MINOR
     header[10:12] = (FLAG_HAS_PAYLOAD | FLAG_HAS_FREQS).to_bytes(2, "little")
     header[12:16] = len(order).to_bytes(4, "little")
-    header[16:24] = len(DOCUMENTS).to_bytes(8, "little")
-    header[24:32] = sum(len(tokenize(t)) for t, _ in DOCUMENTS).to_bytes(8, "little")
+    header[16:24] = len(documents).to_bytes(8, "little")
+    header[24:32] = sum(len(tokenize(t, whole)) for t, _ in documents).to_bytes(8, "little")
     header[32:40] = HEADER_LEN.to_bytes(8, "little")
     header[40:44] = (SECTION_ENTRY_LEN * len(order)).to_bytes(4, "little")
 
@@ -476,9 +533,29 @@ def decode_postings(run, has_freqs, term_id, doc_freq, num_docs):
     return dict(zip(doc_ids, freqs))
 
 
+def unzigzag(v):
+    return (v >> 1) ^ -(v & 1)
+
+
+def render(values, exponent):
+    """value * 10^exponent, keeping the zeros the file's scale claims."""
+    out = []
+    for v in values:
+        if exponent == 0:
+            out.append(str(v))
+            continue
+        unit = 10 ** -exponent
+        sign = "-" if v < 0 else ""
+        v = abs(v)
+        out.append(f"{sign}{v // unit}.{v % unit:0{-exponent}d}")
+    return ",".join(out)
+
+
 def payload_of(f, resident, doc_id, cache):
     section = resident[SEC_PAYLOAD_OFFSETS]
-    assert section[0] == 0, "this fixture stores payload opaquely"
+    codec = section[0]
+    values_per_doc = section[1]
+    exponent = section[2] - 256 if section[2] > 127 else section[2]
     per_block = int.from_bytes(section[4:8], "little")
     ordinal, index = divmod(doc_id, per_block)
     # Results are visited in document ID order and payload is stored in that
@@ -493,12 +570,23 @@ def payload_of(f, resident, doc_id, cache):
 
     count, pos = read_varint(block, 0)
     assert index < count
-    for i in range(count):
-        length, pos = read_varint(block, pos)
-        if i == index:
-            return block[pos : pos + length].decode()
-        pos += length
-    raise AssertionError("unreachable")
+    if codec == 0:
+        for i in range(count):
+            length, pos = read_varint(block, pos)
+            if i == index:
+                return block[pos : pos + length].decode()
+            pos += length
+        raise AssertionError("unreachable")
+
+    # Every entry up to the wanted one, because each is a difference from the
+    # one before it.
+    values = [0] * values_per_doc
+    for entry in range(index + 1):
+        for i in range(values_per_doc):
+            raw, pos = read_varint(block, pos)
+            delta = unzigzag(raw)
+            values[i] = delta if entry == 0 else values[i] + delta
+    return render(values, exponent)
 
 
 def search(data, query):
@@ -543,49 +631,90 @@ def hexdump(data, regions):
     return "\n".join(lines).lstrip() + "\n"
 
 
+FIXTURES = [
+    {
+        "name": "tiny",
+        "documents": DOCUMENTS,
+        "whole": False,
+        "decimals": None,
+        "tokenizer_id": "space-split",
+        # query, expected result, expected reads
+        "cases": [
+            (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
+            (["tokyo", "chuo"], {1: "35.671,139.772"}, 5),
+            # `chiyoda` names document 0 and is term 0, so its postings are
+            # implied and cost no read: the term block and the payload, nothing
+            # else.
+            (["chiyoda"], {0: "35.694,139.754"}, 2),
+            (["osaka", "tokyo"], {}, 4),
+            # An absent term still costs the block read that proves it absent.
+            (["kyoto"], {}, 1),
+        ],
+    },
+    {
+        "name": "dict",
+        "documents": DICT_DOCUMENTS,
+        "whole": True,
+        "decimals": 6,
+        "tokenizer_id": "identity",
+        "cases": [
+            (["東京都千代田区丸の内1丁目1番1号"], {1: "139.767201,35.681560"}, 2),
+            (["大阪府大阪市中央区本町1丁目1番1号"], {0: "135.501000,34.682000"}, 2),
+            (["東京都新宿区"], {}, 1),
+        ],
+    },
+]
+
+
+def check(spec, data):
+    for query, expected, expected_reads in spec["cases"]:
+        got, reads = search(data, query)
+        assert got == expected, (spec["name"], query, got, expected)
+        bound = 2 * len(query) + len(expected)
+        assert reads <= bound, (spec["name"], query, reads, bound)
+        assert reads == expected_reads, (spec["name"], query, reads, expected_reads)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="verify, do not write")
     args = parser.parse_args()
 
-    (HERE / "tiny.corpus.txt").write_text(
-        "".join(f"{text}\t{payload}\n" for text, payload in DOCUMENTS)
-    )
-    data, regions = build()
+    stale = []
+    for spec in FIXTURES:
+        name = spec["name"]
+        corpus_name = f"{name}.corpus.txt"
+        (HERE / corpus_name).write_text(
+            "".join(f"{text}\t{payload}\n" for text, payload in spec["documents"])
+        )
+        data, regions = build(
+            documents=spec["documents"],
+            whole=spec["whole"],
+            decimals=spec["decimals"],
+            corpus_name=corpus_name,
+            tokenizer_id=spec["tokenizer_id"],
+        )
+        # Every case is checked here as well as in cases.toml, so that a change
+        # to a fixture cannot quietly invalidate the expectations the other
+        # implementations are held to.
+        check(spec, data)
 
-    # Every case in cases.toml, checked here as well, so that a change to the
-    # fixture cannot quietly invalidate the expectations the Rust reader is
-    # held to.
-    expectations = [
-        # query, expected result, expected reads
-        (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
-        (["tokyo", "chuo"], {1: "35.671,139.772"}, 5),
-        # `chiyoda` names document 0 and is term 0, so its postings are implied
-        # and cost no read: the term block and the payload, and nothing else.
-        (["chiyoda"], {0: "35.694,139.754"}, 2),
-        (["osaka", "tokyo"], {}, 4),
-        # An absent term still costs the block read that proves it absent.
-        (["kyoto"], {}, 1),
-    ]
-    for query, expected, expected_reads in expectations:
-        got, reads = search(data, query)
-        assert got == expected, (query, got, expected)
-        bound = 2 * len(query) + len(expected)
-        assert reads <= bound, (query, reads, bound)
-        assert reads == expected_reads, (query, reads, expected_reads)
+        dump = hexdump(data, regions)
+        if args.check:
+            if (HERE / f"{name}.colex").read_bytes() != data:
+                stale.append(f"{name}.colex")
+            elif (HERE / f"{name}.hex").read_text() != dump:
+                stale.append(f"{name}.hex")
+            else:
+                print(f"{name} is current ({len(data)} bytes)")
+            continue
 
-    dump = hexdump(data, regions)
-    if args.check:
-        if (HERE / "tiny.colex").read_bytes() != data:
-            sys.exit("tiny.colex is stale; re-run build_tiny.py")
-        if (HERE / "tiny.hex").read_text() != dump:
-            sys.exit("tiny.hex is stale; re-run build_tiny.py")
-        print(f"fixture is current ({len(data)} bytes)")
-        return
+        (HERE / f"{name}.colex").write_bytes(data)
+        (HERE / f"{name}.hex").write_text(dump)
+        print(f"wrote {name}.colex ({len(data)} bytes) and {name}.hex")
 
-    (HERE / "tiny.colex").write_bytes(data)
-    (HERE / "tiny.hex").write_text(dump)
-    print(f"wrote tiny.colex ({len(data)} bytes) and tiny.hex")
+    if stale:
+        sys.exit(f"stale: {', '.join(stale)}; re-run this script")
 
 
 if __name__ == "__main__":

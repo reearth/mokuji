@@ -128,3 +128,113 @@ fn the_resident_set_is_one_contiguous_range() {
     // provenance hash alone outweighs the index. That ratio is a property of
     // scale, and belongs to a benchmark on real data rather than to a fixture.
 }
+
+/// The `dict` fixture: a dictionary index, with postings implied throughout and
+/// payload stored as delta-coded integers.
+///
+/// The `tiny` fixture covers none of that, so without this the codecs added
+/// most recently would be agreed on by nobody but themselves.
+mod dictionary {
+    use std::path::PathBuf;
+
+    use colex_cli::payload::parse_values;
+    use colex_format::{parse_section_table, Header, SectionId};
+    use colex_write::{Builder, Options, PayloadEncoding};
+
+    fn conformance(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../conformance/fixtures")
+            .join(name)
+    }
+
+    fn meta_of(file: &[u8]) -> Vec<u8> {
+        let header = Header::parse(file).unwrap();
+        let start = header.section_table_offset as usize;
+        let end = start + header.section_table_len as usize;
+        let sections = parse_section_table(&file[start..end], header.section_count).unwrap();
+        let meta = sections
+            .iter()
+            .find(|s| s.id == SectionId::META)
+            .expect("meta section");
+        file[meta.offset as usize..(meta.offset + meta.length) as usize].to_vec()
+    }
+
+    /// Builds the dictionary index, raw or compressed.
+    fn build(corpus: &str, meta: &[u8], compress: bool) -> Vec<u8> {
+        let mut builder = Builder::new(Options {
+            terms_per_block: 2,
+            docs_per_payload_block: 2,
+            has_freqs: true,
+            payload: PayloadEncoding::Ints {
+                values_per_doc: 2,
+                scale_exponent: -6,
+            },
+            compress,
+        })
+        .unwrap();
+
+        // The corpus is already in term order, which is what lets every term's
+        // postings be implied.
+        let rows: Vec<(&str, &str)> = corpus
+            .lines()
+            .map(|line| line.split_once('\t').expect("corpus line"))
+            .collect();
+        for (_, payload) in &rows {
+            builder
+                .add_document_values(&parse_values(payload, 6).unwrap())
+                .unwrap();
+        }
+        for (doc, (term, _)) in rows.iter().enumerate() {
+            builder.add_posting(term.as_bytes(), doc as u64, 1).unwrap();
+        }
+        builder.finish(meta).unwrap()
+    }
+
+    /// The compressed fixture, which the other implementations read but cannot
+    /// reproduce.
+    ///
+    /// Two writers using different deflate implementations produce different,
+    /// equally valid files, so byte-identity is a property of a writer rather
+    /// than of the format — which is why `generator.name` and
+    /// `generator.version` are in the metadata. This one is kept current by
+    /// this test: `COLEX_REGENERATE=1 cargo test` rewrites it.
+    #[test]
+    fn the_compressed_fixture_is_current() {
+        let path = conformance("dict-deflate.colex");
+        let meta = meta_of(&std::fs::read(conformance("dict.colex")).expect("fixture"));
+        let corpus = std::fs::read_to_string(conformance("dict.corpus.txt")).expect("corpus");
+        let built = build(&corpus, &meta, true);
+
+        if std::env::var_os("COLEX_REGENERATE").is_some() {
+            std::fs::write(&path, &built).expect("write");
+            return;
+        }
+        let committed = std::fs::read(&path).unwrap_or_default();
+        assert_eq!(
+            committed, built,
+            "dict-deflate.colex is stale; re-run with COLEX_REGENERATE=1"
+        );
+    }
+
+    #[test]
+    fn reproduces_the_dictionary_fixture_byte_for_byte() {
+        let expected = std::fs::read(conformance("dict.colex")).expect("fixture");
+        let corpus = std::fs::read_to_string(conformance("dict.corpus.txt")).expect("corpus");
+        // Stored raw, so the fixture can be read against the specification by
+        // hand, and so that two writers can be compared byte for byte.
+        let built = build(&corpus, &meta_of(&expected), false);
+        assert_eq!(
+            built.len(),
+            expected.len(),
+            "length differs: built {} bytes, fixture {}",
+            built.len(),
+            expected.len()
+        );
+        if let Some(at) = built.iter().zip(&expected).position(|(a, b)| a != b) {
+            panic!(
+                "first difference at offset {at}: built {:#04x}, fixture {:#04x}",
+                built[at], expected[at]
+            );
+        }
+    }
+}

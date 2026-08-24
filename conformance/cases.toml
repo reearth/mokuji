@@ -10,7 +10,13 @@
 # blocks within a query, which is what makes the payload term smaller than the
 # result count.
 #
-# Verified independently by conformance/fixtures/build_tiny.py.
+# Verified independently by conformance/fixtures/build_tiny.py, which builds the
+# fixtures from SPEC.md and checks every case here before writing them.
+#
+# `tiny` is a small document collection: several terms per document, postings
+# stored, payload opaque, every section raw so the file can be read by hand.
+# `dict` is a dictionary: one term per record, postings implied throughout, and
+# payload stored as delta-coded integers.
 
 [[case]]
 name = "single term"
@@ -54,3 +60,29 @@ query = ["kyoto"]
 docs = []
 payloads = []
 reads = 1 # the term index narrows to one block, which is read to prove absence
+
+[[case]]
+name = "dictionary lookup"
+fixture = "dict"
+query = ["東京都千代田区丸の内1丁目1番1号"]
+docs = [1]
+payloads = ["139.767201,35.681560"]
+# One term block, one payload block. No postings read: every term in a
+# dictionary index names its own document (SPEC.md §5.3.4).
+reads = 2
+
+[[case]]
+name = "dictionary lookup, first record"
+fixture = "dict"
+query = ["大阪府大阪市中央区本町1丁目1番1号"]
+docs = [0]
+payloads = ["135.501000,34.682000"]
+reads = 2
+
+[[case]]
+name = "absent from a dictionary"
+fixture = "dict"
+query = ["東京都新宿区"]
+docs = []
+payloads = []
+reads = 1
