@@ -37,6 +37,106 @@ const OPEN_PREFIX = 256 * 1024;
 const utf8 = new TextDecoder();
 const encoder = new TextEncoder();
 
+// --- metadata -------------------------------------------------------------
+
+// Just enough CBOR to read the metadata section (SPEC.md §6): unsigned
+// integers, text, arrays, and maps. Unlike the Rust reader this does not check
+// that the encoding is canonical; a page wants to know where a file came from,
+// and checking that it was written correctly is `colex verify`'s job.
+function cbor(bytes, pos = 0) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset);
+  const initial = bytes[pos];
+  const major = initial >> 5;
+  const small = initial & 0x1f;
+
+  let argument;
+  if (small < 24) [argument, pos] = [small, pos + 1];
+  else if (small === 24) [argument, pos] = [bytes[pos + 1], pos + 2];
+  else if (small === 25) [argument, pos] = [view.getUint16(pos + 1), pos + 3];
+  else if (small === 26) [argument, pos] = [view.getUint32(pos + 1), pos + 5];
+  else if (small === 27) [argument, pos] = [Number(view.getBigUint64(pos + 1)), pos + 9];
+  else throw new Error("metadata uses an indefinite or reserved length");
+
+  switch (major) {
+    case 0:
+      return [argument, pos];
+    case 3:
+      return [utf8.decode(bytes.subarray(pos, pos + argument)), pos + argument];
+    case 4: {
+      const items = [];
+      for (let i = 0; i < argument; i++) {
+        const [item, next] = cbor(bytes, pos);
+        items.push(item);
+        pos = next;
+      }
+      return [items, pos];
+    }
+    case 5: {
+      const map = {};
+      for (let i = 0; i < argument; i++) {
+        const [key, afterKey] = cbor(bytes, pos);
+        const [value, afterValue] = cbor(bytes, afterKey);
+        map[key] = value;
+        pos = afterValue;
+      }
+      return [map, pos];
+    }
+    default:
+      throw new Error(`metadata uses CBOR major type ${major}`);
+  }
+}
+
+// --- ja-address -----------------------------------------------------------
+
+const JA_NUMERALS = new Map([
+  ["〇", 0], ["零", 0], ["一", 1], ["二", 2], ["三", 3], ["四", 4], ["五", 5],
+  ["六", 6], ["七", 7], ["八", 8], ["九", 9], ["十", 10], ["百", 100], ["千", 1000],
+]);
+
+// See TOKENIZERS.md. 十 百 千 multiply the digit before them, or one when there
+// is none; two bare digits in sequence are positional notation, which this rule
+// does not claim to read.
+function parseNumeral(run) {
+  let total = 0;
+  let digit = null;
+  for (const c of run) {
+    const value = JA_NUMERALS.get(c);
+    if (value >= 10) {
+      total += (digit ?? 1) * value;
+      digit = null;
+    } else {
+      if (digit !== null) return null;
+      digit = value;
+    }
+  }
+  return total + (digit ?? 0);
+}
+
+/** The `ja-address` tokenizer, applied to a query. */
+export function jaAddress(text) {
+  const chars = [...text.normalize("NFKC").trim()];
+  let out = "";
+  let i = 0;
+  while (i < chars.length) {
+    const start = i;
+    while (i < chars.length && JA_NUMERALS.has(chars[i])) i++;
+    if (i === start) {
+      out += chars[i++];
+      continue;
+    }
+    const run = chars.slice(start, i).join("");
+    const value = chars[i] === "丁" && chars[i + 1] === "目" ? parseNumeral(run) : null;
+    out += value === null ? run : String(value);
+  }
+  return out;
+}
+
+const TOKENIZERS = {
+  "space-split": (q) => q,
+  identity: (q) => q,
+  "ja-address": jaAddress,
+};
+
 class Cursor {
   constructor(bytes, pos = 0) {
     this.bytes = bytes;
@@ -205,17 +305,47 @@ export class ColexIndex {
       });
     }
 
+    const wanted = [SECTION.META, SECTION.TERM_INDEX, SECTION.TERM_BLOCK_OFFSETS];
+    if (index.flags & FLAG_HAS_PAYLOAD) wanted.push(SECTION.PAYLOAD_OFFSETS);
+    for (const id of wanted) {
+      if (!index.sections.has(id)) throw new Error(`section ${id} is missing`);
+    }
+
+    // The recommended layout puts everything resident at the head of the file,
+    // so when the opening prefix does not reach far enough the remedy is one
+    // wider read rather than one read per section.
+    const spanEnd = Math.max(...wanted.map((id) => {
+      const s = index.sections.get(id);
+      return s.offset + s.length;
+    }));
+    let span = prefix;
+    if (spanEnd > prefix.length) {
+      // Only the part not already in hand. Re-reading the prefix would double
+      // the bytes for no reason, and the opening cost is on screen.
+      const tail = await index.read(prefix.length, spanEnd - prefix.length);
+      span = new Uint8Array(prefix.length + tail.length);
+      span.set(prefix);
+      span.set(tail, prefix.length);
+    }
+
     const resident = async (id) => {
       const section = index.sections.get(id);
-      if (!section) throw new Error(`section ${id} is missing`);
-      const raw =
-        section.offset + section.length <= prefix.length
-          ? prefix.subarray(section.offset, section.offset + section.length)
-          : await index.read(section.offset, section.length);
-      return index.unit(raw, section.codec);
+      return index.unit(
+        span.subarray(section.offset, section.offset + section.length),
+        section.codec
+      );
     };
 
-    index.meta = await resident(SECTION.META);
+    index.meta = cbor(await resident(SECTION.META))[0];
+    index.tokenizerId = index.meta?.tokenizer?.id ?? "identity";
+    index.normalize = TOKENIZERS[index.tokenizerId];
+    if (!index.normalize) {
+      // Readable, just not reachable by an unnormalized query. Saying so beats
+      // returning nothing and looking broken.
+      console.warn(`unknown tokenizer '${index.tokenizerId}'; queries used as typed`);
+      index.normalize = (q) => q;
+    }
+
     index.termIndex = await resident(SECTION.TERM_INDEX);
     index.termBlockOffsets = await resident(SECTION.TERM_BLOCK_OFFSETS);
     if (index.flags & FLAG_HAS_PAYLOAD) {
@@ -376,16 +506,24 @@ export class ColexIndex {
     return out;
   }
 
-  /** Complete a prefix, returning terms with their payload. */
+  /** Complete a prefix, returning terms with their payload.
+   *
+   * The query goes through the index's own tokenizer first. Without that, an
+   * index built from `一丁目` is unreachable by anyone typing `一丁目`.
+   */
   async lookup(prefixText, limit = 20) {
-    const entries = await this.prefix(prefixText, limit);
+    const normalized = this.normalize(prefixText);
+    const entries = await this.prefix(normalized, limit);
     const postings = await this.postingsSpan(entries);
     const docs = postings.map((p) => p.docs[0]);
     const payloads = await this.payloadSpan(docs);
-    return entries.map((entry, i) => ({
-      term: utf8.decode(entry.term),
-      doc: docs[i],
-      payload: utf8.decode(payloads[i]),
-    }));
+    return {
+      normalized,
+      results: entries.map((entry, i) => ({
+        term: utf8.decode(entry.term),
+        doc: docs[i],
+        payload: utf8.decode(payloads[i]),
+      })),
+    };
   }
 }

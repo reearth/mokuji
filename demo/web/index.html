@@ -75,8 +75,9 @@
     <main>
       <h1>COLex address lookup</h1>
       <p class="lede">
-        300,000 Japanese addresses in one static file. No server, no API, no
-        database &mdash; the page fetches byte ranges out of
+        1,744,962 Tokyo addresses &mdash; every door in the prefecture, from
+        Japan&rsquo;s Address Base Registry &mdash; in one static file. No
+        server, no API, no database: the page fetches byte ranges out of
         <code>index.colex</code> and reads the index itself. Watch the request
         count while you type.
       </p>
@@ -84,7 +85,7 @@
       <input
         type="search"
         id="q"
-        placeholder="東京都"
+        placeholder="東京都千代田区丸の内一丁目"
         autocomplete="off"
         autocapitalize="off"
         spellcheck="false"
@@ -119,6 +120,13 @@
         that costs a handful of range requests whose number depends on how many
         results come back, not on how large the file is.
       </p>
+      <p class="note">
+        The index records that it was built with the <code>ja-address</code>
+        tokenizer, so the page puts your query through the same normalization
+        the addresses went through. That is why typing <code>一丁目</code> finds
+        <code>1丁目</code>. The registry spells chome both ways depending on the
+        municipality.
+      </p>
     </main>
 
     <script type="module">
@@ -128,7 +136,12 @@
       const bytes = (n) =>
         n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
-      const EXAMPLES = ["東京都", "東京都上足立区", "東京都上足立区丸の内", "大阪府", "北海道北千代田市"];
+      const EXAMPLES = [
+        "東京都千代田区丸の内一丁目",
+        "東京都渋谷区神南一丁目",
+        "東京都新宿区西新宿二丁目",
+        "東京都台東区",
+      ];
 
       let index;
       let generation = 0;
@@ -153,9 +166,9 @@
         index.onRequest = (r) => requests.push(r);
         index.resetStats();
 
-        let results;
+        let normalized, results;
         try {
-          results = await index.lookup(query, 20);
+          ({ normalized, results } = await index.lookup(query, 20));
         } catch (err) {
           $("status").innerHTML = `<span class="error">${err.message}</span>`;
           return;
@@ -171,9 +184,14 @@
         $("requests").textContent = index.stats.requests;
         $("bytes").textContent = bytes(index.stats.bytes);
         $("count").textContent = results.length;
-        $("status").textContent = results.length
-          ? `${results.length} shown${results.length === 20 ? " (limit)" : ""}.`
-          : "No address starts with that.";
+        const rewritten =
+          normalized === query
+            ? ""
+            : ` Normalized to \u201c${normalized}\u201d by the ${index.tokenizerId} tokenizer.`;
+        $("status").textContent =
+          (results.length
+            ? `${results.length} shown${results.length === 20 ? " (limit)" : ""}.`
+            : "No address starts with that.") + rewritten;
         renderLog(requests);
       }
 
@@ -186,7 +204,9 @@
         }
         $("filesize").textContent = bytes(index.fileLength ?? 0);
         $("opencost").textContent = `${index.stats.requests} request, ${bytes(index.stats.bytes)}`;
-        $("status").textContent = `${index.numDocs.toLocaleString()} addresses. Type a prefix.`;
+        $("status").textContent =
+          `${index.numDocs.toLocaleString()} addresses, tokenized with ` +
+          `${index.tokenizerId}. Type a prefix.`;
 
         $("hints").innerHTML = EXAMPLES.map((e) => `<button>${e}</button>`).join("");
         $("hints").addEventListener("click", (event) => {

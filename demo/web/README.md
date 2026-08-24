@@ -3,20 +3,35 @@
 The same `.colex` file, read by a page. No server logic, no API, no
 WebAssembly, and no bundled decompressor.
 
+Build the Tokyo index first — see [../addresses](../addresses) — then:
+
 ```sh
-cd ../addresses && python3 generate.py && \
-  cargo run --release -q -p colex-cli -- build addresses.tsv addresses.colex --tokenizer identity
-cd ../web && python3 serve.py --index ../addresses/addresses.colex
+python3 serve.py --index ../addresses/tokyo.colex
 ```
 
-Then open <http://localhost:8787/> and type a prefix. The panel counts the
-range requests as you type.
+Open <http://localhost:8787/> and type a prefix. The panel counts the range
+requests as you type.
 
-Completing a prefix over 300,000 addresses costs **two `Range` requests and
-541 bytes** from a 1.9 MB file, and the same two at any file size. One fetches
-the dictionary block, one fetches the payload; there is no postings request at
-all, because in an index of a dictionary the entry states its own postings
-(`SPEC.md` §5.3.4).
+Completing a prefix over Tokyo's 1,744,962 addresses costs **two to four
+`Range` requests and a kilobyte or two** from a 17.4 MB file, and the same
+number at any file size. One request per dictionary block the matches span and
+one per payload block; there is no postings request at all, because in an index
+of a dictionary the entry states its own postings (`SPEC.md` §5.3.4).
+
+Opening costs two requests and 365 KB — the header, the term index, and the
+offset tables for 1.7 million addresses — and is paid once.
+
+## Normalization happens here too
+
+The index records that it was built with the `ja-address` tokenizer, so the page
+puts the query through the same normalization before searching. Typing `一丁目`
+finds `1丁目`, which matters because the Address Base Registry spells chome both
+ways depending on the municipality.
+
+That means `colex.js` implements the tokenizer as well as the format — a
+reminder that the format deliberately does not specify tokenization, but does
+make sure a reader can find out what was done. It reads the identifier from the
+metadata section, which is why it also carries about forty lines of CBOR.
 
 ## Why there is no WebAssembly here
 

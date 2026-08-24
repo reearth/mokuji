@@ -99,10 +99,10 @@ in every section at once. See [demo/addresses](demo/addresses) for the
 measurements, the provenance chain back to the register, and what the numbers do
 and do not show.
 
-The same file is read by a browser in [demo/web](demo/web), in about 300 lines
-of plain JavaScript with no WebAssembly and no bundled decompressor. That is
-what the choice of deflate as the required codec buys: browsers already have
-it.
+A browser reads the same kind of file in [demo/web](demo/web) — Tokyo at
+residence level, 1,744,962 addresses in 17.4 MB — in about 400 lines of plain
+JavaScript with no WebAssembly and no bundled decompressor. That is what the
+choice of deflate as the required codec buys: browsers already have it.
 
 ## Scope
 
