@@ -23,7 +23,18 @@ jobs:
       - run: cargo test --all-features
       - run: cargo doc --no-deps --all-features
       - name: conformance fixtures are current
-        run: python3 conformance/fixtures/build_tiny.py --check
+        run: python3 conformance/fixtures/build_fixtures.py --check
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The browser reader is a third implementation of the specification and
+      # answers to the same conformance cases as the others.
+      - run: node --test 'demo/web/*.test.js'
 
   msrv:
     runs-on: ubuntu-latest

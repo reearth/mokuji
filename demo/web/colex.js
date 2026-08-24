@@ -245,8 +245,12 @@ async function inflate(unit) {
 }
 
 export class ColexIndex {
-  constructor(url) {
-    this.url = url;
+  /**
+   * @param source a URL, or `{ read(offset, length) }` returning bytes — which
+   * is what lets the same reader be tested against a file on disk.
+   */
+  constructor(source) {
+    this.source = source;
     // Everything a query costs, so the page can show it rather than claim it.
     this.stats = { requests: 0, bytes: 0 };
     // Called with every range request, so a page can show the requests
@@ -260,7 +264,15 @@ export class ColexIndex {
 
   async read(offset, length) {
     if (length === 0) return new Uint8Array(0);
-    const response = await fetch(this.url, {
+    if (typeof this.source !== "string") {
+      const bytes = await this.source.read(offset, length);
+      this.stats.requests += 1;
+      this.stats.bytes += bytes.length;
+      if (this.onRequest) this.onRequest({ offset, length: bytes.length });
+      return bytes;
+    }
+
+    const response = await fetch(this.source, {
       headers: { Range: `bytes=${offset}-${offset + length - 1}` },
     });
     if (response.status !== 206) {
@@ -286,8 +298,8 @@ export class ColexIndex {
     throw new Error(`codec ${codec} is registered but not implemented here`);
   }
 
-  static async open(url) {
-    const index = new ColexIndex(url);
+  static async open(source) {
+    const index = new ColexIndex(source);
     // One request for the resident set, optimistically. SPEC.md §5 recommends
     // a layout that puts all of it at the head of the file for exactly this.
     const prefix = await index.read(0, OPEN_PREFIX);
@@ -543,7 +555,7 @@ export class ColexIndex {
     return out;
   }
 
-  /** Complete a prefix, returning terms with their payload.
+  /** Complete a prefix, returning every matching document with its payload.
    *
    * The query goes through the index's own tokenizer first. Without that, an
    * index built from `一丁目` is unreachable by anyone typing `一丁目`.
@@ -552,15 +564,22 @@ export class ColexIndex {
     const normalized = this.normalize(prefixText);
     const entries = await this.prefix(normalized, limit);
     const postings = await this.postingsSpan(entries);
-    const docs = postings.map((p) => p.docs[0]);
-    const payloads = await this.payloadSpan(docs);
-    return {
-      normalized,
-      results: entries.map((entry, i) => ({
-        term: utf8.decode(entry.term),
-        doc: docs[i],
-        payload: payloads[i],
-      })),
-    };
+
+    // A term may name more than one document — in a dictionary it never does,
+    // but `tiny` is not a dictionary, and returning only the first would drop
+    // results silently. Documents are collected in ascending order so that the
+    // payload reads share blocks.
+    const wanted = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b);
+    const payloads = new Map();
+    const fetched = await this.payloadSpan(wanted);
+    wanted.forEach((doc, i) => payloads.set(doc, fetched[i]));
+
+    const results = [];
+    entries.forEach((entry, i) => {
+      for (const doc of postings[i].docs) {
+        results.push({ term: utf8.decode(entry.term), doc, payload: payloads.get(doc) });
+      }
+    });
+    return { normalized, results };
   }
 }

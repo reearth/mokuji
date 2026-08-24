@@ -61,6 +61,64 @@ impl Payload {
     }
 }
 
+impl std::fmt::Display for Payload {
+    /// Renders a payload as text.
+    ///
+    /// Presentation, not meaning: an integer payload is written out against the
+    /// scale the file declares, keeping the zeros that scale claims, and an
+    /// opaque one is shown as text when it is text.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Payload::Opaque(bytes) => match std::str::from_utf8(bytes) {
+                Ok(text) => f.write_str(text),
+                Err(_) => write!(f, "<{} bytes>", bytes.len()),
+            },
+            Payload::Ints {
+                values,
+                scale_exponent,
+            } => {
+                for (i, &value) in values.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(",")?;
+                    }
+                    write_scaled(f, value, *scale_exponent)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Writes `value * 10^exponent` in full.
+fn write_scaled(f: &mut std::fmt::Formatter<'_>, value: i64, exponent: i8) -> std::fmt::Result {
+    match exponent {
+        0 => write!(f, "{value}"),
+        e if e > 0 => {
+            write!(f, "{value}")?;
+            for _ in 0..e {
+                f.write_str("0")?;
+            }
+            Ok(())
+        }
+        e => {
+            let digits = e.unsigned_abs() as u32;
+            let unit = 10i128.pow(digits);
+            let value = i128::from(value);
+            if value < 0 {
+                f.write_str("-")?;
+            }
+            let magnitude = value.abs();
+            write!(
+                f,
+                "{}.{:0width$}",
+                magnitude / unit,
+                magnitude % unit,
+                width = digits as usize
+            )
+        }
+    }
+}
+
 /// One match: a document and its payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
@@ -251,14 +309,17 @@ impl<R: RangeReader> Index<R> {
         let (offset, len) = self.term_block_bounds(ordinal, block_count)?;
         let bytes = match &self.term_blocks {
             Some((start, held)) => {
-                let at = usize::try_from(offset - start).map_err(|_| Error::Malformed {
+                // The offset comes from a table in the file, so it may point
+                // before the section it is supposed to lie in.
+                let outside = || Error::Malformed {
                     detail: "term block lies outside the section",
-                })?;
-                held.get(at..at + len as usize)
-                    .ok_or(Error::Malformed {
-                        detail: "term block lies outside the section",
-                    })?
-                    .to_vec()
+                };
+                let at = offset
+                    .checked_sub(*start)
+                    .and_then(|at| usize::try_from(at).ok())
+                    .ok_or_else(outside)?;
+                let end = at.checked_add(len as usize).ok_or_else(outside)?;
+                held.get(at..end).ok_or_else(outside)?.to_vec()
             }
             None => self.reader.read_range(offset, len).await?,
         };

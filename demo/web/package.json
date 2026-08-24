@@ -1,0 +1,9 @@
+{
+  "name": "colex-web-demo",
+  "private": true,
+  "type": "module",
+  "description": "A COLex reader for the browser, and its tests. Not published; the browser loads colex.js directly.",
+  "scripts": {
+    "test": "node --test '*.test.js'"
+  }
+}
