@@ -83,6 +83,21 @@ open: 1 read(s)
 query: 5 read(s), bound 5
 ```
 
+## Address lookup
+
+Forward geocoding is the case the format is shaped for, because an address is a
+hierarchical key: looked up whole or by prefix, never by intersecting its parts.
+
+```sh
+cd demo/addresses && ./run.sh
+```
+
+Against 300,000 addresses in a 12 MB file, completing a prefix costs **three
+range reads and about 3 KB** — and costs the same three reads at any file size,
+because a contiguous range of terms is contiguous in every section at once. See
+[demo/addresses](demo/addresses) for the measurements, and for what they do and
+do not show.
+
 ## Scope
 
 Scoring is outside the specification. A reader returns postings and the global
