@@ -175,6 +175,50 @@ both ways.
 Whether that is worth giving up an R-tree is a judgement about the deployment,
 not about which structure is better.
 
+## What the whole country would cost
+
+Tokyo is one prefecture of 47, and an unrepresentative one: its 町丁目 are small
+and compact, so its covering is cheap. Rural boundaries are long, and a covering
+is paid by the metre of boundary rather than by the polygon.
+
+So the covering was run over all 47 prefectures — really run, not extrapolated —
+and the byte cost fitted on the seven that were built into indexes for real:
+
+```
+fit: 5.50 bytes per cell + 3.07 bytes per vertex
+ pref       actual       fitted     err
+   01   17,689,064   17,690,055    0.0%    Hokkaido
+   04    4,551,305    4,720,288    3.7%    Miyagi
+   13    2,641,698    2,667,739    1.0%    Tokyo
+   23    5,001,157    4,760,708   -4.8%    Aichi
+   27    3,154,770    3,118,776   -1.1%    Osaka
+   40    4,878,047    4,888,592    0.2%    Fukuoka
+   47    1,735,282    1,903,772    9.7%    Okinawa
+```
+
+| | |
+|---|---|
+| Polygons | 232,019 町丁目, all 47 prefectures |
+| Cells | 17,290,776 |
+| Vertices | 30,965,748 |
+| **Estimated national index** | **190 MB**, both directions |
+| Mean per prefecture | 4.0 MB |
+| Largest | Hokkaido, 17.7 MB — built, not estimated |
+| A point | still 4–5 range reads |
+
+Those indexes carry `--key`, so the 190 MB answers **both** directions: an
+address to a polygon and a point to an address.
+
+Two things are worth reading off that. Hokkaido is 10% of the polygons and 14%
+of the cells, because a rural 大字 has a long boundary and a covering pays for
+boundary; and Tokyo, at 28 cells per polygon against a national mean of 74, is
+the cheapest kind of geography there is.
+
+Whether it ships as one 190 MB object or 47 averaging 4 MB is a publishing
+choice, not a format one — the reads are the same either way. The registry it
+comes from publishes coordinates per prefecture, and there is no reason for this
+to be different.
+
 ## Where it comes from
 
 The 2020 Census small-area boundaries, published by Japan's Statistics Bureau
