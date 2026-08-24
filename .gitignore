@@ -3,3 +3,7 @@
 *.colex
 !conformance/fixtures/*.colex
 .DS_Store
+
+# Working notes, kept out of the repository
+IDEA.md
+PLAN.md
