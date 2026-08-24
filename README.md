@@ -115,6 +115,11 @@ payload, because a place needs a name to show as well as a position to return.
 All three are reproducible: [demo/addresses](demo/addresses),
 [demo/poi](demo/poi), [demo/documents](demo/documents).
 
+[demo/postal](demo/postal) is a fourth arrangement rather than a fourth shape:
+postal codes and addresses in **one** dictionary, answering in both directions,
+because the two key spaces sort into disjoint ranges and neither disturbs the
+other's prefixes.
+
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are
 two thirds and payload is a rounding error. Nothing in the format had to choose

@@ -35,10 +35,11 @@ pub fn run(
     // checkable against the file itself.
     let digest = Sha256::digest(&raw);
 
-    // Worth storing exactly when a document can be longer than one term: a
-    // scorer needs the length of the document in front of it, and a dictionary
-    // index has nothing to normalize.
-    options.doc_lengths = !tokenizer.is_key();
+    // Worth storing when a document can be longer than one term, since a
+    // scorer needs the length of the document in front of it. A guess, and a
+    // wrong one for an index whose documents are all the same length — hence
+    // the override.
+    options.doc_lengths = options.doc_lengths && !tokenizer.is_key();
 
     // How many values a document carries is a property of the corpus, not
     // something to make the caller count. Taken from the first document and

@@ -56,26 +56,28 @@ pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(),
     let postings = block_on(index.postings_span(&entries))?;
     let postings_reads = reader.reads() - dictionary;
 
-    // A term in a dictionary index names one document. Collecting the documents
-    // first lets the payload reads share blocks, which for keys that sort
-    // together — as an address hierarchy does — is most of them.
-    let docs: Vec<u64> = postings
-        .iter()
-        .filter_map(|p| p.docs.first().copied())
-        .collect();
+    // A term may name several records — a postal code covers many addresses —
+    // so every document is a result, not just the first. Collected in document
+    // order so the payload reads share blocks.
+    let mut hits: Vec<(usize, u64)> = Vec::new();
+    for (i, run) in postings.iter().enumerate() {
+        for &doc in &run.docs {
+            hits.push((i, doc));
+        }
+    }
+    hits.truncate(limit);
+    hits.sort_by_key(|(_, doc)| *doc);
+
+    let docs: Vec<u64> = hits.iter().map(|(_, doc)| *doc).collect();
     let payloads = block_on(index.payload_span(&docs))?;
     let payload_reads = reader.reads() - dictionary - postings_reads;
 
-    for ((term, _), payload) in matches.iter().zip(&payloads) {
-        println!(
-            "{}\t{}",
-            String::from_utf8_lossy(term),
-            crate::payload::render(payload)
-        );
+    for ((i, _), payload) in hits.iter().zip(&payloads) {
+        println!("{}\t{}", String::from_utf8_lossy(&matches[*i].0), payload);
     }
 
     eprintln!();
-    eprintln!("{} match(es)", matches.len());
+    eprintln!("{} term(s), {} record(s) shown", matches.len(), hits.len());
     eprintln!("open:     {open_reads} read(s)");
     eprintln!(
         "query:    {} read(s) total - {dictionary} dictionary, {postings_reads} postings, \

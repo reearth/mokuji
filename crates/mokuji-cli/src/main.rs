@@ -17,6 +17,9 @@ usage:
         --terms-per-block <n>          terms per dictionary block (default 128)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
+        --no-doc-lengths               omit the per-document lengths a scorer
+                                       would use; nothing to normalize when
+                                       every document is the same length
         --attribute <name>[:<decimals>]
                                        read one more tab-separated field per
                                        line as a column of numbers, readable
@@ -91,6 +94,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut tokenizer = Tokenizer::default();
     let mut generation = 1u64;
     let mut origins: Vec<&str> = Vec::new();
+    options.doc_lengths = true;
     let mut attributes: Vec<(String, u8)> = Vec::new();
     let mut rest = flags;
 
@@ -98,6 +102,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
         rest = tail;
         match *flag {
             "--no-freqs" => options.has_freqs = false,
+            "--no-doc-lengths" => options.doc_lengths = false,
             "--terms-per-block" => options.terms_per_block = take_number(flag, &mut rest)? as usize,
             "--docs-per-payload-block" => {
                 options.docs_per_payload_block = u32::try_from(take_number(flag, &mut rest)?)
