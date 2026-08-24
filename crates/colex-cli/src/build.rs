@@ -34,13 +34,39 @@ pub fn run(
     // checkable against the file itself.
     let digest = Sha256::digest(&raw);
 
+    // A dictionary index earns implied postings only when a term's document ID
+    // is the term's own, which means the documents have to be in term order.
+    // Requiring the caller to have sorted the corpus that way would be a
+    // requirement they cannot check, since the tokenizer decides what the terms
+    // are — so the ordering is done here instead.
+    let order = dictionary_order(&corpus);
     let mut builder = Builder::new(options)?;
-    for payload in &corpus.payloads {
-        builder.add_document(payload.clone());
+    match &order {
+        Some(order) => {
+            for &doc in order {
+                builder.add_document(corpus.payloads[doc as usize].clone());
+            }
+        }
+        None => {
+            for payload in &corpus.payloads {
+                builder.add_document(payload.clone());
+            }
+        }
     }
+
+    let renumbered = match &order {
+        Some(order) => {
+            let mut map = vec![0u64; corpus.payloads.len()];
+            for (new, &old) in order.iter().enumerate() {
+                map[old as usize] = new as u64;
+            }
+            map
+        }
+        None => (0..corpus.payloads.len() as u64).collect(),
+    };
     for (term, docs) in &corpus.postings {
         for (&doc, &freq) in docs {
-            builder.add_posting(term, doc, freq)?;
+            builder.add_posting(term, renumbered[doc as usize], freq)?;
         }
     }
 
@@ -91,6 +117,13 @@ pub fn run(
         corpus.payloads.len(),
         corpus.postings.len()
     );
+    if corpus.duplicate_keys > 0 {
+        println!(
+            "{} lines dropped: their key was already taken after {} normalization",
+            corpus.duplicate_keys,
+            tokenizer.id()
+        );
+    }
     for source in &meta.sources {
         println!("derived from {}", source.content_hash);
         if let Some(uri) = &source.uri {
@@ -98,6 +131,32 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+/// The documents in term order, if this corpus is a dictionary.
+///
+/// A dictionary here means what it sounds like: every term names exactly one
+/// record and every record has exactly one term. Address registers are like
+/// this and document collections are not, so the test is on the corpus rather
+/// than on a flag.
+fn dictionary_order(corpus: &corpus::Corpus) -> Option<Vec<u64>> {
+    if corpus.postings.len() != corpus.payloads.len() {
+        return None;
+    }
+    let mut order = Vec::with_capacity(corpus.postings.len());
+    let mut taken = vec![false; corpus.payloads.len()];
+    for docs in corpus.postings.values() {
+        let (&doc, &freq) = match docs.iter().next() {
+            Some(only) if docs.len() == 1 => only,
+            _ => return None,
+        };
+        if freq != 1 || taken[doc as usize] {
+            return None;
+        }
+        taken[doc as usize] = true;
+        order.push(doc);
+    }
+    Some(order)
 }
 
 /// Hashes a file without holding it in memory, since a register is large.
