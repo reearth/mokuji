@@ -69,6 +69,91 @@ The Address Base Registry is published by the Digital Agency of Japan under
 from it must carry that attribution. No registry data is committed here; the
 scripts fetch it.
 
+## Residence level: Tokyo
+
+Town level names a block of a neighbourhood. Residence level names a door, and
+is what a street address is actually written at.
+
+```sh
+./fetch-abr.sh abr 13
+python3 abr.py --out tokyo.tsv rsdt \
+  --rsdt abr/mt_rsdtdsp_rsdt_pref13.csv \
+  --pos abr/mt_rsdtdsp_rsdt_pos_pref13.csv --pref 東京都
+colex build tokyo.tsv tokyo.colex --tokenizer ja-address \
+  --source abr/mt_rsdtdsp_rsdt_pref13.csv --source abr.py
+colex prefix tokyo.colex "東京都千代田区丸の内一丁目"
+```
+
+```
+query normalized to '東京都千代田区丸の内1丁目' by the 'ja-address' tokenizer
+東京都千代田区丸の内1丁目10番10号	139.765575675,35.678505258
+東京都千代田区丸の内1丁目10番11号	139.765623217,35.678634717
+...
+query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
+bytes:    832 of 18283401
+```
+
+**1,744,962 addresses, every one with coordinates, in 18 MB. Two range reads.**
+
+| | |
+|---|---|
+| Source | 225 MB of CSV, two tables |
+| Corpus | 120 MB |
+| Index | 18.3 MB |
+| Build | 5.0 s |
+
+| Results | Dictionary | Postings | Payload | Total reads | Bytes |
+|---|---|---|---|---|---|
+| 20 | 1 | 0 | 1 | 2 | 795 B |
+| 100 | 2 | 0 | 2 | 4 | 1.6 KB |
+| 500 | 5 | 0 | 9 | 14 | 6.2 KB |
+| 2,000 | 17 | 0 | 32 | 49 | 22 KB |
+
+Two range reads and under a kilobyte, from a file ten times the size of the
+town-level one holding two and a half times as many addresses. Nothing in the
+read column moved.
+
+### The dictionary gets cheaper as addresses get more specific
+
+| | addresses | dictionary | per address |
+|---|---|---|---|
+| Town level, nationwide | 725,814 | 3.81 MB | **5.25 B** |
+| Residence level, Tokyo | 1,744,962 | 2.77 MB | **1.58 B** |
+
+Residence-level addresses are longer but share far more: thousands of doors
+hang off one neighbourhood name, so front-coding pays for the prefix once and
+the rest of each key is a block and a number. Two and a half times as many
+addresses cost three quarters of the dictionary.
+
+Nationwide residence level would sit above Tokyo's figure, since 47 prefectures
+share less than one does, but the dominant effect is doors per neighbourhood
+rather than prefectures per country. At two bytes an address, 19 million
+addresses would be a dictionary of roughly 40 MB. That is well under the
+50–150 MB estimated earlier from synthetic data — the estimate was
+conservative, which is what estimates from synthetic data usually are.
+
+### Payload is now the whole problem
+
+15.1 MB of the 18.3 MB — 83% of the file — is coordinate text, and the registry
+publishes nine and ten decimal places:
+
+```
+139.765575675,35.678505258
+```
+
+The tenth decimal place of a longitude is a tenth of a millimetre. Rounding to
+six, which is about eleven centimetres, gives:
+
+| | index |
+|---|---|
+| As published | 18.3 MB |
+| Coordinates at six decimals | **12.9 MB** |
+
+A 29% smaller file for precision nobody has. The format has nothing to say
+about this — payload contents are outside the specification (`SPEC.md` §5.5) —
+which is exactly why it is worth saying here: the largest remaining saving in
+this index is not the format's to make.
+
 ### What the real data changed
 
 The dictionary costs **5.3 bytes per address** compressed, against 1.9 on the
@@ -103,6 +188,20 @@ Two further things the real data shows:
   reported by `build` rather than silently merged. Two registry rows spelling
   the same chome differently are one address, and a key names one record — but
   which payload survives is a data decision, so the count is printed.
+
+### Queries are normalized too
+
+`prefix` reads the tokenizer identifier out of the index's metadata and puts the
+query through it before searching:
+
+```
+query normalized to '東京都千代田区丸の内1丁目' by the 'ja-address' tokenizer
+```
+
+Without that, an index built from `一丁目` is unreachable by anyone typing
+`一丁目`, which is everyone. This is what recording the tokenizer is *for*: the
+format does not specify how text becomes terms, but it does make sure a reader
+can find out what was done and do the same.
 
 ## Synthetic corpus
 
