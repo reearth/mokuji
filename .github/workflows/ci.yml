@@ -22,6 +22,8 @@ jobs:
       - run: cargo clippy --all-targets --all-features
       - run: cargo test --all-features
       - run: cargo doc --no-deps --all-features
+      - name: conformance fixtures are current
+        run: python3 conformance/fixtures/build_tiny.py --check
 
   msrv:
     runs-on: ubuntu-latest

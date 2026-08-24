@@ -1,0 +1,53 @@
+# Conformance cases.
+#
+# Each case states the query, the expected result, and the number of range
+# reads a conformant reader performs. The read count is checked because the
+# bound in SPEC.md section 4 is the property the format exists to provide, and
+# an untested bound drifts.
+#
+# Counts exclude the reads that populate the resident set, which SPEC.md
+# section 4 accounts for separately. They assume a reader that caches payload
+# blocks within a query, which is what makes the payload term smaller than the
+# result count.
+#
+# Verified independently by conformance/fixtures/build_tiny.py.
+
+[[case]]
+name = "single term"
+fixture = "tiny"
+query = ["tokyo"]
+docs = [0, 1, 2]
+payloads = ["35.694,139.754", "35.671,139.772", "35.664,139.698"]
+reads = 4 # 1 term block, 1 postings, 2 payload blocks for 3 documents
+
+[[case]]
+name = "intersection"
+fixture = "tiny"
+query = ["tokyo", "chuo"]
+docs = [1]
+payloads = ["35.671,139.772"]
+reads = 5 # 2 term blocks, 2 postings, 1 payload
+
+[[case]]
+name = "term in one document"
+fixture = "tiny"
+query = ["chiyoda"]
+docs = [0]
+payloads = ["35.694,139.754"]
+reads = 3
+
+[[case]]
+name = "empty intersection"
+fixture = "tiny"
+query = ["osaka", "tokyo"]
+docs = []
+payloads = []
+reads = 4 # both terms resolve; no payload is fetched
+
+[[case]]
+name = "absent term"
+fixture = "tiny"
+query = ["kyoto"]
+docs = []
+payloads = []
+reads = 1 # the term index narrows to one block, which is read to prove absence
