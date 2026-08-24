@@ -9,6 +9,7 @@ use corpus::Tokenizer;
 
 mod build;
 mod corpus;
+mod dump;
 mod info;
 mod prefix;
 mod search;
@@ -30,6 +31,7 @@ usage:
                                        was converted from
         --generation <n>               generation number (default 1)
 
+    colex dump <file>                  write the index back out as a corpus
     colex info <file>                  print the header and section table
     colex search <file> <term>...      intersect terms and report the cost
     colex prefix <file> <prefix> [-n <limit>]
@@ -58,6 +60,7 @@ fn main() -> ExitCode {
             println!("colex {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
+        ["dump", path] => dump::run(path.as_ref()),
         ["info", path] => info::run(path.as_ref()),
         ["search", path, terms @ ..] => search::run(path.as_ref(), terms),
         ["prefix", path, needle, flags @ ..] => prefix_command(path, needle, flags),
