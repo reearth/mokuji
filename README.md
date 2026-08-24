@@ -64,7 +64,18 @@ about each other is a requirement of the format and not only good practice.
 
 ```sh
 cargo test
-cargo run -p colex-cli -- info path/to/index.colex
+cargo run -p colex-cli -- info conformance/fixtures/tiny.colex
+cargo run -p colex-cli -- search conformance/fixtures/tiny.colex tokyo chuo
+```
+
+`search` reports what the query cost:
+
+```
+1	35.671,139.772
+
+1 match(es)
+open: 1 read(s)
+query: 5 read(s), bound 5
 ```
 
 ## Scope
