@@ -120,6 +120,12 @@ postal codes and addresses in **one** dictionary, answering in both directions,
 because the two key spaces sort into disjoint ranges and neither disturbs the
 other's prefixes.
 
+[demo/fuzzy](demo/fuzzy) is the same index answered loosely: character bigrams,
+the **union** of the query's terms instead of their intersection, and postings
+fetched for only the rarest few — which the dictionary reports before any of
+them are read. `丸ノ内` finds `丸の内`, and a dropped prefecture finds the
+address 94% of the time.
+
 [demo/reverse](demo/reverse) takes that further and goes the other way round the
 map. A geohash cell is a string whose prefixes are the cells containing it, so
 *which polygon holds this point* is a term lookup: 6,021 Tokyo 町丁目 boundaries

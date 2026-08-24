@@ -392,3 +392,87 @@ fn application_metadata_does_not_change_a_file_that_declares_none() {
         std::fs::read(&again).unwrap()
     );
 }
+
+/// Builds CORPUS into an index and returns its path, with the directory that
+/// has to outlive it.
+fn searchable() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    mokuji(&["build", corpus.to_str().unwrap(), index.to_str().unwrap()]);
+    (dir, index)
+}
+
+#[test]
+fn any_takes_the_union_where_the_default_takes_the_intersection() {
+    let (_dir, index) = searchable();
+    let path = index.to_str().unwrap();
+
+    // No document holds both, so an intersection is empty.
+    let strict = mokuji(&["search", path, "shibuya", "osaka"]);
+    assert_eq!(stdout(&strict).lines().count(), 0);
+
+    // A union finds both documents. This is what an n-gram query needs: one
+    // character wrong and the intersection is empty for a term that is right.
+    let loose = mokuji(&["search", path, "shibuya", "osaka", "--any"]);
+    let lines = stdout(&loose);
+    assert!(
+        lines.contains("35.664,139.698"),
+        "expected the shibuya record"
+    );
+    assert!(
+        lines.contains("34.681,135.513"),
+        "expected the osaka record"
+    );
+}
+
+#[test]
+fn any_ignores_a_term_that_is_not_in_the_dictionary() {
+    let (_dir, index) = searchable();
+    let path = index.to_str().unwrap();
+
+    // A misspelling contributes nothing rather than emptying the result, which
+    // is the whole point of scoring a union.
+    let output = mokuji(&["search", path, "shibuya", "shibuyaa", "--any"]);
+    assert!(stdout(&output).contains("35.664,139.698"));
+}
+
+#[test]
+fn probe_fetches_postings_for_only_the_rarest_terms() {
+    let (_dir, index) = searchable();
+    let path = index.to_str().unwrap();
+
+    // `tokyo` names three documents and `osaka` one; asked for one term, the
+    // rarer is the one worth reading.
+    let output = mokuji(&["search", path, "tokyo", "osaka", "--any", "--probe", "1"]);
+    let report = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(report.contains("probed:   osaka:1"), "{report}");
+    assert!(report.contains("skipped:  1 term"), "{report}");
+    assert!(stdout(&output).contains("34.681,135.513"));
+    assert!(!stdout(&output).contains("35.664,139.698"));
+}
+
+#[test]
+fn probe_needs_a_union() {
+    let (_dir, index) = searchable();
+    let output = mokuji(&["search", index.to_str().unwrap(), "tokyo", "--probe", "1"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--any"));
+}
+
+#[test]
+fn probe_and_phrase_are_incompatible() {
+    let (_dir, index) = searchable();
+    let output = mokuji(&[
+        "search",
+        index.to_str().unwrap(),
+        "tokyo",
+        "--any",
+        "--probe",
+        "1",
+        "--phrase",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("in order"));
+}

@@ -53,12 +53,19 @@ RSDT_LEVELS = ["city", "ward", "oaza_cho", "chome", "koaza"]
 RSDT_KEY = ["lg_code", "machiaza_id", "blk_id", "rsdt_id", "rsdt2_id"]
 
 
-def write(addresses, out):
-    """Writes the corpus, sorted, one address and its payload per line."""
+def write(addresses, out, echo=False):
+    """Writes the corpus, sorted, one address and its payload per line.
+
+    `echo` puts the address into the payload as well as the text. A geocoder
+    does not need it — the caller typed the address and wants coordinates back
+    — but a search that only approximates the address does: it has to show
+    which one it found. See ../fuzzy.
+    """
     path = pathlib.Path(out)
     with path.open("w", encoding="utf-8") as handle:
         for term in sorted(addresses):
-            handle.write(f"{term}\t{addresses[term]}\n")
+            payload = f"{term}|{addresses[term]}" if echo else addresses[term]
+            handle.write(f"{term}\t{payload}\n")
     print(f"wrote {path} ({path.stat().st_size:,} bytes)", file=sys.stderr)
 
 
@@ -106,7 +113,7 @@ def town(args):
         addresses[term] = payload
 
     report(total, addresses, duplicates, missing)
-    write(addresses, args.out)
+    write(addresses, args.out, args.echo_address)
 
 
 def rsdt(args):
@@ -150,7 +157,7 @@ def rsdt(args):
         addresses[term] = payload
 
     report(total, addresses, duplicates, missing)
-    write(addresses, args.out)
+    write(addresses, args.out, args.echo_address)
 
 
 def report(total, addresses, duplicates, missing):
@@ -164,6 +171,11 @@ def report(total, addresses, duplicates, missing):
 def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--out", default="abr.tsv")
+    common.add_argument(
+        "--echo-address",
+        action="store_true",
+        help="put the address in the payload too, for a search that has to show what it matched",
+    )
     common.add_argument(
         "--require-position",
         action="store_true",

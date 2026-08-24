@@ -8,20 +8,63 @@
 use std::path::Path;
 
 use mokuji_meta::Meta;
-use mokuji_read::{block_on::block_on, CountingReader, Index, RangeReader, SliceReader};
+use mokuji_read::{block_on::block_on, CountingReader, Index, RangeReader, SliceReader, TermEntry};
 
 use crate::corpus::Tokenizer;
 use crate::info::Error;
 
-/// Intersects `terms` against the index at `path`, reporting what it cost.
-pub fn run(
-    path: &Path,
-    terms: &[&str],
-    limit: usize,
-    boost: Option<&str>,
-    length_norm: f64,
-    phrase: bool,
-) -> Result<(), Error> {
+/// How the terms of a query are combined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Combine {
+    /// Every term must be present. What a search for words means.
+    All,
+    /// Any term will do, and matching more of them scores higher.
+    ///
+    /// What a search over n-grams means: a query with one character wrong
+    /// shares every n-gram but two with the term it was meant to be, and
+    /// requiring all of them would find nothing.
+    Any,
+}
+
+/// Everything about a query except the terms and the file.
+pub struct Query<'a> {
+    /// How many results to show.
+    pub limit: usize,
+    /// An attribute column to add as a static prior.
+    pub boost: Option<&'a str>,
+    /// BM25's `b`. Zero for a corpus whose long documents are its good ones.
+    pub length_norm: f64,
+    /// Require the terms to occur at consecutive positions.
+    pub phrase: bool,
+    /// Whether every term must be present.
+    pub combine: Combine,
+    /// Fetch postings for at most this many terms, rarest first.
+    pub probe: Option<usize>,
+}
+
+impl Default for Query<'_> {
+    fn default() -> Self {
+        Query {
+            limit: 10,
+            boost: None,
+            length_norm: 0.75,
+            phrase: false,
+            combine: Combine::All,
+            probe: None,
+        }
+    }
+}
+
+/// Runs `terms` against the index at `path`, reporting what it cost.
+pub fn run(path: &Path, terms: &[&str], query: &Query<'_>) -> Result<(), Error> {
+    let Query {
+        limit,
+        boost,
+        length_norm,
+        phrase,
+        combine,
+        probe,
+    } = *query;
     let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
@@ -59,7 +102,15 @@ pub fn run(
             "this index carries no positions, so it cannot test a phrase".into(),
         ));
     }
-    let ranked = block_on(rank(&index, &terms, column, length_norm, phrase))?;
+    let (ranked, probed, skipped) = block_on(rank(
+        &index,
+        &terms,
+        column,
+        length_norm,
+        phrase,
+        combine,
+        probe,
+    ))?;
     let after_postings = reader.reads();
 
     let shown: Vec<u64> = ranked.iter().take(limit).map(|(doc, _)| *doc).collect();
@@ -73,6 +124,23 @@ pub fn run(
     }
 
     eprintln!();
+    if !probed.is_empty() && (combine == Combine::Any || probe.is_some()) {
+        eprintln!(
+            "probed:   {}",
+            probed
+                .iter()
+                .map(|(term, df)| format!("{term}:{df}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if skipped > 0 {
+            // The point of the dictionary carrying doc_freq: a reader knows
+            // what a term's postings will cost before it pays for them.
+            eprintln!(
+                "skipped:  {skipped} term(s) with more postings, without reading any of them"
+            );
+        }
+    }
     eprintln!(
         "{} match(es){}, {} shown{}",
         ranked.len(),
@@ -101,31 +169,83 @@ pub fn run(
     Ok(())
 }
 
-/// The documents holding every term, best first when the file allows it.
+/// The documents the query matches, best first when the file allows it.
+///
+/// Returns the ranking, the terms whose postings were actually fetched with
+/// their document frequencies, and how many were left unfetched.
 ///
 /// Returns `None` for the score when the index carries no document lengths, in
 /// which case the order is by document ID and means nothing.
+#[allow(clippy::type_complexity)]
 async fn rank<R: RangeReader>(
     index: &Index<R>,
     terms: &[String],
     boost: Option<&mokuji_read::Column>,
     length_norm: f64,
     phrase: bool,
-) -> Result<Vec<(u64, Option<f64>)>, Error> {
-    let mut runs = Vec::with_capacity(terms.len());
-    for term in terms {
-        let Some(entry) = index.lookup(term.as_bytes()).await? else {
-            return Ok(Vec::new());
-        };
-        runs.push((entry, index.postings(&entry).await?));
+    combine: Combine,
+    probe: Option<usize>,
+) -> Result<(Vec<(u64, Option<f64>)>, Vec<(String, u64)>, usize), Error> {
+    let empty = |probed: Vec<(String, u64)>, skipped: usize| (Vec::new(), probed, skipped);
+
+    // One read per dictionary block the terms fall in, and the entries carry
+    // `doc_freq` — so what each term's postings will cost is known before any
+    // of them are read.
+    let keys: Vec<&[u8]> = terms.iter().map(|t| t.as_bytes()).collect();
+    let found = index.lookup_many(&keys).await?;
+
+    let mut present: Vec<(String, TermEntry)> = Vec::new();
+    for (term, entry) in terms.iter().zip(found) {
+        match entry {
+            Some(entry) => present.push((term.clone(), entry)),
+            // A term nobody wrote down cannot be in an intersection, and there
+            // is nothing to skip past in a union.
+            None if combine == Combine::All => return Ok(empty(Vec::new(), 0)),
+            None => {}
+        }
+    }
+    if present.is_empty() {
+        return Ok(empty(Vec::new(), 0));
     }
 
-    let mut matched: Vec<u64> = runs[0].1.docs.clone();
-    for (_, postings) in &runs[1..] {
-        matched.retain(|doc| postings.docs.binary_search(doc).is_ok());
+    // Rarest first: a term matching few documents says the most about which
+    // ones, and costs the least to say it.
+    let mut skipped = 0;
+    if let Some(probe) = probe {
+        present.sort_by_key(|(_, entry)| entry.doc_freq);
+        skipped = present.len().saturating_sub(probe);
+        present.truncate(probe);
     }
+
+    let mut runs = Vec::with_capacity(present.len());
+    for (_, entry) in &present {
+        runs.push((*entry, index.postings(entry).await?));
+    }
+    let probed: Vec<(String, u64)> = present
+        .iter()
+        .map(|(term, entry)| (term.clone(), entry.doc_freq))
+        .collect();
+
+    let mut matched: Vec<u64> = match combine {
+        Combine::All => {
+            let mut matched = runs[0].1.docs.clone();
+            for (_, postings) in &runs[1..] {
+                matched.retain(|doc| postings.docs.binary_search(doc).is_ok());
+            }
+            matched
+        }
+        Combine::Any => {
+            let mut all: Vec<u64> = runs
+                .iter()
+                .flat_map(|(_, p)| p.docs.iter().copied())
+                .collect();
+            all.sort_unstable();
+            all.dedup();
+            all
+        }
+    };
     if matched.is_empty() {
-        return Ok(Vec::new());
+        return Ok(empty(probed, skipped));
     }
 
     if phrase {
@@ -146,12 +266,16 @@ async fn rank<R: RangeReader>(
             })
         });
         if matched.is_empty() {
-            return Ok(Vec::new());
+            return Ok(empty(probed, skipped));
         }
     }
 
     let Some(lengths) = index.doc_lengths() else {
-        return Ok(matched.into_iter().map(|doc| (doc, None)).collect());
+        return Ok((
+            matched.into_iter().map(|doc| (doc, None)).collect(),
+            probed,
+            skipped,
+        ));
     };
     let header = index.header();
     let n = header.num_docs as f64;
@@ -166,17 +290,16 @@ async fn rank<R: RangeReader>(
         .into_iter()
         .map(|doc| {
             let dl = lengths.get(doc as usize).copied().unwrap_or(0) as f64;
+            // A union scores over the terms the document actually has, which is
+            // what makes matching more of them rank higher.
             let score: f64 = runs
                 .iter()
-                .map(|(entry, postings)| {
+                .filter_map(|(entry, postings)| {
+                    let at = postings.docs.binary_search(&doc).ok()?;
                     let df = entry.doc_freq as f64;
                     let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
-                    let at = postings
-                        .docs
-                        .binary_search(&doc)
-                        .expect("in the intersection");
                     let tf = postings.freqs[at] as f64;
-                    idf * (tf * (K1 + 1.0)) / (tf + K1 * (1.0 - b + b * dl / avgdl))
+                    Some(idf * (tf * (K1 + 1.0)) / (tf + K1 * (1.0 - b + b * dl / avgdl)))
                 })
                 .sum();
             // A static prior, added in log space. Which prior, and how much of
@@ -196,5 +319,5 @@ async fn rank<R: RangeReader>(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    Ok(scored)
+    Ok((scored, probed, skipped))
 }

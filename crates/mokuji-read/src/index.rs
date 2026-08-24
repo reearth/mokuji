@@ -547,6 +547,39 @@ impl<R: RangeReader> Index<R> {
         find_in_block(&block, term, self.has_positions())
     }
 
+    /// Looks several terms up, at one range read per dictionary block they
+    /// fall in.
+    ///
+    /// Worth having separately from `lookup` because a term entry carries
+    /// `doc_freq`, and a reader that wants to know how expensive a term is
+    /// before paying for its postings has to read the block either way. Terms
+    /// that sort near each other — the n-grams of one word, the geohash cell
+    /// and its parent — share a block and so share the read.
+    pub async fn lookup_many(&self, terms: &[&[u8]]) -> Result<Vec<Option<TermEntry>>> {
+        let index = TermIndex::new(&self.term_index)?;
+        let mut ordinals = Vec::with_capacity(terms.len());
+        for term in terms {
+            ordinals.push(index.locate(term)?);
+        }
+
+        let mut blocks: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        for ordinal in ordinals.iter().flatten() {
+            if !blocks.contains_key(ordinal) {
+                blocks.insert(*ordinal, self.read_term_block(*ordinal).await?);
+            }
+        }
+
+        let mut found = Vec::with_capacity(terms.len());
+        for (term, ordinal) in terms.iter().zip(&ordinals) {
+            found.push(match ordinal {
+                Some(ordinal) => find_in_block(&blocks[ordinal], term, self.has_positions())?,
+                // The term sorts before every block, so no block was read.
+                None => None,
+            });
+        }
+        Ok(found)
+    }
+
     /// The postings a dictionary entry implies by carrying no run.
     ///
     /// `SPEC.md` §5.3.4: the term names exactly one document, whose ID is the

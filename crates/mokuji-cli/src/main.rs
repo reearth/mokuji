@@ -44,9 +44,15 @@ usage:
     mokuji info <file>                  print the header and section table
     mokuji search <file> <term>... [-n <limit>] [--boost <column>]
                                    [--length-norm <0..1>] [--phrase]
+                                   [--any] [--probe <n>]
                                        intersect terms, rank them if the file
                                        carries document lengths, and report the
-                                       cost
+                                       cost. --any takes their union instead,
+                                       which is what an n-gram query wants: a
+                                       misspelling shares every gram but two.
+                                       --probe <n> then fetches postings for
+                                       only the n rarest, which the dictionary
+                                       says without reading any of them
     mokuji prefix <file> <prefix> [-n <limit>] [--resident]
                                        complete a prefix; the query a
                                        hierarchical key such as an address is
@@ -218,6 +224,8 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
     let mut boost: Option<&str> = None;
     let mut length_norm = 0.75;
     let mut phrase = false;
+    let mut combine = search::Combine::All;
+    let mut probe: Option<usize> = None;
     let mut terms: Vec<&str> = Vec::new();
     let mut rest = args;
     while let Some((arg, tail)) = rest.split_first() {
@@ -237,6 +245,8 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
                 }
             }
             "--phrase" => phrase = true,
+            "--any" => combine = search::Combine::Any,
+            "--probe" => probe = Some(take_number(arg, &mut rest)? as usize),
             "--boost" => {
                 let (name, tail) = rest
                     .split_first()
@@ -247,7 +257,28 @@ fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
             other => terms.push(other),
         }
     }
-    search::run(path.as_ref(), &terms, limit, boost, length_norm, phrase)
+    if probe.is_some() && combine == search::Combine::All {
+        return Err(Error::Usage(
+            "--probe needs --any: an intersection needs every term".into(),
+        ));
+    }
+    if probe.is_some() && phrase {
+        return Err(Error::Usage(
+            "--probe cannot be used with --phrase: a phrase needs every term, in order".into(),
+        ));
+    }
+    search::run(
+        path.as_ref(),
+        &terms,
+        &search::Query {
+            limit,
+            boost,
+            length_norm,
+            phrase,
+            combine,
+            probe,
+        },
+    )
 }
 
 fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {
