@@ -201,7 +201,8 @@ header has no floating-point representation to disagree about.
 |---|---|---|
 | 0 | `TERMDICT_MONOLITHIC` | The term dictionary is a single monolithic FST (§5.4.2) rather than the blocked form |
 | 1 | `HAS_PAYLOAD` | A payload section is present |
-| 2-15 | reserved | MUST be zero |
+| 2 | `HAS_FREQS` | Postings runs carry a term frequency per document |
+| 3-15 | reserved | MUST be zero |
 
 ### 5.2 Section table
 
@@ -258,67 +259,184 @@ The FST is order-preserving, so prefix and range queries fall out of the
 structure rather than being added as a feature. This is what makes hierarchical
 keys — addresses, paths, statute numbers — a natural fit.
 
-#### 5.3.1 Term index (`0x0010`)
+#### 5.3.1 Common encodings
 
-An FST mapping the first term of each block to the block ordinal. A lookup for
-term `t` finds the greatest boundary key `<= t`; its value is the ordinal of
-the block that would contain `t`.
+`varint` is LEB128: seven payload bits per byte, least significant group
+first, with the high bit set on every byte but the last. An encoding longer
+than ten bytes, or one whose final byte would overflow a `u64`, MUST be
+rejected.
 
-#### 5.3.2 Term blocks (`0x0011`) and offsets (`0x0012`)
+`front-coded key` is `varint shared_len`, `varint suffix_len`, then `suffix_len`
+bytes. The key is the first `shared_len` bytes of the preceding key followed by
+the suffix. The first key in a run has `shared_len` zero. A `shared_len`
+exceeding the length of the preceding key MUST be rejected.
 
-Terms are sorted by byte value. Each block holds terms sharing a prefix with
-their predecessor, encoded as a shared-prefix length plus a suffix.
+Front-coding is why entries within a block are decoded sequentially rather than
+binary-searched: a key is only meaningful relative to its predecessor. Blocks
+are sized so that this scan stays cheap; the search across blocks, which is the
+part that would grow with the corpus, happens in the resident term index
+instead.
 
-Each entry carries:
+#### 5.3.2 Term index (`0x0010`)
 
-| Field | Description |
+The first term of every block, in order. Resident, and decoded sequentially.
+
+| Field | Encoding |
 |---|---|
-| `shared_len` | Bytes shared with the previous term in the block |
-| `suffix` | Remaining bytes of the term |
-| `term_id` | Dense sequential term ID |
-| `doc_freq` | Number of documents containing the term |
-| `postings_offset` | Absolute offset of this term's postings |
-| `postings_len` | Length in bytes of this term's postings |
+| `block_count` | `u32` |
+| `boundary_key` × `block_count` | front-coded key |
+
+A block ordinal is a position in this list, not a stored value. To locate term
+`t`, find the greatest boundary key less than or equal to `t`; its position is
+the ordinal of the only block that can contain `t`. If `t` precedes the first
+boundary key, `t` is absent.
+
+Keys MUST be strictly increasing. A reader MUST reject a term index that is not,
+since the search above would otherwise silently return the wrong block.
+
+#### 5.3.3 Term block offsets (`0x0012`)
+
+`block_count + 1` values of `u64`, absolute offsets, strictly increasing. Block
+`i` occupies `offsets[i]..offsets[i + 1]`. Resident.
+
+Storing one boundary per block rather than an offset and a length halves the
+section and makes the blocks provably contiguous and non-overlapping.
+
+#### 5.3.4 Term blocks (`0x0011`)
+
+One block is one range read. Its layout:
+
+| Field | Encoding |
+|---|---|
+| `entry_count` | `varint` |
+| `first_term_id` | `varint` |
+| entries × `entry_count` | below |
+
+Each entry:
+
+| Field | Encoding |
+|---|---|
+| `term` | front-coded key, relative to the previous entry in this block |
+| `doc_freq` | `varint`, number of documents containing the term |
+| `postings_offset` | `varint`; first entry absolute, later entries the delta from the previous entry's offset |
+| `postings_len` | `varint` |
+
+The term ID of entry `j` is `first_term_id + j`. It is not stored per entry:
+IDs are dense and assigned in term order, so position carries them. This is the
+monotonic ID rule (§3.2) in its concrete form — the dictionary holds terms,
+lengths, and locations, and nothing that varies independently of term order.
 
 The entry carries the postings location **directly**. There is deliberately no
-separate term-ID-to-postings-offset table, because consulting one would cost an
-extra range read per term and break the bound in §4.
+term-ID-to-postings-offset table, because consulting one would cost an extra
+range read per term and break the bound in §4. Postings runs are written in
+term order, so the offset deltas are small and positive.
 
-Section `0x0012` maps block ordinal to `(offset, length)` and is part of the
-resident set.
+Terms MUST be strictly increasing across the whole dictionary, blocks MUST
+partition the terms in order, and the first term of block `i` MUST equal
+boundary key `i`.
 
-#### 5.3.3 Monolithic mode
+#### 5.3.5 Monolithic mode
 
-When `TERMDICT_MONOLITHIC` is set, section `0x0010` holds a single FST over all
-terms and sections `0x0011` and `0x0012` are absent. This mode is intended for
-local memory-mapped use, where a seek is free and zero-copy traversal is worth
-more than a bounded fetch count. **A file in this mode does not satisfy §4** and
-MUST NOT be published as a range-read target.
+When `TERMDICT_MONOLITHIC` is set, section `0x0010` holds a single finite state
+transducer over all terms, and sections `0x0011` and `0x0012` are absent. The
+transducer encoding is not defined in this version.
+
+This mode is for local memory-mapped use, where a seek is free and zero-copy
+traversal is worth more than a bounded fetch count. **A file in this mode does
+not satisfy §4** and MUST NOT be published as a range-read target.
 
 ### 5.4 Postings (`0x0020`)
 
-The postings for one term are a self-contained run of bytes beginning with a
-one-byte codec identifier.
+The postings for one term are a self-contained run, located by its dictionary
+entry and beginning with a one-byte codec identifier.
 
 | Codec | Name | Status |
 |---|---|---|
-| `0` | delta plus bit-packing | REQUIRED |
+| `0` | delta with bit-packing | REQUIRED |
 | `1` | roaring bitmap | OPTIONAL |
 
-Every reader MUST implement codec `0`. Placing the identifier in the run,
-rather than fixing a single codec for the whole format, allows dense term
-postings to use a bitmap without requiring every reader to carry that code.
+Every reader MUST implement codec `0`. Carrying the identifier in the run,
+rather than fixing one codec for the file, lets a dense term use a bitmap
+without requiring every reader to implement one.
 
-Document IDs within a run are strictly increasing. A run stores document IDs
-and, when term frequencies are present, one frequency per document.
+#### 5.4.1 Bit-packed groups
+
+A sequence of `n` values is encoded as `ceil(n / 128)` groups of up to 128
+values. Each group is:
+
+| Field | Encoding |
+|---|---|
+| `bit_width` | `u8`, 0 to 64 |
+| `packed` | `ceil(group_len * bit_width / 8)` bytes |
+
+Values are packed least significant bit first: value `j` of the group occupies
+bits `j * bit_width` to `(j + 1) * bit_width` of the group's bit stream, where
+bit `i` is bit `i mod 8` of byte `i / 8`. Padding bits in the final byte MUST be
+zero.
+
+`bit_width` MUST be the smallest width that represents every value in the
+group. A width of zero encodes a group whose values are all zero and occupies
+no bytes at all — the common case for a run of consecutive document IDs, and
+the reason the widths are chosen per group rather than per run.
+
+Requiring the minimal width, rather than merely permitting it, is what makes
+the encoding canonical, which is what lets §3.4 require byte-identical rebuilds.
+
+#### 5.4.2 Codec 0
+
+| Field | Encoding |
+|---|---|
+| `codec` | `u8`, value 0 |
+| `doc_count` | `varint` |
+| document values | bit-packed groups, `doc_count` values |
+| frequency values | bit-packed groups, `doc_count` values; present only if `HAS_FREQS` |
+
+Document IDs are strictly increasing. The encoded values are the first document
+ID, then `doc_id[i] - doc_id[i - 1] - 1` for each subsequent document. Gaps are
+reduced by one because the difference is at least one, which turns a run of
+consecutive documents into a run of zeros and hence into a group of width zero.
+
+Frequency values are `frequency - 1`, for the same reason: a term that appears
+once in every document it occurs in — the ordinary case for an address index —
+packs to nothing.
+
+A reader MUST reject a run whose decoded document IDs are not strictly
+increasing or exceed `num_docs`.
 
 ### 5.5 Payload (`0x0030`, `0x0031`)
 
-Payload is stored in document ID order and compressed per block, so that
-documents that are adjacent in ID order are retrieved together. Section
-`0x0031` maps a document ID to its block and its index within that block.
+Payload is an opaque byte string per document. **Its contents are outside this
+specification**; only the framing is defined. An address index stores
+coordinates, a document index stores a title and a URL, and the format does not
+need to know which.
 
-Payload is where general-purpose compression pays for itself: coordinates
+Payload is stored in document ID order and grouped into fixed-size blocks, so
+that documents adjacent in ID order are retrieved together. This is what makes
+the `m'` term of §4 smaller than the number of results.
+
+#### 5.5.1 Payload offsets (`0x0031`)
+
+| Field | Encoding |
+|---|---|
+| `docs_per_block` | `u32`, non-zero |
+| `block_count` | `u32` |
+| `offsets` | `u64` × (`block_count` + 1), absolute, strictly increasing |
+
+Document `d` lives in block `d / docs_per_block` at index `d mod docs_per_block`.
+A fixed block size means the mapping is arithmetic rather than a lookup, so this
+section stays resident even for a large corpus.
+
+#### 5.5.2 Payload blocks (`0x0030`)
+
+| Field | Encoding |
+|---|---|
+| `entry_count` | `varint` |
+| entries × `entry_count` | `varint len`, then `len` bytes |
+
+Entries are in document ID order starting at `block_ordinal * docs_per_block`.
+The final block MAY hold fewer than `docs_per_block` entries.
+
+Payload is where general-purpose compression earns its place: coordinates
 delta-encoded against their block predecessor compress extremely well, whereas
 the term dictionary is already small for structural reasons and gains little.
 
@@ -341,7 +459,7 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 |---|---|---|---|
 | `generation` | uint | yes | Monotonic generation number |
 | `source` | array | yes | One entry per source of truth |
-| `source[].content_hash` | text | yes | Multihash of the source content |
+| `source[].content_hash` | text | yes | `<algorithm>:<lowercase hex>`; `algorithm` is `sha2-256` in this version |
 | `source[].uri` | text | no | Where the source can be obtained |
 | `generator.name` | text | yes | Writer implementation |
 | `generator.version` | text | yes | Writer version |
@@ -403,8 +521,107 @@ a second source of truth for the same information.
 Address lookup does not need phrase queries. Section `0x0060` is reserved so
 that adding them later is not a breaking change.
 
+**The required term index encoding is a front-coded key list, not an FST.**
+Once the dictionary is blocked, the index holds only block boundary keys —
+a small fraction of the terms — so the size advantage of a transducer over a
+front-coded list is worth little, while specifying a transducer byte-for-byte
+is worth a great deal of specification. A format that criticises others for
+letting an implementation stand in for a specification cannot then defer its
+own central structure to one. The transducer remains available under
+`TERMDICT_MONOLITHIC` and may be added later as an alternative index encoding.
+The property that motivated it, order preservation, comes from the dictionary
+being sorted and is unaffected.
+
+**Minimal bit widths are required, not merely permitted.**
+Determinism (§3.4) needs exactly one valid encoding of a given input. A codec
+that allows a wider-than-necessary field would allow two files to be equally
+valid and differently shaped, which would make a byte-identical rebuild
+unverifiable.
+
+**Payload contents are outside the specification.**
+The format frames payload and locates it; what is in it is an application's
+business. Specifying a coordinate encoding would tie a general format to one
+use, and the compression argument for grouping payload by document ID holds
+regardless of what the bytes mean.
+
 **The term dictionary is blocked rather than a single FST.**
 See §5.3. A monolithic FST cannot satisfy the I/O bound over a range-read
 transport, and the I/O bound is the point of the format. The FST remains, one
 level up, as the index over block boundaries, which preserves the ordering
 properties that motivated it.
+
+## Appendix B. A worked example
+
+`conformance/fixtures/tiny.colex` is 745 bytes and indexes four documents:
+
+```
+tokyo chiyoda    35.694,139.754
+tokyo chuo       35.671,139.772
+tokyo shibuya    35.664,139.698
+osaka chuo       34.681,135.513
+```
+
+Its full annotated hex dump is in `conformance/fixtures/tiny.hex`. What
+follows walks one query through it, `chuo`, using nothing but §5.
+
+**Header**, at offset 0:
+
+```
+00000000  43 4f 4c 45 58 76 30 30 00 01 06 00 07 00 00 00  |COLEXv00........|
+00000010  04 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00  |................|
+00000020  40 00 00 00 00 00 00 00 a8 00 00 00 00 00 00 00  |@...............|
+```
+
+Magic `COLEXv00`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
+`HAS_FREQS`; seven sections; four documents totalling eight tokens; the section
+table is 0xa8 bytes at offset 0x40.
+
+**Term index** (`0x0010`), at offset 509:
+
+```
+000001fd  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
+0000020d  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
+```
+
+Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
+with `shared_len` zero because they share no prefix. The greatest key not
+exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
+
+**Term block offsets** (`0x0012`), at 536: block 0 spans `0x258..0x26e`.
+
+**Term block 0**, at 600, 22 bytes:
+
+```
+00000258  02 00 00 07 63 68 69 79 6f 64 61 01 94 05 04 02  |....chiyoda.....|
+00000268  02 75 6f 02 04 05                                |.uo...|
+```
+
+Two entries, first term ID 0.
+
+Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1; postings
+offset `94 05`, the first entry so absolute — 0x14 plus 5 shifted by seven is
+660; `postings_len` 4.
+
+Entry 1: `shared_len` 2, `suffix_len` 2, `uo` — the term is `ch` + `uo`, which
+is the front-coding paying for itself on a two-term block; `doc_freq` 2;
+postings offset delta 4, so 664; `postings_len` 5. Its term ID is 0 + 1 = 1,
+carried by position rather than stored.
+
+**Postings** for `chuo`, at 664, 5 bytes:
+
+```
+00000298  00 02 01 03 00                                   |.....|
+```
+
+Codec 0; two documents. The document group has `bit_width` 1 and one byte,
+`0x03`, which is the bits `1, 1`. The first value is a document ID and the rest
+are gaps less one, so the documents are 1 and 1 + 1 + 1 = 3. The frequency
+group has `bit_width` 0 and therefore no bytes at all: every frequency is 1,
+stored as 0.
+
+Five bytes for a two-document posting list with frequencies, and the
+frequencies were free.
+
+**Cost.** One term block read, one postings read, and one payload read per
+distinct payload block. For `tokyo AND chuo`, which matches document 1: four
+reads plus one, against a bound of `2k + m` = 5.
