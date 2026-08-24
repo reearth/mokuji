@@ -7,7 +7,6 @@ members = [
     "crates/colex-read",
     "crates/colex-write",
     "crates/colex-cli",
-    "crates/colex-wasm",
 ]
 
 [workspace.package]

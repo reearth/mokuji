@@ -57,7 +57,6 @@ The reference implementation, in Rust.
 | `colex-write` | Deterministic writer |
 | `colex-meta` | The metadata section, and the canonical CBOR it is written in |
 | `colex-cli` | The `colex` command |
-| `colex-wasm` | Browser bindings over `fetch` with `Range` |
 
 The crate boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
