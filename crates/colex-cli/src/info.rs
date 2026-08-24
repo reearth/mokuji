@@ -13,6 +13,8 @@ pub enum Error {
     Io(std::io::Error),
     /// The file is not a valid COLex file.
     Format(colex_format::Error),
+    /// A search was asked for with no terms.
+    NoTerms,
 }
 
 impl fmt::Display for Error {
@@ -20,6 +22,7 @@ impl fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "{e}"),
             Error::Format(e) => write!(f, "{e}"),
+            Error::NoTerms => write!(f, "search needs at least one term"),
         }
     }
 }

@@ -7,12 +7,14 @@
 use std::process::ExitCode;
 
 mod info;
+mod search;
 
 const USAGE: &str = "\
 colex - a cloud-optimized concordance format
 
 usage:
-    colex info <file>     print the header and section table
+    colex info <file>            print the header and section table
+    colex search <file> <term>...  intersect terms and report the cost
     colex --version       print the version
     colex --help          print this message
 ";
@@ -31,6 +33,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         ["info", path] => info::run(path.as_ref()),
+        ["search", path, terms @ ..] => search::run(path.as_ref(), terms),
         [cmd, ..] => {
             eprintln!("colex: unknown command '{cmd}'\n");
             eprint!("{USAGE}");
