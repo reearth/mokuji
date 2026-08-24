@@ -205,3 +205,29 @@ fn a_prefix_range_reads_its_postings_in_one_request() {
     assert_eq!(postings[0].docs, [0]);
     assert_eq!(postings[1].docs, [1, 3]);
 }
+
+#[test]
+fn the_document_lengths_are_the_ones_the_fixture_recorded() {
+    let index = block_on(Index::open(SliceReader::new(load("tiny")))).unwrap();
+
+    // Written by the Python implementation, read by this one. Every document in
+    // the fixture is two tokens long.
+    assert_eq!(index.doc_lengths(), Some([2u64, 2, 2, 2].as_slice()));
+    assert_eq!(index.doc_length(3), Some(2));
+    assert_eq!(index.doc_length(4), None);
+
+    // And they agree with the header, which carries only the total.
+    let header = index.header();
+    assert_eq!(
+        header.sum_doclen,
+        index.doc_lengths().unwrap().iter().sum::<u64>()
+    );
+}
+
+#[test]
+fn an_index_without_lengths_says_so() {
+    // A dictionary index has nothing to normalize, so it does not carry them.
+    let index = block_on(Index::open(SliceReader::new(load("dict")))).unwrap();
+    assert_eq!(index.doc_lengths(), None);
+    assert_eq!(index.doc_length(0), None);
+}

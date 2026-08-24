@@ -305,6 +305,7 @@ Section IDs:
 | `0x0020` | Postings | yes |
 | `0x0030` | Payload | if `HAS_PAYLOAD` |
 | `0x0031` | Payload offsets | if `HAS_PAYLOAD` |
+| `0x0032` | Document lengths | no |
 | `0x0040` | Shared zstd dictionary | if any `codec` is 2 |
 | `0x0050` | Term pair cache | reserved, not defined in this version |
 | `0x0060` | Positions | reserved, not defined in this version |
@@ -644,6 +645,37 @@ decompression, so a dictionary codec requires a decompressor in the page no
 matter which algorithm it uses, and that trade is worth making deliberately
 rather than by default.
 
+### 5.7 Document lengths (`0x0032`)
+
+Optional. The length in tokens of every document, in document ID order, as
+bit-packed groups (§5.4.1) of exactly `num_docs` values. No header: the count
+comes from the header, and the section is either present in full or absent.
+
+The section is read whole, or not at all. A scorer wants the lengths of every
+candidate document at once and its candidates are scattered, so fetching them
+one at a time would cost more reads than holding them all costs bytes.
+Measured on 2,523 documents it is 1.7 bytes a document.
+
+Its presence is the signal that it is available; there is no flag, because
+nothing else in the file depends on it.
+
+#### Why the format carries this and not the score
+
+Scoring is outside the specification (§1) because which model is right is a
+property of the corpus. What is *not* corpus-dependent is which statistics any
+of those models need, and the header alone does not carry them: it gives the
+document count and the token total, which yield the mean document length but
+not the length of the document actually being scored. BM25 normalizes by that
+length per document, and so does almost everything else worth using.
+
+Without it a reader cannot rank, and without ranking it cannot ask for the best
+ten — so it fetches the payload of every match. Measured on an index of 2,523
+documents, adding the section cost 4,359 bytes and took a three-term query from
+39 range reads to 6.
+
+That is the line the format draws: it supplies what a scorer needs and has no
+opinion about the scorer.
+
 ## 6. Metadata (`0x0001`)
 
 Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
@@ -797,6 +829,15 @@ resolve a term without touching payload; nothing there asks two identifier
 spaces never to agree, and a reader that does not implement the case still
 reads every other index correctly.
 
+**The format carries document lengths but not scores.**
+Scoring is outside the specification because the model is corpus-dependent.
+Which statistics the models need is not corpus-dependent, and the header was
+short one: it gave the mean document length but not each document's own, which
+is what BM25 normalizes by. A reader that cannot rank cannot ask for the best
+ten, so it pays for every match — measured, 39 range reads where 6 would do.
+Supplying the statistic while declining to supply the score is where the line
+belongs; it had simply been drawn one field too early.
+
 **Deflate is the required codec, not zstd.**
 Measured, the two are within noise on the term dictionary and 1.4x apart on
 payload, while a shared dictionary is worth 3.4x to either. Since the algorithm
@@ -853,7 +894,7 @@ properties that motivated it.
 
 ## Appendix B. A worked example
 
-`conformance/fixtures/tiny.mokuji` is 764 bytes and indexes four documents:
+`conformance/fixtures/tiny.mokuji` is 803 bytes and indexes four documents:
 
 ```
 tokyo chiyoda    35.694,139.754
@@ -880,31 +921,31 @@ Magic `MOKUJIv0`; version 0.1; flags `0x0006`, so `HAS_PAYLOAD` and
 `HAS_FREQS`; seven sections; four documents totalling eight tokens; the section
 table is 0xa8 bytes at offset 0x40.
 
-**Term index** (`0x0010`), at offset 528:
+**Term index** (`0x0010`), at offset 565:
 
 ```
-00000210  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
-00000220  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
+00000235  03 00 00 00 00 07 63 68 69 79 6f 64 61 00 05 6f  |......chiyoda..o|
+00000245  73 61 6b 61 00 05 74 6f 6b 79 6f                 |saka..tokyo|
 ```
 
 Three blocks, then three front-coded keys: `chiyoda`, `osaka`, `tokyo`, each
 with `shared_len` zero because they share no prefix. The greatest key not
 exceeding `chuo` is `chiyoda`, so block 0 is the only block that can hold it.
 
-**Term block offsets** (`0x0012`), at 555: block 0 spans `0x282..0x298`.
+**Term block offsets** (`0x0012`), at 592: block 0 spans `0x2a9..0x2bf`.
 
-**Term block 0**, at 642, 22 bytes:
+**Term block 0**, at 681, 22 bytes:
 
 ```
-00000282  02 00 00 07 63 68 69 79 6f 64 61 01 ef 04 00 02  |....chiyoda.....|
-00000292  02 75 6f 02 00 05                                |.uo...|
+000002a9  02 00 00 07 63 68 69 79 6f 64 61 01 96 05 00 02  |....chiyoda.....|
+000002b9  02 75 6f 02 00 05                                |.uo...|
 ```
 
 Two entries, first term ID 0.
 
 Entry 0: `shared_len` 0, `suffix_len` 7, `chiyoda`; `doc_freq` 1;
-`postings_offset` `ef 04`, the first entry so absolute — 0x6f plus 4 shifted by
-seven is 623; and `postings_len` **0**. The length is what matters: this term's
+`postings_offset` `96 05`, the first entry so absolute — 0x16 plus 5 shifted by
+seven is 662; and `postings_len` **0**. The length is what matters: this term's
 postings are implied (§5.3.4). It occurs in exactly one document, document 0,
 because its own term ID is 0. Nothing is stored and nothing is read.
 
@@ -914,10 +955,10 @@ is the front-coding paying for itself on a two-term block; `doc_freq` 2;
 604 again; `postings_len` 5. Its term ID is 0 + 1 = 1, carried by position
 rather than stored.
 
-**Postings** for `chuo`, at 627, 5 bytes:
+**Postings** for `chuo`, at 666, 5 bytes:
 
 ```
-00000273  00 02 01 03 00                                   |.....|
+0000029a  00 02 01 03 00                                   |.....|
 ```
 
 Codec 0; two documents. The document group has `bit_width` 1 and one byte,
@@ -929,14 +970,24 @@ stored as 0.
 Five bytes for a two-document posting list with frequencies, and the
 frequencies were free.
 
-**Payload offsets** (`0x0031`), at 587:
+**Payload offsets** (`0x0031`), at 624:
 
 ```
-0000024b  00 00 00 00 02 00 00 00 02 00 00 00 be 02 00 00  |................|
+00000270  00 00 00 00 02 00 00 00 02 00 00 00 e5 02 00 00  |................|
 ```
 
 Payload codec 0, opaque, so no value count and no scale; two documents to a
 block; two blocks; then the offsets. Document 1 is at index 1 of block 0.
+
+**Document lengths** (`0x0032`), at 660, two bytes:
+
+```
+00000294  02 aa                                            |..|
+```
+
+One bit-packed group of four values at `bit_width` 2, then one byte holding
+them least significant bit first: `0xaa` is `10 10 10 10`, so every document is
+two tokens long. Four documents, two bytes, and a scorer can normalize.
 
 **Cost.** One term block read, one postings read, and one payload read per
 distinct payload block. For `tokyo AND chuo`, which matches document 1: four

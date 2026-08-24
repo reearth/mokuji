@@ -26,15 +26,21 @@ fn corpus_strategy() -> impl Strategy<Value = Vec<Vec<usize>>> {
 }
 
 fn options_strategy() -> impl Strategy<Value = Options> {
-    (1..6usize, 1..6u32, any::<bool>(), any::<bool>()).prop_map(
-        |(terms, docs, has_freqs, compress)| Options {
+    (
+        1..6usize,
+        1..6u32,
+        any::<bool>(),
+        any::<bool>(),
+        any::<bool>(),
+    )
+        .prop_map(|(terms, docs, has_freqs, doc_lengths, compress)| Options {
             terms_per_block: terms,
             docs_per_payload_block: docs,
             has_freqs,
             payload: mokuji_write::PayloadEncoding::Opaque,
+            doc_lengths,
             compress,
-        },
-    )
+        })
 }
 
 /// Builds the index and the answer it is supposed to give.
@@ -158,5 +164,35 @@ proptest! {
         options in options_strategy(),
     ) {
         prop_assert_eq!(build(&corpus, options).0, build(&corpus, options).0);
+    }
+}
+
+proptest! {
+    #[test]
+    fn document_lengths_read_back_as_the_token_counts_they_were(
+        corpus in corpus_strategy(),
+        options in options_strategy(),
+    ) {
+        let options = Options { doc_lengths: true, ..options };
+        let (bytes, expected) = build(&corpus, options);
+        let index = block_on(Index::open(SliceReader::new(bytes))).unwrap();
+
+        let lengths = index.doc_lengths().expect("stored");
+        prop_assert_eq!(lengths.len(), corpus.len());
+        for (doc, tokens) in corpus.iter().enumerate() {
+            prop_assert_eq!(lengths[doc], tokens.len() as u64, "document {}", doc);
+        }
+        // The header's total is the sum, which is what makes the mean usable.
+        prop_assert_eq!(index.header().sum_doclen, lengths.iter().sum::<u64>());
+
+        // And a term's frequency in a document never exceeds that document's
+        // length, which is the invariant a scorer relies on.
+        for term in expected.keys() {
+            let entry = block_on(index.lookup(term.as_bytes())).unwrap().unwrap();
+            let postings = block_on(index.postings(&entry)).unwrap();
+            for (doc, freq) in postings.docs.iter().zip(&postings.freqs) {
+                prop_assert!(*freq <= lengths[*doc as usize]);
+            }
+        }
     }
 }

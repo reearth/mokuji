@@ -34,6 +34,14 @@ pub struct Options {
     /// Not what it means — see `SPEC.md` §5.5. The format states the encoding
     /// and has no opinion about the subject.
     pub payload: PayloadEncoding,
+    /// Whether to store the length in tokens of every document.
+    ///
+    /// What BM25 needs and the header cannot give: the header carries the
+    /// document count and the token total, which is enough for the mean but
+    /// not for the per-document normalization. Costs about two bytes a
+    /// document and is worth nothing to an index whose documents are all one
+    /// term long.
+    pub doc_lengths: bool,
     /// Whether to compress the sections that can be compressed.
     ///
     /// Each addressed unit is compressed on its own, so a reader still fetches
@@ -50,6 +58,7 @@ impl Default for Options {
             docs_per_payload_block: 64,
             has_freqs: true,
             payload: PayloadEncoding::Opaque,
+            doc_lengths: false,
             compress: true,
         }
     }
@@ -86,6 +95,7 @@ pub struct Builder {
     payloads: Vec<Vec<u8>>,
     values: Vec<Vec<i64>>,
     sum_doclen: u64,
+    doc_lengths: Vec<u64>,
     terms: Vec<Term>,
     open: Option<OpenTerm>,
 }
@@ -117,6 +127,7 @@ impl Builder {
             payloads: Vec::new(),
             values: Vec::new(),
             sum_doclen: 0,
+            doc_lengths: Vec::new(),
             terms: Vec::new(),
             open: None,
         })
@@ -198,6 +209,13 @@ impl Builder {
             }
         }
         self.sum_doclen += freq;
+        if self.options.doc_lengths {
+            let doc = doc as usize;
+            if self.doc_lengths.len() <= doc {
+                self.doc_lengths.resize(doc + 1, 0);
+            }
+            self.doc_lengths[doc] += freq;
+        }
         Ok(())
     }
 
@@ -274,15 +292,32 @@ impl Builder {
         // which moves the offset again. Ordering the file to make it writable
         // in one pass is cheaper than iterating toward a layout that may not
         // settle.
-        let order = [
+        // Lengths are read whole or not at all — scoring touches many
+        // documents at once — so the section sits with the resident ones.
+        let doc_lengths = if self.options.doc_lengths {
+            let mut lengths = self.doc_lengths.clone();
+            lengths.resize(self.documents() as usize, 0);
+            let mut out = Vec::new();
+            bitpack::encode(&lengths, &mut out);
+            Some(out)
+        } else {
+            None
+        };
+
+        let mut order = vec![
             SectionId::META,
             SectionId::TERM_INDEX,
             SectionId::TERM_BLOCK_OFFSETS,
             SectionId::PAYLOAD_OFFSETS,
+        ];
+        if doc_lengths.is_some() {
+            order.push(SectionId::DOC_LENGTHS);
+        }
+        order.extend([
             SectionId::POSTINGS,
             SectionId::TERM_BLOCKS,
             SectionId::PAYLOAD,
-        ];
+        ]);
         let table_len = SECTION_ENTRY_LEN * order.len();
 
         let postings_len: u64 = self.terms.iter().map(|t| t.run.len() as u64).sum();
@@ -291,18 +326,22 @@ impl Builder {
             + term_index.len() as u64
             + 8 * (term_chunks.len() as u64 + 1)
             + 12
-            + 8 * (payload_blocks.len() as u64 + 1);
+            + 8 * (payload_blocks.len() as u64 + 1)
+            + doc_lengths.as_ref().map_or(0, |d| d.len() as u64);
 
         let (blocks, term_blocks_codec) = self.pack(self.term_blocks(&term_chunks, postings_at))?;
 
         let mut placed = Vec::new();
         let mut cursor = (HEADER_LEN + table_len) as u64;
-        for id in order {
+        for id in order.iter().copied() {
             let length = match id {
                 SectionId::META => meta.len() as u64,
                 SectionId::TERM_INDEX => term_index.len() as u64,
                 SectionId::TERM_BLOCK_OFFSETS => 8 * (term_chunks.len() as u64 + 1),
                 SectionId::PAYLOAD_OFFSETS => 12 + 8 * (payload_blocks.len() as u64 + 1),
+                SectionId::DOC_LENGTHS => {
+                    doc_lengths.as_ref().expect("present when ordered").len() as u64
+                }
                 SectionId::POSTINGS => postings_len,
                 SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
                 SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
@@ -381,13 +420,16 @@ impl Builder {
             );
         }
 
-        for id in order {
+        for id in order.iter().copied() {
             debug_assert_eq!(out.len() as u64, at(id).0);
             match id {
                 SectionId::META => out.extend_from_slice(meta),
                 SectionId::TERM_INDEX => out.extend_from_slice(&term_index),
                 SectionId::TERM_BLOCK_OFFSETS => out.extend_from_slice(&term_block_offsets),
                 SectionId::PAYLOAD_OFFSETS => out.extend_from_slice(&payload_offsets),
+                SectionId::DOC_LENGTHS => {
+                    out.extend_from_slice(doc_lengths.as_ref().expect("present when ordered"))
+                }
                 SectionId::TERM_BLOCKS => blocks.iter().for_each(|b| out.extend_from_slice(b)),
                 SectionId::POSTINGS => self
                     .terms

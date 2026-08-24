@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use mokuji_codec::{block, varint};
+use mokuji_codec::{bitpack, block, varint};
 use mokuji_format::{
     parse_section_table, unzigzag, Error, Flags, Header, PayloadCodec, Result, SectionCodec,
     SectionEntry, SectionId,
@@ -156,6 +156,7 @@ pub struct Index<R> {
     term_index: Vec<u8>,
     term_block_offsets: Vec<u8>,
     payload_offsets: Vec<u8>,
+    doc_lengths: Option<Vec<u64>>,
     term_blocks_codec: SectionCodec,
     payload_codec: SectionCodec,
     /// The whole term blocks section, if it is being held rather than fetched.
@@ -238,6 +239,29 @@ impl<R: RangeReader> Index<R> {
                 detail: "the postings section must be stored raw",
             });
         }
+        // Optional, and read whole: scoring wants many documents' lengths at
+        // once, so fetching them one at a time would cost more than holding
+        // them all.
+        let doc_lengths = match sections.iter().find(|s| s.id == SectionId::DOC_LENGTHS) {
+            Some(section) => {
+                let bytes = decode_unit(
+                    section.codec,
+                    fetch(&reader, &head, section.offset, section.length).await?,
+                )?;
+                let count = usize::try_from(header.num_docs).map_err(|_| Error::Malformed {
+                    detail: "document count overflows",
+                })?;
+                let (values, pos) = bitpack::decode(&bytes, 0, count)?;
+                if pos != bytes.len() {
+                    return Err(Error::Malformed {
+                        detail: "trailing bytes in the document lengths section",
+                    });
+                }
+                Some(values)
+            }
+            None => None,
+        };
+
         let term_blocks_codec = find(&sections, SectionId::TERM_BLOCKS)?.codec;
         let payload_codec = if header.flags.contains(Flags::HAS_PAYLOAD) {
             find(&sections, SectionId::PAYLOAD)?.codec
@@ -275,6 +299,7 @@ impl<R: RangeReader> Index<R> {
             term_blocks_codec,
             payload_codec,
             term_blocks,
+            doc_lengths,
             sections,
             reader,
         })
@@ -288,6 +313,22 @@ impl<R: RangeReader> Index<R> {
     /// The section table.
     pub fn sections(&self) -> &[SectionEntry] {
         &self.sections
+    }
+
+    /// The length in tokens of every document, if the file carries them.
+    ///
+    /// `SPEC.md` §5.7. The header gives the count and the total, which is
+    /// enough for the mean; this is what a scorer needs to normalize by the
+    /// length of the document actually in front of it.
+    pub fn doc_lengths(&self) -> Option<&[u64]> {
+        self.doc_lengths.as_deref()
+    }
+
+    /// The length in tokens of one document.
+    pub fn doc_length(&self, doc: u64) -> Option<u64> {
+        self.doc_lengths
+            .as_ref()
+            .and_then(|lengths| lengths.get(doc as usize).copied())
     }
 
     /// The metadata section, as canonical CBOR.

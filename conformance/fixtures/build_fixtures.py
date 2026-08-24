@@ -36,6 +36,7 @@ SEC_TERM_BLOCK_OFFSETS = 0x0012
 SEC_POSTINGS = 0x0020
 SEC_PAYLOAD = 0x0030
 SEC_PAYLOAD_OFFSETS = 0x0031
+SEC_DOC_LENGTHS = 0x0032
 
 # Small enough that every structure in the format appears more than once, which
 # is what makes a fixture worth having: a single-block dictionary would never
@@ -263,7 +264,7 @@ def chunk(items, size):
 
 
 def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
-          tokenizer_id="space-split"):
+          tokenizer_id="space-split", doc_lengths=False):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, whole)
     terms = list(index)
@@ -275,6 +276,12 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         for group in chunk(documents, DOCS_PER_PAYLOAD_BLOCK)
     ]
     values_per_doc = 0 if decimals is None else len(documents[0][1].split(","))
+
+    # The length in tokens of each document, which is what a scorer needs and
+    # the header cannot give (SPEC.md 5.7).
+    lengths = None
+    if doc_lengths:
+        lengths = pack_values([len(tokenize(t, whole)) for t, _ in documents])
 
     term_index = bytearray(len(term_chunks).to_bytes(4, "little"))
     previous = b""
@@ -300,6 +307,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
                     "terms_per_block": TERMS_PER_BLOCK,
                     "docs_per_payload_block": DOCS_PER_PAYLOAD_BLOCK,
                     "payload": "opaque" if decimals is None else f"ints:{decimals}",
+                    "doc_lengths": 1 if doc_lengths else 0,
                 },
             },
             "tokenizer": {"id": tokenizer_id, "params": {}},
@@ -315,10 +323,10 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         SEC_TERM_INDEX,
         SEC_TERM_BLOCK_OFFSETS,
         SEC_PAYLOAD_OFFSETS,
-        SEC_POSTINGS,
-        SEC_TERM_BLOCKS,
-        SEC_PAYLOAD,
     ]
+    if lengths is not None:
+        order.append(SEC_DOC_LENGTHS)
+    order += [SEC_POSTINGS, SEC_TERM_BLOCKS, SEC_PAYLOAD]
     head = HEADER_LEN + SECTION_ENTRY_LEN * len(order)
     postings_at = (
         head
@@ -327,6 +335,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         + 8 * (len(term_chunks) + 1)
         + 12
         + 8 * (len(payload_blocks) + 1)
+        + (len(lengths) if lengths is not None else 0)
     )
 
     offsets, cursor = {}, postings_at
@@ -342,6 +351,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
 
     sizes = {
         SEC_META: len(meta),
+        **({SEC_DOC_LENGTHS: len(lengths)} if lengths is not None else {}),
         SEC_TERM_INDEX: len(term_index),
         SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
         SEC_PAYLOAD_OFFSETS: 12 + 8 * (len(payload_blocks) + 1),
@@ -378,6 +388,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
 
     bodies = {
         SEC_META: meta,
+        **({SEC_DOC_LENGTHS: lengths} if lengths is not None else {}),
         SEC_TERM_INDEX: term_index,
         SEC_TERM_BLOCK_OFFSETS: term_block_offsets,
         SEC_PAYLOAD_OFFSETS: payload_offsets,
@@ -436,6 +447,7 @@ def section_name(sid):
         SEC_POSTINGS: "postings",
         SEC_PAYLOAD: "payload",
         SEC_PAYLOAD_OFFSETS: "payload offsets",
+        SEC_DOC_LENGTHS: "document lengths",
     }[sid]
 
 
@@ -638,6 +650,7 @@ FIXTURES = [
         "whole": False,
         "decimals": None,
         "tokenizer_id": "space-split",
+        "doc_lengths": True,
         # query, expected result, expected reads
         "cases": [
             (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
@@ -693,6 +706,7 @@ def main():
             decimals=spec["decimals"],
             corpus_name=corpus_name,
             tokenizer_id=spec["tokenizer_id"],
+            doc_lengths=spec.get("doc_lengths", False),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

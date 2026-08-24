@@ -55,7 +55,19 @@ fn builds_an_index_that_can_be_searched() {
 
     let output = mokuji(&["search", index.to_str().unwrap(), "tokyo", "chuo"]);
     assert!(output.status.success());
-    assert_eq!(stdout(&output).trim(), "1\t35.671,139.772");
+
+    // Document, score, payload: the index carries document lengths, so the
+    // sample scorer ranks rather than returning them in document order.
+    let line = stdout(&output);
+    let fields: Vec<&str> = line.trim().split('\t').collect();
+    assert_eq!(fields.len(), 3, "got {line:?}");
+    assert_eq!(fields[0], "1");
+    assert!(
+        fields[1].parse::<f64>().is_ok(),
+        "score was {:?}",
+        fields[1]
+    );
+    assert_eq!(fields[2], "35.671,139.772");
 }
 
 #[test]

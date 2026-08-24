@@ -28,7 +28,10 @@ usage:
 
     mokuji dump <file>                  write the index back out as a corpus
     mokuji info <file>                  print the header and section table
-    mokuji search <file> <term>...      intersect terms and report the cost
+    mokuji search <file> <term>... [-n <limit>]
+                                       intersect terms, rank them if the file
+                                       carries document lengths, and report the
+                                       cost
     mokuji prefix <file> <prefix> [-n <limit>] [--resident]
                                        complete a prefix; the query a
                                        hierarchical key such as an address is
@@ -58,7 +61,7 @@ fn main() -> ExitCode {
         }
         ["dump", path] => dump::run(path.as_ref()),
         ["info", path] => info::run(path.as_ref()),
-        ["search", path, terms @ ..] => search::run(path.as_ref(), terms),
+        ["search", path, terms @ ..] => search_command(path, terms),
         ["prefix", path, needle, flags @ ..] => prefix_command(path, needle, flags),
         ["build", input, output, flags @ ..] => build_command(input, output, flags),
         ["verify", path, flags @ ..] => verify_command(path, flags),
@@ -152,6 +155,20 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
         tokenizer,
         generation,
     )
+}
+
+fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
+    let mut limit = 10;
+    let mut terms: Vec<&str> = Vec::new();
+    let mut rest = args;
+    while let Some((arg, tail)) = rest.split_first() {
+        rest = tail;
+        match *arg {
+            "-n" | "--limit" => limit = take_number(arg, &mut rest)? as usize,
+            other => terms.push(other),
+        }
+    }
+    search::run(path.as_ref(), &terms, limit)
 }
 
 fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error> {

@@ -34,6 +34,11 @@ pub fn run(
     // checkable against the file itself.
     let digest = Sha256::digest(&raw);
 
+    // Worth storing exactly when a document can be longer than one term: a
+    // scorer needs the length of the document in front of it, and a dictionary
+    // index has nothing to normalize.
+    options.doc_lengths = !tokenizer.is_key();
+
     // How many values a document carries is a property of the corpus, not
     // something to make the caller count. Taken from the first document and
     // then required of the rest by the builder.
@@ -123,6 +128,7 @@ pub fn run(
                 ),
                 ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
                 ("payload", Value::Text(describe(options.payload))),
+                ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
             ]),
         },
         tokenizer: MetaTokenizer {

@@ -19,6 +19,7 @@ fn options() -> Options {
         docs_per_payload_block: 2,
         has_freqs: true,
         payload: mokuji_write::PayloadEncoding::Opaque,
+        doc_lengths: true,
         // The fixture is stored raw so that its hex dump can be read against
         // the specification by hand.
         compress: false,
