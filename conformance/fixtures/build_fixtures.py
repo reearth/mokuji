@@ -284,7 +284,7 @@ def chunk(items, size):
 
 def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
           tokenizer_id="space-split", doc_lengths=False, columns=None,
-          positions=False):
+          positions=False, extra=None):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, whole)
     terms = list(index)
@@ -371,6 +371,12 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     if places is not None:
         order.append(SEC_POSITIONS)
     order += [SEC_TERM_BLOCKS, SEC_PAYLOAD]
+    # Sections this version does not define, placed last so that everything a
+    # reader looks for is where it would be without them. A conformant reader
+    # ignores both (SPEC.md 5.2); they are here so that "ignores" is tested
+    # rather than assumed.
+    extra = dict(extra or {})
+    order += sorted(extra)
     head = HEADER_LEN + SECTION_ENTRY_LEN * len(order)
     postings_at = (
         head
@@ -420,6 +426,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         **({SEC_POSITIONS: sum(len(places[t]) for t in terms)} if places is not None else {}),
         SEC_TERM_BLOCKS: sum(len(b) for b in blocks),
         SEC_PAYLOAD: sum(len(b) for b in payload_blocks),
+        **{sid: len(body) for sid, body in extra.items()},
     }
     placed, cursor = {}, head
     for sid in order:
@@ -459,6 +466,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         SEC_POSTINGS: b"".join(runs[t] for t in terms),
         **({SEC_POSITIONS: b"".join(places[t] for t in terms)} if places is not None else {}),
         SEC_PAYLOAD: b"".join(payload_blocks),
+        **extra,
     }
     for sid, body in bodies.items():
         assert len(body) == sizes[sid], sid
@@ -517,7 +525,7 @@ def section_name(sid):
         SEC_PAYLOAD_OFFSETS: "payload offsets",
         SEC_DOC_LENGTHS: "document lengths",
         SEC_DOC_ATTRIBUTES: "document attributes",
-    }[sid]
+    }.get(sid, f"unrecognized section {sid:#06x}")
 
 
 # --- reading back ----------------------------------------------------------
@@ -746,6 +754,28 @@ FIXTURES = [
         ],
     },
     {
+        # `tiny`, plus two sections this version does not define: one in the
+        # range reserved for the specification and one in the application range.
+        # A reader has to answer identically and read exactly as often, which is
+        # what forward compatibility means in practice.
+        "name": "tiny-extra",
+        "documents": DOCUMENTS,
+        "whole": False,
+        "decimals": None,
+        "tokenizer_id": "space-split",
+        "doc_lengths": True,
+        "positions": True,
+        "extra": {
+            0x0099: b"a section a later version of this specification might define",
+            0x8000: b"a section an application defined, which is nobody else's business",
+        },
+        "cases": [
+            (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
+            (["chiyoda"], {0: "35.694,139.754"}, 2),
+            (["kyoto"], {}, 1),
+        ],
+    },
+    {
         "name": "dict",
         "documents": DICT_DOCUMENTS,
         "whole": True,
@@ -793,6 +823,7 @@ def main():
             doc_lengths=spec.get("doc_lengths", False),
             columns=spec.get("columns"),
             positions=spec.get("positions", False),
+            extra=spec.get("extra"),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

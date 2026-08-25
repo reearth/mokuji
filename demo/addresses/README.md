@@ -94,6 +94,49 @@ bytes:    872 of 7099942
 
 **1,744,962 addresses, every one with coordinates, in 7.1 MB. Two range reads.**
 
+## Residence level: all 47 prefectures
+
+The same build, run over every prefecture. Coordinates are required, so an
+address the registry has no point for is left out.
+
+| | |
+|---|---|
+| Registry rows | 21,984,788 |
+| Indexed | **21,814,175** (99.2%) |
+| Corpus | 1.63 GB |
+| **Index** | **85 MB**, 19.1x smaller |
+| Per address | 3.90 bytes |
+| Mean per prefecture | 464,131 addresses, 1.81 MB |
+| Largest | Osaka, 2,301,148 addresses, 8.8 MB |
+| A query | still 2 range reads |
+
+Eighty-five megabytes is the whole of Japan at the level a street address is
+written at, and 1.8 MB is the average prefecture — small enough that a page can
+hold one and never ask for anything again.
+
+**Coverage is uneven, and that is the registry rather than the build.**
+Residence display (`住居表示`) is adopted municipality by municipality, and where
+it is not, addresses are still written as parcel numbers, which this table does
+not carry.
+
+| | |
+|---|---|
+| Osaka | 2,301,148 |
+| Fukuoka | 1,793,972 |
+| Hokkaido | 1,750,313 |
+| … | |
+| Tottori | 65,167 |
+| Shimane | 57,566 |
+| Saga | 54,971 |
+| Tokushima | 40,350 |
+| **Kyoto** | **32,713** |
+
+Kyoto has 2.5 million people and 32,713 residence-level addresses, because
+Kyoto City addresses by street name rather than by block and number. So this is
+21.8 million addresses, not every address in Japan; the town-level index above
+is the one that covers the country evenly, and the two are meant to be used
+together.
+
 | | |
 |---|---|
 | Source | 225 MB of CSV, two tables |

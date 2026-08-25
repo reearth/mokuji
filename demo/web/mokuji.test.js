@@ -71,6 +71,28 @@ for (const testCase of cases) {
 
     assert.deepEqual(exact.map((r) => r.doc), testCase.docs);
     assert.deepEqual(exact.map((r) => r.payload), testCase.payloads);
+
+    // Resident, so asking for it is arithmetic rather than a request.
+    if (testCase.attribute) {
+      const column = index.column(testCase.attribute);
+      assert.ok(column, `no column '${testCase.attribute}'`);
+      assert.deepEqual(
+        testCase.docs.map((doc) => column.values[doc]),
+        testCase.values,
+      );
+    }
+
+    // The one section a reader pays for only when it asks, and asking costs
+    // exactly one read.
+    if (testCase.positions) {
+      const entry = await index.exact(index.normalize(testCase.query[0]));
+      assert.ok(entry, "term is absent");
+      const [postings] = await index.postingsSpan([entry]);
+      const before = index.stats.requests;
+      const places = await index.positions(entry, postings);
+      assert.deepEqual(places, testCase.positions);
+      assert.equal(index.stats.requests - before, 1, "positions must cost one read");
+    }
   });
 }
 

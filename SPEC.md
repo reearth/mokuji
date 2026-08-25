@@ -159,11 +159,8 @@ A reader MAY coalesce range requests for adjacent or nearby regions, which
 reduces the count further but never increases it. A conformant reader MUST NOT
 exceed the bound above.
 
-The bound is `O(k)`, linear in the number of query terms. Precomputed postings
-for frequent term pairs, which would reduce multi-term queries toward `O(1)`,
-are an OPTIONAL extension; section ID `0x0050` is reserved for it. It is not
-required, because the cost of building pair postings grows quadratically and a
-linear bound is already a sufficient contract.
+The bound is `O(k)`, linear in the number of query terms. It is not better than
+linear, and deliberately so; see Appendix A.
 
 ### 4.1 Prefix and range queries
 
@@ -308,10 +305,9 @@ header has no floating-point representation to disagree about.
 Entries MUST be sorted by `section_id` and each `section_id` MUST appear at
 most once.
 
-`codec` values: `0` raw, `1` zstd, `2` zstd with the shared dictionary from
-section `0x0040`. A `codec` other than `0` applies to the section as a whole
-and therefore MUST NOT be used for any section that a reader is required to
-address at block granularity.
+`codec` values are those of §5.6: `0` raw, `1` deflate, `2` zstd. A `codec`
+other than `0` applies to the section as a whole and therefore MUST NOT be used
+for any section that a reader is required to address at block granularity.
 
 Section IDs:
 
@@ -326,13 +322,12 @@ Section IDs:
 | `0x0031` | Payload offsets | if `HAS_PAYLOAD` |
 | `0x0032` | Document lengths | no |
 | `0x0033` | Document attributes | no |
-| `0x0040` | Shared zstd dictionary | if any `codec` is 2 |
-| `0x0050` | Term pair cache | reserved, not defined in this version |
 | `0x0060` | Positions | if `HAS_POSITIONS` |
 
-IDs below `0x8000` are reserved for this specification. IDs at or above
-`0x8000` are available for application-specific use and MUST be ignored by a
-reader that does not recognize them.
+IDs below `0x8000` are reserved for this specification, and one this version
+does not define carries no meaning: a reader MUST ignore a section it does not
+recognize rather than assume a use for it. IDs at or above `0x8000` are
+available for application-specific use.
 
 ### 5.3 Term dictionary
 
@@ -660,12 +655,13 @@ natively, so a reader in a page needs no bundled decompressor. zstd is
 registered as optional for publishers who would rather have the payload ratio
 than the reach.
 
-A dictionary-using codec is the obvious next addition, and section `0x0040` is
-reserved for the dictionary it would need. It is deliberately not in this
-version: browsers cannot supply a preset dictionary through their native
-decompression, so a dictionary codec requires a decompressor in the page no
-matter which algorithm it uses, and that trade is worth making deliberately
-rather than by default.
+A dictionary-using codec is the obvious next addition, and it would need a
+section to hold the dictionary. It is deliberately not in this version, and no
+identifier is set aside for it: browsers cannot supply a preset dictionary
+through their native decompression, so a dictionary codec requires a
+decompressor in the page no matter which algorithm it uses. That trade is worth
+making deliberately, and reserving an identifier for it in advance would be
+deciding it by default.
 
 ### 5.6a Positions (`0x0060`)
 
@@ -841,10 +837,14 @@ nothing and removes the whole class.
 
 Recorded because the reasoning is the part that is hard to reconstruct later.
 
-**Multi-term I/O bound is `O(k)`; pair precomputation is optional.**
-Making precomputed pair postings mandatory would impose a quadratic build cost
-for a benefit that address lookup does not need. A linear bound is still a
-bound, which is the property that was missing from the field.
+**Multi-term I/O bound is `O(k)`, and nothing is reserved for making it
+better.** Precomputed postings for frequent term pairs would push multi-term
+queries toward `O(1)`, at a build cost that grows quadratically and for a
+benefit a dictionary lookup does not need. An earlier draft set a section
+identifier aside for it. That identifier is gone: a reserved identifier for an
+undefined feature is a decision made by default, and this format would rather
+make them deliberately. A linear bound is still a bound, which is the property
+that was missing from the field.
 
 **The tokenizer is outside the specification but recorded in metadata.**
 Determinism, which is what provenance actually requires, is satisfied by

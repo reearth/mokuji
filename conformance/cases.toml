@@ -10,13 +10,18 @@
 # blocks within a query, which is what makes the payload term smaller than the
 # result count.
 #
-# Verified independently by conformance/fixtures/build_tiny.py, which builds the
-# fixtures from SPEC.md and checks every case here before writing them.
+# Verified independently by conformance/fixtures/build_fixtures.py, which builds
+# the fixtures from SPEC.md and checks the result and read count of every case
+# below before writing them. The `positions` and `attribute` expectations are
+# checked by the Rust and browser readers only; the fixture builder writes those
+# sections but does not query them.
 #
 # `tiny` is a small document collection: several terms per document, postings
 # stored, payload opaque, every section raw so the file can be read by hand.
 # `dict` is a dictionary: one term per record, postings implied throughout, and
 # payload stored as delta-coded integers.
+# `tiny-extra` is `tiny` with two sections this version does not define, one in
+# the specification's range and one in the application's.
 
 [[case]]
 name = "single term"
@@ -83,6 +88,58 @@ reads = 2
 name = "absent from a dictionary"
 fixture = "dict"
 query = ["東京都新宿区"]
+docs = []
+payloads = []
+reads = 1
+
+[[case]]
+name = "positions"
+fixture = "tiny"
+query = ["chuo"]
+docs = [1, 3]
+payloads = ["35.671,139.772", "34.681,135.513"]
+# `chuo` is the second word of both documents it appears in. Positions are the
+# one section a reader pays for only when it asks: everything above answers
+# without reading the run at all.
+positions = [[1], [1]]
+reads = 4 # 1 term block, 1 postings, 2 payload blocks — and one more to ask
+
+[[case]]
+name = "attribute column"
+fixture = "dict"
+query = ["東京都千代田区丸の内1丁目1番1号"]
+docs = [1]
+payloads = ["139.767201,35.681560"]
+# Resident, so reading it costs nothing: the read count is the same as the case
+# above that does not ask for it. That is the point of the section — a scorer
+# weighs many documents before deciding whose payload is worth fetching.
+attribute = "importance"
+values = [90]
+reads = 2
+
+[[case]]
+name = "unrecognized sections are ignored"
+fixture = "tiny-extra"
+query = ["tokyo"]
+docs = [0, 1, 2]
+payloads = ["35.694,139.754", "35.671,139.772", "35.664,139.698"]
+# The same answer and the same reads as the same query against `tiny`. A reader
+# that stumbled on a section it does not know, or that counted one, would
+# differ here.
+reads = 4
+
+[[case]]
+name = "unrecognized sections do not disturb implied postings"
+fixture = "tiny-extra"
+query = ["chiyoda"]
+docs = [0]
+payloads = ["35.694,139.754"]
+reads = 2
+
+[[case]]
+name = "unrecognized sections do not disturb an absent term"
+fixture = "tiny-extra"
+query = ["kyoto"]
 docs = []
 payloads = []
 reads = 1

@@ -1,0 +1,4 @@
+tokyo chiyoda	35.694,139.754
+tokyo chuo	35.671,139.772
+tokyo shibuya	35.664,139.698
+osaka chuo	34.681,135.513

@@ -14,9 +14,10 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 | `tiny` | A document collection: several terms per document, postings stored, payload opaque, every section raw |
 | `dict` | A dictionary: one term per record, postings implied throughout, payload as delta-coded integers, every section raw |
 | `dict-deflate` | `dict` again, compressed |
+| `tiny-extra` | `tiny` again, with two sections this version does not define — one in the specification's range, one in the application's |
 
 ```
-fixtures/build_fixtures.py   builds tiny and dict, independently of mokuji-write
+fixtures/build_fixtures.py   builds tiny, tiny-extra and dict, independently of mokuji-write
 fixtures/*.corpus.txt        the sources they are derived from
 fixtures/*.mokuji             the fixtures
 fixtures/*.hex               annotated hex dumps

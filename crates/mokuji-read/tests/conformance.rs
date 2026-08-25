@@ -28,6 +28,15 @@ struct Case {
     docs: Vec<u64>,
     payloads: Vec<String>,
     reads: u32,
+    /// Where the (single) query term occurs in each returned document.
+    #[serde(default)]
+    positions: Option<Vec<Vec<u64>>>,
+    /// An attribute column to read, and what it should hold for the documents
+    /// the query returned.
+    #[serde(default)]
+    attribute: Option<String>,
+    #[serde(default)]
+    values: Option<Vec<i64>>,
 }
 
 fn conformance_dir() -> PathBuf {
@@ -68,17 +77,54 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
 
         assert_eq!(docs, case.docs, "{}: documents", case.name);
         assert_eq!(payloads, case.payloads, "{}: payloads", case.name);
-        assert_eq!(reader.reads(), case.reads, "{}: read count", case.name);
+
+        // Resident, so asking for it must not cost a read — which is checked by
+        // reading it before the count is taken.
+        if let Some(name) = &case.attribute {
+            let column = index
+                .column(name)
+                .unwrap_or_else(|| panic!("{}: no column '{name}'", case.name));
+            let got: Vec<i64> = docs
+                .iter()
+                .map(|&doc| column.values[doc as usize])
+                .collect();
+            assert_eq!(Some(got), case.values, "{}: column '{name}'", case.name);
+        }
+
+        let query_reads = reader.reads();
+        assert_eq!(query_reads, case.reads, "{}: read count", case.name);
+
+        // Positions are the one section a reader pays for only when it asks:
+        // `reads` above is what the query costs without them, and asking costs
+        // exactly one more read on top of it.
+        if let Some(expected) = &case.positions {
+            let term = case.query.first().expect("a positions case has one term");
+            let entry = block_on(index.lookup(term.as_bytes()))
+                .expect(&case.name)
+                .unwrap_or_else(|| panic!("{}: term is absent", case.name));
+            let postings = block_on(index.postings(&entry)).expect(&case.name);
+            let before = reader.reads();
+            let places = block_on(index.positions(&entry, &postings)).expect(&case.name);
+            assert_eq!(&places, expected, "{}: positions", case.name);
+            assert_eq!(
+                reader.reads() - before,
+                1,
+                "{}: positions must cost one read",
+                case.name
+            );
+        }
 
         // The case files record what this reader actually costs; the bound is
         // what the specification promises. Both are checked, since a case could
         // otherwise be updated to match a regression.
+        // Charged on the query alone: what a caller spends afterwards asking
+        // for positions is accounted for above, and SPEC.md §4 does not cover
+        // it.
         let bound = 2 * case.query.len() as u32 + case.docs.len() as u32;
         assert!(
-            reader.reads() <= bound,
-            "{}: {} reads exceeds the bound of {bound}",
+            query_reads <= bound,
+            "{}: {query_reads} reads exceeds the bound of {bound}",
             case.name,
-            reader.reads()
         );
     }
 }

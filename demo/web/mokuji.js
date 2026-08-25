@@ -24,6 +24,9 @@ const SECTION = {
   POSTINGS: 0x0020,
   PAYLOAD: 0x0030,
   PAYLOAD_OFFSETS: 0x0031,
+  DOC_LENGTHS: 0x0032,
+  DOC_ATTRIBUTES: 0x0033,
+  POSITIONS: 0x0060,
 };
 
 const CODEC_RAW = 0;
@@ -185,6 +188,31 @@ const TOKENIZERS = {
   // and a prefix is not split in either.
   "ja-address-bigram": jaAddress,
 };
+
+/** Named columns of per-document numbers (SPEC.md §5.8). */
+function decodeColumns(bytes, numDocs) {
+  const cursor = new Cursor(bytes);
+  const count = cursor.varint();
+  const headers = [];
+  for (let i = 0; i < count; i++) {
+    const length = cursor.varint();
+    const name = utf8.decode(bytes.subarray(cursor.pos, cursor.pos + length));
+    cursor.pos += length;
+    const raw = bytes[cursor.pos++];
+    if (headers.some(([taken]) => taken === name)) {
+      throw new Error("two attribute columns share a name");
+    }
+    headers.push([name, raw > 127 ? raw - 256 : raw]);
+  }
+  const columns = new Map();
+  for (const [name, scaleExponent] of headers) {
+    columns.set(name, { name, scaleExponent, values: cursor.values(numDocs).map(unzigzag) });
+  }
+  if (cursor.pos !== bytes.length) {
+    throw new Error("trailing bytes in the document attributes section");
+  }
+  return columns;
+}
 
 class Cursor {
   constructor(bytes, pos = 0) {
@@ -365,6 +393,12 @@ export class MokujiIndex {
 
     const wanted = [SECTION.META, SECTION.TERM_INDEX, SECTION.TERM_BLOCK_OFFSETS];
     if (index.flags & FLAG_HAS_PAYLOAD) wanted.push(SECTION.PAYLOAD_OFFSETS);
+    // Both are read in bulk before any payload is, which is what makes them
+    // worth having as sections of their own (SPEC.md §5.7, §5.8). A reader that
+    // fetched them per query would pay for the separation twice.
+    for (const id of [SECTION.DOC_LENGTHS, SECTION.DOC_ATTRIBUTES]) {
+      if (index.sections.has(id)) wanted.push(id);
+    }
     for (const id of wanted) {
       if (!index.sections.has(id)) throw new Error(`section ${id} is missing`);
     }
@@ -403,6 +437,13 @@ export class MokujiIndex {
       console.warn(`unknown tokenizer '${index.tokenizerId}'; queries used as typed`);
       index.normalize = (q) => q;
     }
+
+    index.docLengths = index.sections.has(SECTION.DOC_LENGTHS)
+      ? new Cursor(await resident(SECTION.DOC_LENGTHS)).values(index.numDocs)
+      : null;
+    index.columns = index.sections.has(SECTION.DOC_ATTRIBUTES)
+      ? decodeColumns(await resident(SECTION.DOC_ATTRIBUTES), index.numDocs)
+      : new Map();
 
     index.termIndex = await resident(SECTION.TERM_INDEX);
     index.termBlockOffsets = await resident(SECTION.TERM_BLOCK_OFFSETS);
@@ -469,6 +510,41 @@ export class MokujiIndex {
       entries.push(entry);
     }
     return entries;
+  }
+
+  /** One named column of per-document numbers, or undefined.
+   *
+   * Resident, so this costs no read: the point of the section is that a scorer
+   * can weigh many documents before deciding which payloads are worth fetching.
+   */
+  column(name) {
+    return this.columns.get(name);
+  }
+
+  /** Where a term occurs in each document its postings name.
+   *
+   * One read, and only for a caller that asks. The run is decoded from the
+   * front and the frequencies say how many values belong to each document, so
+   * the postings have to be in hand first.
+   */
+  async positions(entry, postings) {
+    if (!(this.flags & FLAG_HAS_POSITIONS) || entry.positionsLength === 0) return [];
+    const run = await this.read(entry.positionsOffset, entry.positionsLength);
+    const cursor = new Cursor(run);
+    const out = [];
+    for (const freq of postings.freqs) {
+      let current = null;
+      out.push(
+        cursor.values(freq).map((value) => {
+          // The first is a position; the rest are gaps less one, so that
+          // adjacent occurrences pack to nothing.
+          current = current === null ? value : current + value + 1;
+          return current;
+        }),
+      );
+    }
+    if (cursor.pos !== run.length) throw new Error("trailing bytes in positions run");
+    return out;
   }
 
   /** The dictionary block a term would be in, from the resident index alone. */
