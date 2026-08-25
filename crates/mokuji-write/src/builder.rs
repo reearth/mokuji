@@ -120,6 +120,8 @@ pub struct Builder {
     doc_lengths: Vec<u64>,
     terms: Vec<Term>,
     open: Option<OpenTerm>,
+    /// Application-defined sections, by identifier, kept sorted.
+    sections: std::collections::BTreeMap<u16, Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -162,6 +164,7 @@ impl Builder {
             doc_lengths: Vec::new(),
             terms: Vec::new(),
             open: None,
+            sections: std::collections::BTreeMap::new(),
         })
     }
 
@@ -285,6 +288,23 @@ impl Builder {
         self.add_posting(term, doc, positions.len() as u64)?;
         let open = self.open.as_mut().expect("add_posting opened a term");
         *open.positions.last_mut().expect("one per document") = positions.to_vec();
+        Ok(())
+    }
+
+    /// Attaches an application-defined section (`SPEC.md` §5.2).
+    ///
+    /// Identifiers at or above `SectionId::APPLICATION_MIN` are the
+    /// specification's way of saying "this is yours"; a reader that does not
+    /// recognize one ignores it. The bytes are stored uncompressed and placed
+    /// last, behind everything the format itself defines, so that attaching one
+    /// moves nothing a reader looks for.
+    pub fn add_section(&mut self, id: SectionId, bytes: Vec<u8>) -> Result<()> {
+        if !id.is_application() {
+            return Err(Error::Malformed {
+                detail: "a section this specification defines cannot be supplied by an application",
+            });
+        }
+        self.sections.insert(id.0, bytes);
         Ok(())
     }
 
@@ -415,6 +435,12 @@ impl Builder {
             order.push(SectionId::POSITIONS);
         }
         order.extend([SectionId::TERM_BLOCKS, SectionId::PAYLOAD]);
+        // Application sections go last, behind everything the format itself
+        // defines, so that attaching one moves nothing a reader looks for. They
+        // join `order` before the table is sized, because the table has to
+        // describe them.
+        order.extend(self.sections.keys().map(|id| SectionId(*id)));
+
         let table_len = SECTION_ENTRY_LEN * order.len();
 
         let postings_len: u64 = self.terms.iter().map(|t| t.run.len() as u64).sum();
@@ -450,6 +476,7 @@ impl Builder {
                 SectionId::POSITIONS => positions_len,
                 SectionId::TERM_BLOCKS => blocks.iter().map(|b| b.len() as u64).sum(),
                 SectionId::PAYLOAD => payload_blocks.iter().map(|b| b.len() as u64).sum(),
+                id if id.is_application() => self.sections[&id.0].len() as u64,
                 _ => unreachable!("only the sections in `order` are sized"),
             };
             placed.push((id, cursor, length));
@@ -551,6 +578,7 @@ impl Builder {
                     .iter()
                     .for_each(|t| out.extend_from_slice(&t.positions)),
                 SectionId::PAYLOAD => payload_blocks.iter().for_each(|b| out.extend_from_slice(b)),
+                id if id.is_application() => out.extend_from_slice(&self.sections[&id.0]),
                 _ => unreachable!("only the sections in `order` are written"),
             }
         }

@@ -23,6 +23,8 @@ pub struct Recipe<'a> {
     pub columns: &'a [(String, u8)],
     /// Application-defined metadata entries.
     pub attrs: &'a [(String, String)],
+    /// Application-defined sections, as (identifier, path to its bytes).
+    pub sections: &'a [(u16, String)],
     /// Generation number.
     pub generation: u64,
 }
@@ -39,6 +41,7 @@ pub fn run(
         origins,
         columns: declared,
         attrs,
+        sections,
         generation,
     } = *recipe;
     let raw = std::fs::read(input)?;
@@ -215,6 +218,15 @@ pub fn run(
             )
         }),
     };
+
+    // Attached last, so that what a reader of the format proper looks for is
+    // where it would be without them.
+    for (id, path) in sections {
+        builder.add_section(
+            mokuji_format::SectionId(*id),
+            std::fs::read(Path::new(path))?,
+        )?;
+    }
 
     let bytes = builder.finish(&meta.encode())?;
     std::fs::write(output, &bytes)?;

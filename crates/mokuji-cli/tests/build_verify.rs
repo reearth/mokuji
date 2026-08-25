@@ -476,3 +476,58 @@ fn probe_and_phrase_are_incompatible() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("in order"));
 }
+
+#[test]
+fn an_application_section_rides_along_without_moving_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    let plain = dir.path().join("plain.mokuji");
+    let carried = dir.path().join("carried.mokuji");
+    let blob = dir.path().join("quantizer.bin");
+    std::fs::write(&blob, b"a coarse quantizer, or whatever else").unwrap();
+
+    mokuji(&["build", corpus.to_str().unwrap(), plain.to_str().unwrap()]);
+    mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        carried.to_str().unwrap(),
+        "--section",
+        &format!("0x8000={}", blob.to_str().unwrap()),
+    ]);
+
+    let listing = stdout(&mokuji(&["info", carried.to_str().unwrap()]));
+    assert!(listing.contains("0x8000 application"), "{listing}");
+
+    // Attached last, so the file it was attached to is a prefix of this one.
+    let a = std::fs::read(&plain).unwrap();
+    let b = std::fs::read(&carried).unwrap();
+    assert!(b.len() > a.len());
+    assert!(b.ends_with(b"a coarse quantizer, or whatever else"));
+
+    // And the index still reads.
+    let found = stdout(&mokuji(&["search", carried.to_str().unwrap(), "tokyo"]));
+    assert_eq!(found.lines().count(), 3);
+    assert!(stdout(&mokuji(&["verify", carried.to_str().unwrap()])).contains("ok"));
+}
+
+#[test]
+fn a_specified_section_cannot_be_supplied_by_an_application() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let blob = dir.path().join("blob.bin");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    std::fs::write(&blob, b"not yours").unwrap();
+
+    // 0x0020 is POSTINGS. Letting an application write one would let it
+    // contradict the index it is attached to.
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        dir.path().join("out.mokuji").to_str().unwrap(),
+        "--section",
+        &format!("0x0020={}", blob.to_str().unwrap()),
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("application"));
+}

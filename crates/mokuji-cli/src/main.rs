@@ -30,6 +30,9 @@ usage:
         --payload <how>                text (default), or ints:<decimals> to
                                        store the payload as delta-coded fixed
                                        point numbers
+        --section <id>=<path>          attach this file as an application
+                                       section (SPEC.md 5.2); <id> is
+                                       hexadecimal and at least 8000
         --meta <key>=<value>           record one application-defined entry in
                                        the metadata; repeatable, for a
                                        parameter a reader needs but the format
@@ -110,6 +113,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     options.doc_lengths = true;
     let mut attributes: Vec<(String, u8)> = Vec::new();
     let mut attrs: Vec<(String, String)> = Vec::new();
+    let mut sections: Vec<(u16, String)> = Vec::new();
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -149,6 +153,19 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     return Err(Error::Usage("at most 18 decimals".into()));
                 }
                 attributes.push((name.to_string(), decimals));
+            }
+            "--section" => {
+                let (spec, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--section needs <id>=<path>".into()))?;
+                rest = tail;
+                let (id, path) = spec
+                    .split_once('=')
+                    .ok_or_else(|| Error::Usage(format!("'{spec}' is not <id>=<path>")))?;
+                let id = id.strip_prefix("0x").unwrap_or(id);
+                let id = u16::from_str_radix(id, 16)
+                    .map_err(|_| Error::Usage(format!("'{id}' is not a hexadecimal section id")))?;
+                sections.push((id, path.to_string()));
             }
             "--meta" => {
                 let (spec, tail) = rest
@@ -212,6 +229,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             origins: &origins,
             columns: &attributes,
             attrs: &attrs,
+            sections: &sections,
             generation,
         },
         options,

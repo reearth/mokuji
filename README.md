@@ -126,6 +126,12 @@ fetched for only the rarest few — which the dictionary reports before any of
 them are read. `丸ノ内` finds `丸の内`, and a dropped prefecture finds the
 address 94% of the time.
 
+[demo/vector](demo/vector) is the one that looks impossible. Cluster a million
+vectors and the cluster is a term, the vectors in it are its postings, and the
+quantized code is the payload — which is IVF, the structure a vector database
+runs. SIFT1M in **21.8 MB** against 512 MB raw, and a nearest-neighbour query in
+**21 range reads**.
+
 [demo/reverse](demo/reverse) takes that further and goes the other way round the
 map. A geohash cell is a string whose prefixes are the cells containing it, so
 *which polygon holds this point* is a term lookup: 6,021 Tokyo 町丁目 boundaries
