@@ -61,6 +61,13 @@ def main():
         help="GeoNames feature classes to keep; A (administrative) is dropped "
         "by default because an address index covers it better",
     )
+    parser.add_argument(
+        "--whole-names",
+        action="store_true",
+        help="write each name as one space-split term, lowercased, its own "
+        "spaces replaced by U+00A0, so that a name is completed as a whole "
+        "rather than word by word",
+    )
     args = parser.parse_args()
 
     out = pathlib.Path(args.out)
@@ -76,7 +83,11 @@ def main():
                 continue
             # Tabs and newlines would break the corpus; a name containing one is
             # a data problem rather than something to guess at.
-            text = " ".join(names).replace("\t", " ")
+            if args.whole_names:
+                terms = dict.fromkeys(n.lower().replace(" ", "\u00a0") for n in names)
+                text = " ".join(terms).replace("\t", "\u00a0")
+            else:
+                text = " ".join(names).replace("\t", " ")
             sink.write(
                 f"{text}\t{names[0]}\t{row[LON]}\t{row[LAT]}\t"
                 f"{row[POPULATION] or 0}\t{len(names)}\n"
