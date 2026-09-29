@@ -193,6 +193,65 @@ The cost is the cost of `bigram` — a larger index, and substring matches that 
 word tokenizer would not make — plus a read count that grows with the length of
 the query rather than staying at three.
 
+### `name-list`
+
+The input is a list of names separated by U+001F (INFORMATION SEPARATOR ONE).
+Each name becomes one term, after normalization:
+
+1. Unicode Normalization Form KC (NFKC).
+2. Lowercase by the Unicode default case conversion (`toLowercase`, Unicode
+   §3.13): the full mapping, with no locale.
+3. Replace each maximal run of `White_Space` characters with one U+0020, and
+   strip leading and trailing ones.
+
+A name that is empty after normalization produces no term.
+
+Parameters: none.
+
+A query is normalized by the same three steps and not split, since what was
+typed is a prefix of one name.
+
+`Black Sea` becomes `black sea`, one term, space included. `東京タワー` is
+unchanged. A place called `Tokyo` and `東京` and `Tōkyō` is a document with
+three terms, all of which complete to it.
+
+#### Why a name and not its words
+
+This is the tokenizer for completion. What someone types is a finished word and
+an unfinished one, and under a word tokenizer that is an intersection of a term
+with a prefix — whose best results are not among the best of either, so no
+precomputed answer covers it. As one term per name the same input is one prefix,
+which a completions section (`SPEC.md` §5.3.5) can answer ahead of time.
+Measured on 12,854,245 places, completing a second word cost a median of 29
+range reads by word and at most 3 by name (`tools/README.md`). That measurement
+used an approximation of this entry — lowercasing only, without NFKC or the
+whitespace rule — which changes which terms exist but not how many a prefix
+spans.
+
+What it gives up is a word in the middle: `sea` does not complete to
+`Black Sea`. That is a search, not a completion, and it belongs in a second
+index with a word tokenizer.
+
+#### Why U+001F
+
+A separator has to be something no name contains. U+0020 is inside names,
+commas are inside names, and a tab is the corpus field separator. U+001F is a
+control character designed for exactly this, and it does not occur once in the
+13.4 million rows of GeoNames.
+
+#### Why the default case conversion
+
+Because it has no locale, and a registry entry cannot depend on one. Turkish
+`I` lowercases to `i` here rather than `ı`, which is wrong for Turkish and the
+same in every implementation — the second matters more for an identifier that
+has to mean one thing. JavaScript's `toLowerCase`, Rust's `to_lowercase` and
+Python's `lower` all implement this mapping.
+
+The mapping is not folding. `İstanbul` lowercases to `i` followed by U+0307, so
+`istanbul` does not complete it. A corpus that wants it to supplies the name
+spelled that way as well; which spellings a place has is the pipeline's
+decision, not the tokenizer's.
+
 ## Why there is no ICU or morphological entry
 
 There is an obvious candidate for a better Japanese tokenizer than `bigram`.
