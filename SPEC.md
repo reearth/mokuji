@@ -136,9 +136,10 @@ the writer that made it, and the file says which one that was.
 This section is the core of the specification.
 
 A reader is assumed to cache the fixed header, the section table, the metadata
-section, and the term index. Together these are the *resident set*; they are
-sized to be small enough to hold permanently (tens of kilobytes for a typical
-index) and to be fetched in a single range request on a cold start.
+section, the term index, and the completions section if there is one (§5.3.5).
+Together these are the *resident set*; they are sized to be small enough to hold
+permanently (tens of kilobytes for a typical index) and to be fetched in a
+single range request on a cold start.
 
 For a query of `k` terms returning `m` documents whose payload is retrieved:
 
@@ -186,6 +187,30 @@ follow from its being sorted, which is what makes hierarchical keys — addresse
 paths, statute numbers — the case the format handles best rather than a case it
 tolerates.
 
+#### 4.1.1 Short prefixes
+
+The bound above holds at any size, but `b` grows with `n`, and a short prefix
+matches a great many terms. Measured on 12,854,245 places (`tools/README.md`),
+a one-letter prefix spans a median of 114 of 5,698 dictionary blocks, and a
+two-letter one 12. That is a bound, and not a small one.
+
+A completions section (§5.3.5) holds the answer to exactly those prefixes,
+decided when the file was written. When it declares a coverage of `T` terms and
+`S` bytes, a prefix query for at most `docs_per_entry` documents costs:
+
+```
+reads = p                      if the prefix has an entry
+
+reads = b                      otherwise, where the prefix matches fewer than T
+      + 1                      terms, so b <= ceil(T / terms_per_block) + 1,
+      + p                      and the postings read is shorter than S bytes
+```
+
+Whether the prefix has an entry is answered by the resident set, so a reader
+knows which case it is in before it reads anything. On the same places, a table
+covering `T` = 1,024 and `S` = 16 KB holds 3,761 prefixes in 59 KB, counted
+over characters rather than bytes (see Appendix A).
+
 ### 4.2 Where the dictionary lives
 
 The bound above assumes a reader fetches a term block when it needs one. A
@@ -229,6 +254,7 @@ makes an index safe to publish as a static file.
 | Section table                                    |
 | Metadata (provenance, tokenizer, parameters)     |  resident
 | Term index (block boundary keys)                 |
+| Completions, if any                              |
 | Term block offsets                               |
 | Payload offsets                                  |
 +--------------------------------------------------+
@@ -317,6 +343,7 @@ Section IDs:
 | `0x0010` | Term index | yes |
 | `0x0011` | Term blocks | yes |
 | `0x0012` | Term block offsets | yes |
+| `0x0013` | Completions | no |
 | `0x0020` | Postings | yes |
 | `0x0030` | Payload | if `HAS_PAYLOAD` |
 | `0x0031` | Payload offsets | if `HAS_PAYLOAD` |
@@ -449,6 +476,60 @@ record each still benefits from the terms that do.
 Terms MUST be strictly increasing across the whole dictionary, blocks MUST
 partition the terms in order, and the first term of block `i` MUST equal
 boundary key `i`.
+
+#### 5.3.5 Completions (`0x0013`)
+
+Optional. For a prefix that many terms share, the documents a completion would
+show first, chosen when the file was written — so that the question §4.1.1 says
+is expensive is answered before it is asked.
+
+The section is read whole and belongs to the resident set. Its codec (§5.2) MAY
+compress it, since it is never addressed in parts.
+
+| Field | Encoding |
+|---|---|
+| `min_terms` | `varint`; see coverage below |
+| `max_span` | `varint`; see coverage below |
+| `docs_per_entry` | `varint`, non-zero |
+| `entry_count` | `varint` |
+| entries × `entry_count` | below |
+
+Each entry:
+
+| Field | Encoding |
+|---|---|
+| `prefix` | front-coded key (§5.3.1), relative to the previous entry |
+| `doc_count` | `varint`, 1 to `docs_per_entry` |
+| `docs` | `doc_count` zigzag `varint`s (§5.5.3): the first a document ID, each later one the difference from the document before it |
+
+A **prefix** here is any non-empty byte string, and a term *begins with* it when
+its first bytes are the prefix. Byte strings rather than characters, because the
+dictionary compares bytes and knows nothing of an encoding.
+
+Rules a reader MUST enforce: prefixes are non-empty and strictly increasing;
+every listed document is less than `num_docs`; no document is listed twice in
+one entry.
+
+Rules a writer MUST follow, which a verifier can check against the rest of the
+file and a reader need not:
+
+- **What an entry lists.** Every listed document contains at least one term that
+  begins with the prefix, and `doc_count` is `docs_per_entry` or the number of
+  such documents, whichever is smaller.
+- **Coverage.** When `min_terms` is not zero, every prefix that at least
+  `min_terms` terms begin with has an entry. When `max_span` is not zero, every
+  prefix whose terms' `postings_len` sum to at least `max_span` bytes has an
+  entry. A writer MAY give an entry to any other prefix. Both zero is a promise
+  of nothing: the section is then a cache, and §4.1.1 states no bound for it.
+
+**Which** documents an entry lists, and in what order, is the writer's choice
+and outside this specification, exactly as scoring is (§1). The order is the one
+a reader SHOULD present them in. A writer records how it chose in
+`generator.params`, as it records everything else it branched on (§6).
+
+A reader wanting more than `docs_per_entry` documents for a prefix, or a prefix
+combined with anything else, is past what the entry answers, and reads the
+dictionary and postings as §4.1 describes.
 
 ### 5.4 Postings (`0x0020`)
 
@@ -1002,6 +1083,43 @@ See §5.3. A monolithic FST cannot satisfy the I/O bound over a range-read
 transport, and the I/O bound is the point of the format. The FST remains, one
 level up, as the index over block boundaries, which preserves the ordering
 properties that motivated it.
+
+**Completions are a recorded choice of documents, not a score.**
+A short prefix at planet scale spans hundreds of dictionary blocks (§4.1.1), and
+nothing in the layout makes that smaller: the dictionary is sorted, so the terms
+are where they are. Edge n-grams would make every prefix a term; an answer for
+every prefix of up to five characters alone measured 19 MB. What measured small
+was the opposite: keep an answer only for the prefixes that are expensive, which
+took 59 KB. Those are few — 3,761 at `T` = 1,024 and `S` = 16 KB — because a
+longer prefix matches a subset of what a shorter one does, so past some length
+none qualifies, and none longer can.
+
+That is stored results, and the format keeps scoring outside (§1). The line is
+drawn where document lengths drew it (§5.7). The section carries two kinds of
+fact. One is checkable against the rest of the file: each listed document
+contains a term that begins with the prefix, and every expensive prefix has an
+entry. The other is a choice, recorded as a choice: which documents came first.
+A different ranking is a different file, with different `generator.params`,
+just as a different tokenizer is.
+
+The coverage fields are what make it more than a cache. Without them a reader
+learns nothing from a prefix's absence. With them, absence means cheap, and the
+bound in §4.1 becomes a number a publisher can state for a whole file.
+
+Coverage is defined over byte strings rather than characters, because the
+dictionary compares bytes. Byte prefixes that stop inside a multi-byte character
+therefore need entries too. The measurement above counted characters; a writer
+enumerating bytes will find a few more entries, and how many is for the first
+implementation to report.
+
+It is not a completion for everything someone types. An entry answers one prefix
+alone; a finished word followed by an unfinished one is an intersection, and the
+best ten of an intersection are not among the best ten of either side. Measured
+on the same places, completing the second word from a word index cost a median
+of 29 reads and up to 13 MB. Indexing each name as one term (`name-list`,
+`TOKENIZERS.md`, approximated in the measurement) turns the same query into one prefix, and completions then
+answered every one of 2,776 partly typed names in at most 3 reads and 24 KB
+before the payload.
 
 ## Appendix B. A worked example
 
