@@ -92,3 +92,33 @@ places, at 1024 terms a block:
 
 `SPEC.md` §4.1 bounds a prefix by the blocks it spans, and at planet scale that
 bound is not a small number until the third or fourth character.
+
+### On a dictionary
+
+The corpus above is a collection: a place has many terms and a term many places.
+An address register is a dictionary, where each term names its own record and
+the dictionary states its postings instead of storing them (`SPEC.md` §5.3.4).
+That only holds while documents are in term order, so any `--order-by` gives it
+up. Measured with the `mokuji` command alone, on 1,744,962 Tokyo addresses
+(`ja-address`, `--payload ints:6`), in three orders: key order; by the number of
+addresses in the municipality, a stand-in for importance that keeps each
+municipality's addresses together; and at random, the worst case:
+
+| | key order | by municipality | random |
+|---|---|---|---|
+| Term blocks | 862 KB | 863 KB | 1,165 KB |
+| Postings | **0** | **12,149 KB** | 12,149 KB |
+| Payload | 5,993 KB | 5,993 KB | 10,364 KB |
+| Completing a prefix, 20 results | 2–3 reads, 0.7–1.1 KB | 3–4 reads, 1.0 KB | 22 reads, 8.5 KB |
+
+(Attribute columns are left out; the random column alone is 10 MB.)
+
+Keeping addresses together keeps payload exactly as small, so locality is not
+what an order costs a dictionary. The postings are: 1.7 million runs of one
+document each, about seven bytes apiece, stored because a term's document is no
+longer its own ID — nearly twice the rest of the file, and one more
+read per query. A random order loses locality as well and spends a payload read
+on every result.
+
+So a dictionary should stay in key order. Where an address needs a rank, it
+belongs in a column or in a table beside the dictionary, not in the numbering.
