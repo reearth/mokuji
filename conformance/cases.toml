@@ -22,6 +22,7 @@
 # payload stored as delta-coded integers.
 # `tiny-extra` is `tiny` with two sections this version does not define, one in
 # the specification's range and one in the application's.
+# `names` is a gazetteer for completion: `name-list`, and a completions section.
 
 [[case]]
 name = "single term"
@@ -143,3 +144,80 @@ query = ["kyoto"]
 docs = []
 payloads = []
 reads = 1
+
+[[case]]
+name = "a name is one term"
+fixture = "names"
+query = ["tokyo"]
+docs = [4]
+payloads = ["Tokyo"]
+reads = 3 # 1 term block, 1 postings, 1 payload
+
+[[case]]
+name = "a name in another script is one term too"
+fixture = "names"
+query = ["東京"]
+docs = [4]
+payloads = ["Tokyo"]
+reads = 3
+
+# Completion cases (SPEC.md §5.3.5). `prefix` is already normalized; `limit` is
+# how many documents are wanted. A reader answers from the completions section
+# when the prefix has an entry that reaches the limit — or that lists fewer than
+# `docs_per_entry`, which means it lists them all — and otherwise walks every
+# term the prefix matches (§4.1), returning documents in document order.
+#
+# `names` has an entry for every prefix at least two terms begin with, listing
+# two documents each.
+
+[[completion]]
+name = "an expensive prefix answered by its entry"
+fixture = "names"
+prefix = "bl"
+limit = 2
+docs = [0, 1]
+payloads = ["Black Sea", "Black Forest"]
+from_table = true
+reads = 1 # nothing before the payload; both documents share a payload block
+
+[[completion]]
+name = "more than the entry lists"
+fixture = "names"
+prefix = "bl"
+limit = 3
+docs = [0, 1, 2]
+payloads = ["Black Sea", "Black Forest", "Blackpool"]
+from_table = false
+# 2 term blocks, 1 postings read for the two runs stored — `blackpool` and
+# `bled` name their own documents — and 2 payload blocks.
+reads = 5
+
+[[completion]]
+name = "a cheap prefix has no entry"
+fixture = "names"
+prefix = "black s"
+limit = 10
+docs = [0]
+payloads = ["Black Sea"]
+from_table = false
+reads = 3 # 1 term block, 1 postings, 1 payload
+
+[[completion]]
+name = "a prefix of a character's bytes"
+fixture = "names"
+prefix = "東"
+limit = 2
+docs = [4, 5]
+payloads = ["Tokyo", "Tohoku"]
+from_table = true
+reads = 1
+
+[[completion]]
+name = "an absent prefix"
+fixture = "names"
+prefix = "x"
+limit = 10
+docs = []
+payloads = []
+from_table = false
+reads = 1 # the one block it would be in

@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { MokujiIndex, jaAddress } from "./mokuji.js";
+import { MokujiIndex, jaAddress, nameList } from "./mokuji.js";
 
 const CONFORMANCE = fileURLToPath(new URL("../../conformance/", import.meta.url));
 
@@ -28,15 +28,16 @@ async function fileSource(name) {
  * drift, and the whole point is that every implementation answers to the same
  * ones.
  */
-function parseCases(text) {
-  const cases = [];
+function parseTables(text) {
+  const tables = {};
   let current = null;
   for (const raw of text.split("\n")) {
     const line = raw.replace(/(^|\s)#.*$/, "").trim();
     if (!line) continue;
-    if (line === "[[case]]") {
+    const table = line.match(/^\[\[(\w+)\]\]$/);
+    if (table) {
       current = {};
-      cases.push(current);
+      (tables[table[1]] ??= []).push(current);
       continue;
     }
     const [, key, value] = line.match(/^(\w+)\s*=\s*(.*)$/) ?? [];
@@ -45,12 +46,15 @@ function parseCases(text) {
       ? JSON.parse(value.replace(/'/g, '"'))
       : value.startsWith('"')
         ? JSON.parse(value)
-        : Number(value);
+        : value === "true" || value === "false"
+          ? value === "true"
+          : Number(value);
   }
-  return cases;
+  return tables;
 }
 
-const cases = parseCases(await readFile(`${CONFORMANCE}cases.toml`, "utf8"));
+const tables = parseTables(await readFile(`${CONFORMANCE}cases.toml`, "utf8"));
+const cases = tables.case;
 
 test("the conformance suite is not empty", () => {
   assert.ok(cases.length > 0);
@@ -95,6 +99,29 @@ for (const testCase of cases) {
     }
   });
 }
+
+for (const testCase of tables.completion ?? []) {
+  test(`completion: ${testCase.name} (${testCase.fixture})`, async () => {
+    const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+    index.resetStats();
+    const { docs, payloads, fromTable } = await index.complete(testCase.prefix, testCase.limit);
+    assert.deepEqual(docs, testCase.docs);
+    assert.deepEqual(payloads, testCase.payloads);
+    assert.equal(fromTable, testCase.from_table);
+    assert.equal(index.stats.requests, testCase.reads);
+  });
+}
+
+test("the completion cases were read", () => {
+  assert.ok((tables.completion ?? []).length > 0);
+});
+
+test("name-list agrees with the other implementations", () => {
+  assert.equal(nameList("  Black\u00a0 Sea "), "black sea");
+  assert.equal(nameList("ＴＯＫＹＯ"), "tokyo");
+  assert.equal(nameList("İstanbul"), "i\u0307stanbul");
+  assert.equal(nameList("ΟΔΟΣ"), "οδος");
+});
 
 test("reads a deflated file", async () => {
   // The fixtures the other implementations reproduce byte for byte are stored

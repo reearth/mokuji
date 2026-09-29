@@ -254,3 +254,67 @@ mod dictionary {
         }
     }
 }
+
+/// The completions fixture, reproduced by this workspace's writer.
+///
+/// `build_fixtures.py` writes the section by trying every byte prefix of every
+/// term against the definition; `mokuji-write` walks down from one byte and
+/// splits only what was expensive. Agreeing byte for byte is the check that the
+/// shortcut finds exactly what the definition does, including the prefixes that
+/// stop inside a character.
+mod names {
+    use std::path::PathBuf;
+
+    use mokuji_cli::corpus::{self, Tokenizer};
+    use mokuji_format::{parse_section_table, Header, SectionId};
+    use mokuji_write::{Builder, Completions, Options, PayloadEncoding};
+
+    fn conformance(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../conformance/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn reproduces_the_names_fixture_byte_for_byte() {
+        let expected = std::fs::read(conformance("names.mokuji")).expect("fixture");
+        let header = Header::parse(&expected).unwrap();
+        let start = header.section_table_offset as usize;
+        let end = start + header.section_table_len as usize;
+        let meta = parse_section_table(&expected[start..end], header.section_count)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == SectionId::META)
+            .map(|s| expected[s.offset as usize..(s.offset + s.length) as usize].to_vec())
+            .expect("meta section");
+
+        let text = std::fs::read_to_string(conformance("names.corpus.txt")).expect("corpus");
+        let corpus = corpus::parse(&text, Tokenizer::NameList, 0, false).unwrap();
+        let mut builder = Builder::new(Options {
+            terms_per_block: 2,
+            docs_per_payload_block: 2,
+            has_freqs: true,
+            payload: PayloadEncoding::Opaque,
+            positions: false,
+            doc_lengths: false,
+            compress: false,
+            completions: Some(Completions {
+                min_terms: 2,
+                max_span: 0,
+                docs_per_entry: 2,
+            }),
+        })
+        .unwrap();
+        for payload in &corpus.payloads {
+            builder.add_document(payload.clone()).unwrap();
+        }
+        for (term, docs) in &corpus.postings {
+            for (&doc, &freq) in docs {
+                builder.add_posting(term, doc, freq).unwrap();
+            }
+        }
+        let built = builder.finish(&meta).unwrap();
+        assert_eq!(built.len(), expected.len(), "lengths differ");
+        assert!(built == expected, "names.mokuji is not reproduced byte for byte");
+    }
+}

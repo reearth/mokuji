@@ -15,13 +15,15 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 | `dict` | A dictionary: one term per record, postings implied throughout, payload as delta-coded integers, every section raw |
 | `dict-deflate` | `dict` again, compressed |
 | `tiny-extra` | `tiny` again, with two sections this version does not define — one in the specification's range, one in the application's |
+| `names` | A gazetteer for completion: each name one term under `name-list`, and a completions section with an entry for every prefix at least two terms begin with — including the byte prefixes that stop inside a character |
 
 ```
-fixtures/build_fixtures.py   builds tiny, tiny-extra and dict, independently of mokuji-write
+fixtures/build_fixtures.py   builds tiny, tiny-extra, dict and names, independently of mokuji-write
 fixtures/*.corpus.txt        the sources they are derived from
 fixtures/*.mokuji             the fixtures
 fixtures/*.hex               annotated hex dumps
-cases.toml                   query, expected result, expected read count
+cases.toml                   query, expected result, expected read count; [[case]]
+                             for term queries, [[completion]] for prefixes
 ```
 
 `tiny` and `dict` are stored raw so that they can be read against the
