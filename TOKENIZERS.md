@@ -223,10 +223,7 @@ with a prefix — whose best results are not among the best of either, so no
 precomputed answer covers it. As one term per name the same input is one prefix,
 which a completions section (`SPEC.md` §5.3.5) can answer ahead of time.
 Measured on 12,854,245 places, completing a second word cost a median of 29
-range reads by word and at most 3 by name (`tools/README.md`). That measurement
-used an approximation of this entry — lowercasing only, without NFKC or the
-whitespace rule — which changes which terms exist but not how many a prefix
-spans.
+range reads by word and at most 3 by name (`tools/README.md`).
 
 What it gives up is a word in the middle: `sea` does not complete to
 `Black Sea`. That is a search, not a completion, and it belongs in a second

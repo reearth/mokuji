@@ -174,15 +174,16 @@ binary measures that, two ways, on files numbered by importance:
 
 - **words**, the `bigram` file above. Finished words are exact terms; the
   unfinished one is a prefix whose runs are united, then intersected with them.
-- **names**, a second file where every name is one term, so what was typed is
-  one prefix of a name. `geonames.py --whole-names` writes that corpus: names
-  lowercased, their own spaces replaced by U+00A0, built with `space-split`.
+- **names**, a second file where every name is one term under `name-list`, so
+  what was typed is one prefix of a name. `geonames.py --whole-names` writes
+  that corpus, names separated by U+001F, and the file carries its own
+  completions section (`SPEC.md` §5.3.5).
 
 ```sh
 python3 ../demo/poi/geonames.py --input allCountries.txt --out names.tsv --whole-names
-mokuji build names.tsv names.mokuji --tokenizer space-split \
+mokuji build names.tsv names.mokuji --tokenizer name-list \
   --attribute lon:5 --attribute lat:5 --attribute population --attribute names \
-  --order-by names
+  --order-by names --completions 1024,16384,10
 cd importance-order && cargo run --release --bin multiword -- \
   ../ordered.mokuji ../names.mokuji typed.txt
 ```
@@ -190,7 +191,9 @@ cd importance-order && cargo run --release --bin multiword -- \
 The queries are the first 1,000 famous places typed partway: the first word cut
 after one to three letters (`lon`), the second word cut the same way
 (`black se`), and a Japanese name cut after two or three characters (`東京タ`).
-Reads and bytes before the payload, with the table held resident:
+Reads and bytes before the payload, with the table held resident. For words
+the table is simulated, since that file carries none; for names it is the
+section in the file, read through `Index::complete`:
 
 | Typed | words | names + table |
 |---|---|---|
@@ -205,8 +208,17 @@ beginning `se` — hundreds of dictionary blocks and megabytes of postings — t
 intersect them with `black`.
 
 Names turn the same query into one prefix, and the table then covers it: no
-typed query cost more than 3 reads or 24 KB before its payload. The whole-name
-file is 417 MB against 368 MB for words, and it is a second file rather than a
+typed query cost more than 3 reads or 24 KB before its payload, and in all 2,776
+the section gave the same ten documents as walking the dictionary without it.
+
+The section itself holds 11,243 prefixes, 165 KB deflated — more than the 59 KB
+of the word table, because names share long prefixes. The longest entries are
+Thai, 48 to 50 bytes: `สถานีอนามัยตำบล` (subdistrict health station) and
+`โรงเรียนบ้านหนอง` (Ban Nong school) begin thousands of names each. Coverage is
+over bytes, not characters
+(`SPEC.md` §5.3.5), and 1,549 of the entries, 14%, end inside a character.
+
+The whole-name file is 416 MB against 368 MB for words, and it is a second file rather than a
 replacement. It completes a name from its start only; `sea` does not find
 `Black Sea`, which is why the two agree on 35–55% of their answers. A search
 that finds a word anywhere still needs the word file; completion is better

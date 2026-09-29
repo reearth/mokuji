@@ -207,9 +207,10 @@ reads = b                      otherwise, where the prefix matches fewer than T
 ```
 
 Whether the prefix has an entry is answered by the resident set, so a reader
-knows which case it is in before it reads anything. On the same places, a table
-covering `T` = 1,024 and `S` = 16 KB holds 3,761 prefixes in 59 KB, counted
-over characters rather than bytes (see Appendix A).
+knows which case it is in before it reads anything. On the same places indexed
+one term per name (`name-list`), a section covering `T` = 1,024 and `S` = 16 KB
+holds 11,243 prefixes in 165 KB, and no partly typed name among 2,776 tried
+cost more than 3 reads before its payload.
 
 ### 4.2 Where the dictionary lives
 
@@ -1087,12 +1088,13 @@ properties that motivated it.
 **Completions are a recorded choice of documents, not a score.**
 A short prefix at planet scale spans hundreds of dictionary blocks (§4.1.1), and
 nothing in the layout makes that smaller: the dictionary is sorted, so the terms
-are where they are. Edge n-grams would make every prefix a term; an answer for
-every prefix of up to five characters alone measured 19 MB. What measured small
-was the opposite: keep an answer only for the prefixes that are expensive, which
-took 59 KB. Those are few — 3,761 at `T` = 1,024 and `S` = 16 KB — because a
-longer prefix matches a subset of what a shorter one does, so past some length
-none qualifies, and none longer can.
+are where they are. Edge n-grams would make every prefix a term; on a word
+index of the same places, an answer for every prefix of up to five characters
+alone measured 19 MB. What measured small was the opposite: keep an answer only
+for the prefixes that are expensive — 59 KB on that word index, 165 KB on a name
+index, where long names share long prefixes. They are few because a longer
+prefix matches a subset of what a shorter one does, so past some length none
+qualifies, and none longer can.
 
 That is stored results, and the format keeps scoring outside (§1). The line is
 drawn where document lengths drew it (§5.7). The section carries two kinds of
@@ -1108,18 +1110,19 @@ bound in §4.1 becomes a number a publisher can state for a whole file.
 
 Coverage is defined over byte strings rather than characters, because the
 dictionary compares bytes. Byte prefixes that stop inside a multi-byte character
-therefore need entries too. The measurement above counted characters; a writer
-enumerating bytes will find a few more entries, and how many is for the first
-implementation to report.
+therefore need entries too. Measured on the name index, 1,549 of its 11,243
+entries end inside a character: 14% more entries, for a definition that needs
+no knowledge of an encoding.
 
 It is not a completion for everything someone types. An entry answers one prefix
 alone; a finished word followed by an unfinished one is an intersection, and the
 best ten of an intersection are not among the best ten of either side. Measured
 on the same places, completing the second word from a word index cost a median
 of 29 reads and up to 13 MB. Indexing each name as one term (`name-list`,
-`TOKENIZERS.md`, approximated in the measurement) turns the same query into one prefix, and completions then
+`TOKENIZERS.md`) turns the same query into one prefix, and completions then
 answered every one of 2,776 partly typed names in at most 3 reads and 24 KB
-before the payload.
+before the payload — the same answers, in all 2,776, as walking the dictionary
+without them.
 
 ## Appendix B. A worked example
 
