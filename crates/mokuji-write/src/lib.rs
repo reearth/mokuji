@@ -17,4 +17,4 @@
 
 mod builder;
 
-pub use builder::{Builder, Column, Options, PayloadEncoding};
+pub use builder::{Builder, Column, Completions, Options, PayloadEncoding};

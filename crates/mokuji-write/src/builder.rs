@@ -55,6 +55,27 @@ pub struct Options {
     /// shrink is stored raw instead, which is decided per section rather than
     /// per block because the codec is recorded per section.
     pub compress: bool,
+    /// Whether to answer expensive prefixes ahead of time (`SPEC.md` §5.3.5).
+    pub completions: Option<Completions>,
+}
+
+/// Which prefixes get an entry in the completions section, and how many
+/// documents each lists.
+///
+/// The documents listed are the ones with the smallest IDs among those holding
+/// a term that begins with the prefix. That is this writer's ranking, and it
+/// ranks by nothing but document order — so a caller who wants the most
+/// important documents first numbers them by importance before adding them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Completions {
+    /// A prefix that at least this many terms begin with gets an entry. Zero
+    /// promises nothing on this count.
+    pub min_terms: u64,
+    /// A prefix whose terms' postings runs total at least this many bytes gets
+    /// an entry. Zero promises nothing on this count.
+    pub max_span: u64,
+    /// How many documents an entry lists at most.
+    pub docs_per_entry: u32,
 }
 
 impl Default for Options {
@@ -67,6 +88,7 @@ impl Default for Options {
             positions: false,
             doc_lengths: false,
             compress: true,
+            completions: None,
         }
     }
 }
@@ -130,6 +152,9 @@ struct Term {
     doc_freq: u64,
     run: Vec<u8>,
     positions: Vec<u8>,
+    /// The term's first documents, as many as a completion lists; empty unless
+    /// completions were asked for.
+    head: Vec<u64>,
 }
 
 #[derive(Debug)]
@@ -154,6 +179,19 @@ impl Builder {
             return Err(Error::Malformed {
                 detail: "positions need frequencies, which say how many belong to each document",
             });
+        }
+        if let Some(c) = options.completions {
+            if c.docs_per_entry == 0 {
+                return Err(Error::Malformed {
+                    detail: "a completion entry lists at least one document",
+                });
+            }
+            // Both zero would be a table with no rule for what goes in it.
+            if c.min_terms == 0 && c.max_span == 0 {
+                return Err(Error::Malformed {
+                    detail: "completions need a term count or a postings size to cover",
+                });
+            }
         }
         Ok(Builder {
             options,
@@ -373,6 +411,13 @@ impl Builder {
         // cannot disturb the layout.
         let (term_index, term_index_codec) = self.pack_one(term_index)?;
 
+        // Like the term index, completions depend on the terms and their runs
+        // and on no offset, so they can be sized before anything is placed.
+        let completions = match self.options.completions {
+            Some(c) => Some(self.pack_one(completions(&self.terms, c))?),
+            None => None,
+        };
+
         // Postings are placed before the term blocks that point into them, so
         // that a postings offset is known before any term block is built. With
         // the opposite order each depends on the size of the other, and once
@@ -415,12 +460,11 @@ impl Builder {
             Some(out)
         };
 
-        let mut order = vec![
-            SectionId::META,
-            SectionId::TERM_INDEX,
-            SectionId::TERM_BLOCK_OFFSETS,
-            SectionId::PAYLOAD_OFFSETS,
-        ];
+        let mut order = vec![SectionId::META, SectionId::TERM_INDEX];
+        if completions.is_some() {
+            order.push(SectionId::COMPLETIONS);
+        }
+        order.extend([SectionId::TERM_BLOCK_OFFSETS, SectionId::PAYLOAD_OFFSETS]);
         if doc_lengths.is_some() {
             order.push(SectionId::DOC_LENGTHS);
         }
@@ -448,6 +492,7 @@ impl Builder {
         let postings_at = (HEADER_LEN + table_len) as u64
             + meta.len() as u64
             + term_index.len() as u64
+            + completions.as_ref().map_or(0, |(c, _)| c.len() as u64)
             + 8 * (term_chunks.len() as u64 + 1)
             + 12
             + 8 * (payload_blocks.len() as u64 + 1)
@@ -464,6 +509,9 @@ impl Builder {
             let length = match id {
                 SectionId::META => meta.len() as u64,
                 SectionId::TERM_INDEX => term_index.len() as u64,
+                SectionId::COMPLETIONS => {
+                    completions.as_ref().expect("present when ordered").0.len() as u64
+                }
                 SectionId::TERM_BLOCK_OFFSETS => 8 * (term_chunks.len() as u64 + 1),
                 SectionId::PAYLOAD_OFFSETS => 12 + 8 * (payload_blocks.len() as u64 + 1),
                 SectionId::DOC_LENGTHS => {
@@ -529,6 +577,7 @@ impl Builder {
         // start can fetch them in one read (SPEC.md §4, §5.2).
         let codec_of = |id: SectionId| match id {
             SectionId::TERM_INDEX => term_index_codec,
+            SectionId::COMPLETIONS => completions.as_ref().expect("present when coded").1,
             SectionId::TERM_BLOCKS => term_blocks_codec,
             SectionId::PAYLOAD => payload_codec,
             // Metadata stays readable without a decompressor, which is worth
@@ -560,6 +609,9 @@ impl Builder {
             match id {
                 SectionId::META => out.extend_from_slice(meta),
                 SectionId::TERM_INDEX => out.extend_from_slice(&term_index),
+                SectionId::COMPLETIONS => {
+                    out.extend_from_slice(&completions.as_ref().expect("present when ordered").0)
+                }
                 SectionId::TERM_BLOCK_OFFSETS => out.extend_from_slice(&term_block_offsets),
                 SectionId::PAYLOAD_OFFSETS => out.extend_from_slice(&payload_offsets),
                 SectionId::DOC_LENGTHS => {
@@ -690,6 +742,10 @@ impl Builder {
         // document, that document's ID is the ID this term is about to be
         // given, and it occurs there once (SPEC.md §5.3.4). Writing a run would
         // record nothing and cost a range read to read back.
+        let head = match self.options.completions {
+            Some(c) => open.docs[..open.docs.len().min(c.docs_per_entry as usize)].to_vec(),
+            None => Vec::new(),
+        };
         let term_id = self.terms.len() as u64;
         if open.docs == [term_id] && open.freqs == [1] {
             self.terms.push(Term {
@@ -697,6 +753,7 @@ impl Builder {
                 doc_freq: 1,
                 run: Vec::new(),
                 positions,
+                head,
             });
             return;
         }
@@ -727,8 +784,82 @@ impl Builder {
             doc_freq: open.docs.len() as u64,
             run,
             positions,
+            head,
         });
     }
+}
+
+/// The completions section, uncompressed (`SPEC.md` §5.3.5).
+///
+/// Every prefix of every term is a candidate, and most are cheap, so this does
+/// not enumerate them. It walks down from one byte: the terms sharing a prefix
+/// are a contiguous run of the sorted dictionary, a prefix that is not expensive
+/// has no expensive extension — its extensions match a subset of its terms — and
+/// so only the runs that were expensive at one length are split at the next.
+fn completions(terms: &[Term], c: Completions) -> Vec<u8> {
+    let mut entries: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
+    // (start, end, prefix length) of runs whose terms share `len - 1` bytes.
+    let mut pending = vec![(0usize, terms.len(), 1usize)];
+    while let Some((start, end, len)) = pending.pop() {
+        // Split the run by the byte at `len - 1`. A term too short to have one
+        // is the shared prefix itself, and sorts first.
+        let mut groups = Vec::new();
+        let mut at = start;
+        while at < end && terms[at].term.len() < len {
+            at += 1;
+        }
+        while at < end {
+            let key = &terms[at].term[..len];
+            let mut next = at + 1;
+            while next < end && terms[next].term.starts_with(key) {
+                next += 1;
+            }
+            groups.push((at, next));
+            at = next;
+        }
+
+        let mut expensive = Vec::new();
+        for &(from, to) in &groups {
+            let count = (to - from) as u64;
+            let span: u64 = terms[from..to].iter().map(|t| t.run.len() as u64).sum();
+            if (c.min_terms != 0 && count >= c.min_terms) || (c.max_span != 0 && span >= c.max_span)
+            {
+                expensive.push((from, to));
+            }
+        }
+        for &(from, to) in &expensive {
+            pending.push((from, to, len + 1));
+            let mut best: Vec<u64> = Vec::new();
+            for term in &terms[from..to] {
+                best.extend_from_slice(&term.head);
+            }
+            best.sort_unstable();
+            best.dedup();
+            best.truncate(c.docs_per_entry as usize);
+            entries.push((terms[from].term[..len].to_vec(), best));
+        }
+    }
+    // The walk visits prefixes depth-first from a stack; the section wants them
+    // in byte order.
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = Vec::new();
+    varint::encode(c.min_terms, &mut out);
+    varint::encode(c.max_span, &mut out);
+    varint::encode(u64::from(c.docs_per_entry), &mut out);
+    varint::encode(entries.len() as u64, &mut out);
+    let mut previous: &[u8] = b"";
+    for (prefix, docs) in &entries {
+        front_coded::encode(prefix, previous, &mut out);
+        previous = prefix;
+        varint::encode(docs.len() as u64, &mut out);
+        let mut last = 0u64;
+        for &doc in docs {
+            varint::encode(zigzag(doc.wrapping_sub(last) as i64), &mut out);
+            last = doc;
+        }
+    }
+    out
 }
 
 fn offset_table(base: u64, blocks: &[Vec<u8>]) -> Vec<u8> {

@@ -24,6 +24,7 @@ fn options() -> Options {
         // The fixture is stored raw so that its hex dump can be read against
         // the specification by hand.
         compress: false,
+        completions: None,
     }
 }
 

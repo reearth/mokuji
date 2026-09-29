@@ -9,7 +9,7 @@ use mokuji_format::{
 };
 
 use crate::term::{self, find_in_block, TermEntry, TermIndex};
-use crate::{postings, RangeReader};
+use crate::{postings, Completions, RangeReader};
 
 /// How much of the file to fetch when opening it.
 ///
@@ -228,6 +228,7 @@ pub struct Index<R> {
     payload_offsets: Vec<u8>,
     doc_lengths: Option<Vec<u64>>,
     columns: Vec<Column>,
+    completions: Option<Completions>,
     term_blocks_codec: SectionCodec,
     payload_codec: SectionCodec,
     /// The whole term blocks section, if it is being held rather than fetched.
@@ -267,13 +268,18 @@ impl<R: RangeReader> Index<R> {
         if header.flags.contains(Flags::HAS_PAYLOAD) {
             required.push(SectionId::PAYLOAD_OFFSETS);
         }
-        let wanted = required
+        let mut wanted = required
             .iter()
             .map(|&id| {
                 let section = find(&sections, id)?;
                 Ok((id, section.offset, section.length, section.codec))
             })
             .collect::<Result<Vec<_>>>()?;
+        // Resident when present: whether a prefix has an entry has to be known
+        // before anything is read for it (SPEC.md §4.1.1).
+        if let Some(s) = sections.iter().find(|s| s.id == SectionId::COMPLETIONS) {
+            wanted.push((s.id, s.offset, s.length, s.codec));
+        }
 
         // The recommended layout puts the resident sections together at the
         // head of the file, so when the opening prefix does not reach far
@@ -352,6 +358,11 @@ impl<R: RangeReader> Index<R> {
             None => Vec::new(),
         };
 
+        let completions = match resident.remove(&SectionId::COMPLETIONS) {
+            Some(bytes) => Some(Completions::decode(&bytes, header.num_docs)?),
+            None => None,
+        };
+
         let term_blocks_codec = find(&sections, SectionId::TERM_BLOCKS)?.codec;
         let payload_codec = if header.flags.contains(Flags::HAS_PAYLOAD) {
             find(&sections, SectionId::PAYLOAD)?.codec
@@ -391,6 +402,7 @@ impl<R: RangeReader> Index<R> {
             term_blocks,
             doc_lengths,
             columns,
+            completions,
             sections,
             reader,
         })
@@ -665,6 +677,52 @@ impl<R: RangeReader> Index<R> {
             }
         }
         Ok(out)
+    }
+
+    /// The completions section, if the file carries one (`SPEC.md` §5.3.5).
+    pub fn completions(&self) -> Option<&Completions> {
+        self.completions.as_ref()
+    }
+
+    /// The first `limit` documents holding a term that begins with `prefix`,
+    /// and whether the completions section answered.
+    ///
+    /// An entry answers when there is one and it lists enough; that costs no
+    /// read at all. Otherwise every term of the prefix is walked and its runs
+    /// united, and the documents come back in document order — which is the
+    /// order a writer that ranks by numbering would have listed them in, and
+    /// no ranking otherwise. Where the file declares coverage, a prefix with no
+    /// entry is known to be cheap, so the walk is bounded (§4.1.1).
+    pub async fn complete(&self, prefix: &[u8], limit: usize) -> Result<(Vec<u64>, bool)> {
+        if let Some(c) = &self.completions {
+            if let Some(docs) = c.get(prefix) {
+                // An entry lists `docs_per_entry` documents, or every document
+                // the prefix has if there are fewer. Either way it answers a
+                // limit it reaches, and the second answers any limit.
+                if limit <= docs.len() || (docs.len() as u64) < c.docs_per_entry {
+                    return Ok((docs[..limit.min(docs.len())].to_vec(), true));
+                }
+            }
+        }
+        let entries: Vec<TermEntry> = self
+            .prefix(prefix, usize::MAX)
+            .await?
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect();
+        if entries.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        let mut docs: Vec<u64> = self
+            .postings_span(&entries)
+            .await?
+            .into_iter()
+            .flat_map(|p| p.docs)
+            .collect();
+        docs.sort_unstable();
+        docs.dedup();
+        docs.truncate(limit);
+        Ok((docs, false))
     }
 
     /// Reads the postings for a contiguous run of dictionary entries in one go.
