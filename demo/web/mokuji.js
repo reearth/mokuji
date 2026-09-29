@@ -21,6 +21,7 @@ const SECTION = {
   TERM_INDEX: 0x0010,
   TERM_BLOCKS: 0x0011,
   TERM_BLOCK_OFFSETS: 0x0012,
+  COMPLETIONS: 0x0013,
   POSTINGS: 0x0020,
   PAYLOAD: 0x0030,
   PAYLOAD_OFFSETS: 0x0031,
@@ -179,6 +180,18 @@ export function jaAddress(text) {
   return out;
 }
 
+/** One name as `name-list` normalizes it (TOKENIZERS.md): NFKC, the default
+ * lowercase mapping, and every run of White_Space one space. `\s` is not
+ * White_Space — it takes U+FEFF and misses U+0085 — so the property is named. */
+export function nameList(text) {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/\p{White_Space}+/u)
+    .filter(Boolean)
+    .join(" ");
+}
+
 const TOKENIZERS = {
   "space-split": (q) => q,
   identity: (q) => q,
@@ -187,7 +200,47 @@ const TOKENIZERS = {
   // The same normalization as `ja-address`; only the token boundary differs,
   // and a prefix is not split in either.
   "ja-address-bigram": jaAddress,
+  // What was typed is a prefix of one name, so it is normalized, not split.
+  "name-list": nameList,
 };
+
+/** Bytes as a string, one character per byte, to key a Map by. */
+const byteKey = (bytes) => String.fromCharCode(...bytes);
+
+/** The completions section (SPEC.md §5.3.5), checked as a reader must. */
+function decodeCompletions(bytes, numDocs) {
+  const cursor = new Cursor(bytes);
+  const minTerms = cursor.varint();
+  const maxSpan = cursor.varint();
+  const docsPerEntry = cursor.varint();
+  const count = cursor.varint();
+  if (docsPerEntry === 0) throw new Error("a completion entry lists no documents");
+  const entries = new Map();
+  let previous = new Uint8Array(0);
+  for (let i = 0; i < count; i++) {
+    const key = cursor.key(previous);
+    if (key.length === 0 || (i > 0 && compare(key, previous) <= 0)) {
+      throw new Error("completion prefixes are empty or out of order");
+    }
+    previous = key;
+    const n = cursor.varint();
+    if (n === 0 || n > docsPerEntry) throw new Error("a completion lists too few or too many");
+    const docs = [];
+    const seen = new Set();
+    let last = 0;
+    for (let j = 0; j < n; j++) {
+      last += unzigzag(cursor.varint());
+      if (last < 0 || last >= numDocs || seen.has(last)) {
+        throw new Error("a completion lists a document outside the index, or twice");
+      }
+      seen.add(last);
+      docs.push(last);
+    }
+    entries.set(byteKey(key), docs);
+  }
+  if (cursor.pos !== bytes.length) throw new Error("trailing bytes in the completions section");
+  return { minTerms, maxSpan, docsPerEntry, entries };
+}
 
 /** Named columns of per-document numbers (SPEC.md §5.8). */
 function decodeColumns(bytes, numDocs) {
@@ -396,7 +449,9 @@ export class MokujiIndex {
     // Both are read in bulk before any payload is, which is what makes them
     // worth having as sections of their own (SPEC.md §5.7, §5.8). A reader that
     // fetched them per query would pay for the separation twice.
-    for (const id of [SECTION.DOC_LENGTHS, SECTION.DOC_ATTRIBUTES]) {
+    // Completions too: whether a prefix has an entry decides what it costs,
+    // and has to be known before anything is read for it (SPEC.md §4.1.1).
+    for (const id of [SECTION.COMPLETIONS, SECTION.DOC_LENGTHS, SECTION.DOC_ATTRIBUTES]) {
       if (index.sections.has(id)) wanted.push(id);
     }
     for (const id of wanted) {
@@ -444,6 +499,10 @@ export class MokujiIndex {
     index.columns = index.sections.has(SECTION.DOC_ATTRIBUTES)
       ? decodeColumns(await resident(SECTION.DOC_ATTRIBUTES), index.numDocs)
       : new Map();
+
+    index.completions = index.sections.has(SECTION.COMPLETIONS)
+      ? decodeCompletions(await resident(SECTION.COMPLETIONS), index.numDocs)
+      : null;
 
     index.termIndex = await resident(SECTION.TERM_INDEX);
     index.termBlockOffsets = await resident(SECTION.TERM_BLOCK_OFFSETS);
@@ -748,6 +807,31 @@ export class MokujiIndex {
       }
     }
     return out;
+  }
+
+  /** The first `limit` documents for what has been typed.
+   *
+   * From the completions section when the prefix has an entry that reaches
+   * the limit — or lists fewer than it may, so lists them all — which costs no
+   * request before the payload. Otherwise every term the prefix matches, whose
+   * runs are united and returned in document order.
+   */
+  async complete(typed, limit = 10) {
+    const normalized = this.normalize(typed);
+    const prefix = encoder.encode(normalized);
+    let docs = null;
+    const listed = this.completions?.entries.get(byteKey(prefix));
+    if (listed && (limit <= listed.length || listed.length < this.completions.docsPerEntry)) {
+      docs = listed.slice(0, limit);
+    }
+    const fromTable = docs !== null;
+    if (!fromTable) {
+      const entries = await this.prefix(normalized, Infinity);
+      const postings = await this.postingsSpan(entries);
+      docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b).slice(0, limit);
+    }
+    const payloads = await this.payloadSpan(docs);
+    return { normalized, fromTable, docs, payloads };
   }
 
   /** Complete a prefix, returning every matching document with its payload.

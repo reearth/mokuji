@@ -18,6 +18,20 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct Suite {
     case: Vec<Case>,
+    #[serde(default)]
+    completion: Vec<Completion>,
+}
+
+#[derive(Deserialize)]
+struct Completion {
+    name: String,
+    fixture: String,
+    prefix: String,
+    limit: usize,
+    docs: Vec<u64>,
+    payloads: Vec<String>,
+    from_table: bool,
+    reads: u32,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +140,35 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
             "{}: {query_reads} reads exceeds the bound of {bound}",
             case.name,
         );
+    }
+}
+
+#[test]
+fn every_completion_comes_from_where_the_case_says_within_its_reads() {
+    let suite = suite();
+    assert!(!suite.completion.is_empty(), "no completion cases were loaded");
+
+    for case in &suite.completion {
+        let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
+        let index = block_on(Index::open(&reader)).expect(&case.name);
+        reader.reset();
+
+        let (docs, from_table) =
+            block_on(index.complete(case.prefix.as_bytes(), case.limit)).expect(&case.name);
+        let before_payload = reader.reads();
+        let payloads: Vec<String> = block_on(index.payload_span(&docs))
+            .expect(&case.name)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+
+        assert_eq!(docs, case.docs, "{}: documents", case.name);
+        assert_eq!(payloads, case.payloads, "{}: payloads", case.name);
+        assert_eq!(from_table, case.from_table, "{}: source", case.name);
+        if from_table {
+            assert_eq!(before_payload, 0, "{}: an entry costs no read", case.name);
+        }
+        assert_eq!(reader.reads(), case.reads, "{}: read count", case.name);
     }
 }
 

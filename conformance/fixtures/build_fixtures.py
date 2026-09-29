@@ -16,7 +16,9 @@ Usage: python3 build_fixtures.py [--check]
 import argparse
 import hashlib
 import pathlib
+import re
 import sys
+import unicodedata
 
 HERE = pathlib.Path(__file__).parent
 
@@ -34,6 +36,7 @@ SEC_META = 0x0001
 SEC_TERM_INDEX = 0x0010
 SEC_TERM_BLOCKS = 0x0011
 SEC_TERM_BLOCK_OFFSETS = 0x0012
+SEC_COMPLETIONS = 0x0013
 SEC_POSTINGS = 0x0020
 SEC_PAYLOAD = 0x0030
 SEC_PAYLOAD_OFFSETS = 0x0031
@@ -66,6 +69,20 @@ DICT_DOCUMENTS = [
     ("東京都千代田区丸の内1丁目1番2号", "139.767258,35.681604"),
     ("東京都千代田区丸の内2丁目1番1号", "139.763447,35.680022"),
     ("東京都港区赤坂1丁目1番1号", "139.740331,35.667012"),
+]
+
+# Places under all their names, separated by U+001F for `name-list`. Numbered
+# most important first, so that the completions this script writes — the
+# smallest document IDs of a prefix — are the ones worth showing. `東京` and
+# `東北` share their first character, so its bytes are prefixes too, including
+# the two that stop inside it.
+NAME_DOCUMENTS = [
+    ("Black Sea\x1fČerné moře", "Black Sea"),
+    ("Black Forest\x1fSchwarzwald", "Black Forest"),
+    ("Blackpool", "Blackpool"),
+    ("Bled", "Bled"),
+    ("Tokyo\x1f東京", "Tokyo"),
+    ("Tohoku\x1f東北", "Tohoku"),
 ]
 
 DOCUMENTS = [
@@ -183,18 +200,39 @@ def cbor(value):
 # --- index construction ----------------------------------------------------
 
 
-def tokenize(text, whole):
-    """The fixture's tokenizer. Recorded, not specified."""
-    return [text] if whole else text.split(" ")
+# Unicode White_Space, spelled out. Python's str.isspace() is not it: it also
+# counts U+001C to U+001F, which would make the name-list separator a space.
+WHITE_SPACE = re.compile(
+    "[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a"
+    "\u2028\u2029\u202f\u205f\u3000]+"
+)
 
 
-def build_index(documents, whole):
+def name(text):
+    """One name as TOKENIZERS.md's `name-list` normalizes it."""
+    lowered = unicodedata.normalize("NFKC", text).lower()
+    return " ".join(w for w in WHITE_SPACE.split(lowered) if w)
+
+
+def tokenize(text, tokenizer_id):
+    """The fixture's tokenizers. Recorded, not specified."""
+    if tokenizer_id == "identity":
+        return [text]
+    if tokenizer_id == "name-list":
+        return [n for n in map(name, text.split("\x1f")) if n]
+    assert tokenizer_id == "space-split", tokenizer_id
+    return text.split(" ")
+
+
+def build_index(documents, tokenizer_id):
     """Term to document to the positions it occupies there."""
     postings = {}
     for doc_id, (text, _) in enumerate(documents):
-        for at, token in enumerate(tokenize(text, whole)):
+        for at, token in enumerate(tokenize(text, tokenizer_id)):
             postings.setdefault(token, {}).setdefault(doc_id, []).append(at)
-    return {term: postings[term] for term in sorted(postings)}
+    # Byte order, which is what the dictionary is sorted by; for text outside
+    # ASCII it is not the order Python sorts strings in.
+    return {term: postings[term] for term in sorted(postings, key=str.encode)}
 
 
 def zigzag(v):
@@ -278,15 +316,49 @@ def encode_payload_block(values, decimals=None):
     return bytes(out)
 
 
+def encode_completions(index, runs, min_terms, max_span, docs_per_entry):
+    """The completions section (SPEC.md 5.3.5), by brute force.
+
+    Every non-empty byte prefix of every term is tried against the definition,
+    rather than walked the way a writer might to avoid trying them: the point
+    of this script is to follow the prose, not to be quick.
+    """
+    keys = {term.encode(): term for term in index}
+    prefixes = {key[:n] for key in keys for n in range(1, len(key) + 1)}
+    entries = []
+    for prefix in sorted(prefixes):
+        matched = [term for key, term in keys.items() if key.startswith(prefix)]
+        span = sum(len(runs[term]) for term in matched)
+        if not ((min_terms and len(matched) >= min_terms) or (max_span and span >= max_span)):
+            continue
+        # This script's choice of documents: the smallest IDs, which are the
+        # most important because the fixture was numbered that way.
+        docs = sorted({doc for term in matched for doc in index[term]})[:docs_per_entry]
+        entries.append((prefix, docs))
+
+    out = bytearray(varint(min_terms) + varint(max_span) + varint(docs_per_entry))
+    out += varint(len(entries))
+    previous = b""
+    for prefix, docs in entries:
+        out += front_coded(prefix, previous)
+        previous = prefix
+        out += varint(len(docs))
+        last = 0
+        for doc in docs:
+            out += varint(zigzag(doc - last))
+            last = doc
+    return bytes(out)
+
+
 def chunk(items, size):
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.txt",
+def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
           tokenizer_id="space-split", doc_lengths=False, columns=None,
-          positions=False, extra=None):
+          positions=False, extra=None, completions=None):
     documents = DOCUMENTS if documents is None else documents
-    index = build_index(documents, whole)
+    index = build_index(documents, tokenizer_id)
     terms = list(index)
     runs = {term: encode_postings(index[term], i) for i, term in enumerate(terms)}
     places = {term: encode_positions(index[term]) for term in terms} if positions else None
@@ -302,7 +374,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     # the header cannot give (SPEC.md 5.7).
     lengths = None
     if doc_lengths:
-        lengths = pack_values([len(tokenize(t, whole)) for t, _ in documents])
+        lengths = pack_values([len(tokenize(t, tokenizer_id)) for t, _ in documents])
 
     # Named columns of per-document numbers (SPEC.md 5.8): payload that can be
     # read in bulk and read early.
@@ -322,6 +394,8 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         term_index += front_coded(group[0].encode(), previous)
         previous = group[0].encode()
     term_index = bytes(term_index)
+
+    completed = encode_completions(index, runs, *completions) if completions else None
 
     corpus = (HERE / corpus_name).read_bytes()
     meta = cbor(
@@ -343,6 +417,11 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
                     "doc_lengths": 1 if doc_lengths else 0,
                     "positions": 1 if positions else 0,
                     **(
+                        {"completions": "{},{},{} by document order".format(*completions)}
+                        if completions
+                        else {}
+                    ),
+                    **(
                         {"attributes": [f"{n}:{-e}" for n, e, _ in columns]}
                         if columns
                         else {}
@@ -357,12 +436,11 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     # postings offset is known before any term block is built. With the
     # opposite order each depends on the size of the other, which has no fixed
     # point once blocks are compressed.
-    order = [
-        SEC_META,
-        SEC_TERM_INDEX,
-        SEC_TERM_BLOCK_OFFSETS,
-        SEC_PAYLOAD_OFFSETS,
-    ]
+    order = [SEC_META, SEC_TERM_INDEX]
+    # Resident, and depends on no offset, so it sits with the term index.
+    if completed is not None:
+        order.append(SEC_COMPLETIONS)
+    order += [SEC_TERM_BLOCK_OFFSETS, SEC_PAYLOAD_OFFSETS]
     if lengths is not None:
         order.append(SEC_DOC_LENGTHS)
     if attributes is not None:
@@ -382,6 +460,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         head
         + len(meta)
         + len(term_index)
+        + (len(completed) if completed is not None else 0)
         + 8 * (len(term_chunks) + 1)
         + 12
         + 8 * (len(payload_blocks) + 1)
@@ -420,6 +499,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         **({SEC_DOC_LENGTHS: len(lengths)} if lengths is not None else {}),
         **({SEC_DOC_ATTRIBUTES: len(attributes)} if attributes is not None else {}),
         SEC_TERM_INDEX: len(term_index),
+        **({SEC_COMPLETIONS: len(completed)} if completed is not None else {}),
         SEC_TERM_BLOCK_OFFSETS: 8 * (len(term_chunks) + 1),
         SEC_PAYLOAD_OFFSETS: 12 + 8 * (len(payload_blocks) + 1),
         SEC_POSTINGS: sum(len(runs[t]) for t in terms),
@@ -460,6 +540,7 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
         **({SEC_DOC_LENGTHS: lengths} if lengths is not None else {}),
         **({SEC_DOC_ATTRIBUTES: attributes} if attributes is not None else {}),
         SEC_TERM_INDEX: term_index,
+        **({SEC_COMPLETIONS: completed} if completed is not None else {}),
         SEC_TERM_BLOCK_OFFSETS: term_block_offsets,
         SEC_PAYLOAD_OFFSETS: payload_offsets,
         SEC_TERM_BLOCKS: b"".join(blocks),
@@ -481,7 +562,9 @@ def build(documents=None, whole=False, decimals=None, corpus_name="tiny.corpus.t
     header[10:12] = flags.to_bytes(2, "little")
     header[12:16] = len(order).to_bytes(4, "little")
     header[16:24] = len(documents).to_bytes(8, "little")
-    header[24:32] = sum(len(tokenize(t, whole)) for t, _ in documents).to_bytes(8, "little")
+    header[24:32] = sum(len(tokenize(t, tokenizer_id)) for t, _ in documents).to_bytes(
+        8, "little"
+    )
     header[32:40] = HEADER_LEN.to_bytes(8, "little")
     header[40:44] = (SECTION_ENTRY_LEN * len(order)).to_bytes(4, "little")
 
@@ -519,6 +602,7 @@ def section_name(sid):
         SEC_TERM_INDEX: "term index",
         SEC_TERM_BLOCKS: "term blocks",
         SEC_TERM_BLOCK_OFFSETS: "term block offsets",
+        SEC_COMPLETIONS: "completions",
         SEC_POSTINGS: "postings",
         SEC_POSITIONS: "positions",
         SEC_PAYLOAD: "payload",
@@ -565,7 +649,8 @@ def load_resident(f):
         )
 
     resident = {sid: f.read(*sections[sid]) for sid in sorted(sections) if sid in
-                (SEC_META, SEC_TERM_INDEX, SEC_TERM_BLOCK_OFFSETS, SEC_PAYLOAD_OFFSETS)}
+                (SEC_META, SEC_TERM_INDEX, SEC_COMPLETIONS, SEC_TERM_BLOCK_OFFSETS,
+                 SEC_PAYLOAD_OFFSETS)}
     return header, sections, resident
 
 
@@ -716,6 +801,98 @@ def search(data, query):
     return {d: payload_of(f, resident, d, cache) for d in sorted(results)}, f.reads
 
 
+def read_completions(section, num_docs):
+    """Entries by prefix, checking what SPEC.md 5.3.5 requires of a reader."""
+    min_terms, pos = read_varint(section, 0)
+    max_span, pos = read_varint(section, pos)
+    docs_per_entry, pos = read_varint(section, pos)
+    count, pos = read_varint(section, pos)
+    assert docs_per_entry > 0
+    entries, prefix = {}, b""
+    for _ in range(count):
+        key, pos = read_front_coded(section, pos, prefix)
+        assert key and key > prefix, "completion prefixes are not strictly increasing"
+        prefix = key
+        n, pos = read_varint(section, pos)
+        assert 0 < n <= docs_per_entry
+        docs, last = [], 0
+        for _ in range(n):
+            raw, pos = read_varint(section, pos)
+            last += unzigzag(raw)
+            assert 0 <= last < num_docs and last not in docs
+            docs.append(last)
+        entries[key] = docs
+    assert pos == len(section), "trailing bytes in the completions section"
+    return docs_per_entry, entries
+
+
+def complete(data, prefix, limit):
+    """The first `limit` documents of a prefix, and whether an entry answered.
+
+    From the completions section when the prefix has an entry that reaches the
+    limit — or lists fewer than it may, which means it lists them all — at no
+    read before the payload. Otherwise every term the prefix matches, walked
+    as SPEC.md 4.1 describes: the first block on faith, later ones only while
+    their boundary key still shares the prefix, and one read for the postings
+    of the whole run of terms.
+    """
+    f = CountingFile(data)
+    header, _, resident = load_resident(f)
+    num_docs = int.from_bytes(header[16:24], "little")
+    has_freqs = bool(int.from_bytes(header[10:12], "little") & FLAG_HAS_FREQS)
+    f.reads = 0
+    prefix = prefix.encode()
+
+    docs = None
+    if SEC_COMPLETIONS in resident:
+        docs_per_entry, entries = read_completions(resident[SEC_COMPLETIONS], num_docs)
+        listed = entries.get(prefix)
+        if listed is not None and (limit <= len(listed) or len(listed) < docs_per_entry):
+            docs = listed[:limit]
+    from_table = docs is not None
+
+    if docs is None:
+        term_index = resident[SEC_TERM_INDEX]
+        count = int.from_bytes(term_index[0:4], "little")
+        boundaries, pos, key = [], 4, b""
+        for _ in range(count):
+            key, pos = read_front_coded(term_index, pos, key)
+            boundaries.append(key)
+        start = find_block(term_index, prefix) or 0
+        offsets = resident[SEC_TERM_BLOCK_OFFSETS]
+        matched, term_id = [], None
+        for ordinal in range(start, count):
+            if ordinal > start and not boundaries[ordinal].startswith(prefix):
+                break
+            lo = int.from_bytes(offsets[ordinal * 8 : ordinal * 8 + 8], "little")
+            hi = int.from_bytes(offsets[ordinal * 8 + 8 : ordinal * 8 + 16], "little")
+            block = f.read(lo, hi - lo)
+            n, pos = read_varint(block, 0)
+            first, pos = read_varint(block, pos)
+            key, offset = b"", None
+            for i in range(n):
+                key, pos = read_front_coded(block, pos, key)
+                doc_freq, pos = read_varint(block, pos)
+                delta, pos = read_varint(block, pos)
+                offset = delta if offset is None else offset + delta
+                length, pos = read_varint(block, pos)
+                if key.startswith(prefix):
+                    matched.append((first + i, doc_freq, offset, length))
+        stored = [m for m in matched if m[3]]
+        span = b""
+        if stored:
+            lo = stored[0][2]
+            span = f.read(lo, stored[-1][2] + stored[-1][3] - lo)
+        found = set()
+        for term_id, doc_freq, offset, length in matched:
+            run = span[offset - stored[0][2] : offset - stored[0][2] + length] if length else b""
+            found |= decode_postings(run, has_freqs, term_id, doc_freq, num_docs).keys()
+        docs = sorted(found)[:limit]
+
+    cache = {}
+    return [(d, payload_of(f, resident, d, cache)) for d in docs], f.reads, from_table
+
+
 # --- output ----------------------------------------------------------------
 
 
@@ -735,7 +912,6 @@ FIXTURES = [
     {
         "name": "tiny",
         "documents": DOCUMENTS,
-        "whole": False,
         "decimals": None,
         "tokenizer_id": "space-split",
         "doc_lengths": True,
@@ -760,7 +936,6 @@ FIXTURES = [
         # what forward compatibility means in practice.
         "name": "tiny-extra",
         "documents": DOCUMENTS,
-        "whole": False,
         "decimals": None,
         "tokenizer_id": "space-split",
         "doc_lengths": True,
@@ -778,7 +953,6 @@ FIXTURES = [
     {
         "name": "dict",
         "documents": DICT_DOCUMENTS,
-        "whole": True,
         "decimals": 6,
         "tokenizer_id": "identity",
         # A dictionary of places wants a ranking prior, and this is where one
@@ -790,10 +964,44 @@ FIXTURES = [
             (["東京都新宿区"], {}, 1),
         ],
     },
+    {
+        # Completion (SPEC.md 5.3.5): each name one term, and an entry for
+        # every prefix that at least two terms begin with.
+        "name": "names",
+        "documents": NAME_DOCUMENTS,
+        "decimals": None,
+        "tokenizer_id": "name-list",
+        "completions": (2, 0, 2),
+        "cases": [
+            (["tokyo"], {4: "Tokyo"}, 3),
+            (["東京"], {4: "Tokyo"}, 3),
+        ],
+        # prefix, limit, expected (doc, payload) pairs, reads, from the table
+        "completions_cases": [
+            # Shared by four names, so an entry answers, and the two documents
+            # it lists share a payload block: one read in all.
+            ("bl", 2, [(0, "Black Sea"), (1, "Black Forest")], 1, True),
+            # One more than the entry lists, so the dictionary: two term blocks,
+            # one postings read for the two runs stored (`blackpool` and `bled`
+            # name their own documents), and two payload blocks.
+            ("bl", 3, [(0, "Black Sea"), (1, "Black Forest"), (2, "Blackpool")], 5, False),
+            # A prefix of one name is cheap and has no entry.
+            ("black s", 10, [(0, "Black Sea")], 3, False),
+            # The first character of `東京` and `東北`.
+            ("東", 2, [(4, "Tokyo"), (5, "Tohoku")], 1, True),
+            # Proven absent by the one block it would be in.
+            ("x", 10, [], 1, False),
+        ],
+    },
 ]
 
 
 def check(spec, data):
+    for prefix, limit, expected, expected_reads, expected_table in spec.get("completions_cases", []):
+        got, reads, from_table = complete(data, prefix, limit)
+        assert got == expected, (spec["name"], prefix, got, expected)
+        assert from_table == expected_table, (spec["name"], prefix, from_table)
+        assert reads == expected_reads, (spec["name"], prefix, reads, expected_reads)
     for query, expected, expected_reads in spec["cases"]:
         got, reads = search(data, query)
         assert got == expected, (spec["name"], query, got, expected)
@@ -816,7 +1024,6 @@ def main():
         )
         data, regions = build(
             documents=spec["documents"],
-            whole=spec["whole"],
             decimals=spec["decimals"],
             corpus_name=corpus_name,
             tokenizer_id=spec["tokenizer_id"],
@@ -824,6 +1031,7 @@ def main():
             columns=spec.get("columns"),
             positions=spec.get("positions", False),
             extra=spec.get("extra"),
+            completions=spec.get("completions"),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other
