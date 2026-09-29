@@ -27,6 +27,11 @@ pub struct Recipe<'a> {
     pub sections: &'a [(u16, String)],
     /// Generation number.
     pub generation: u64,
+    /// An attribute column to number the documents by, highest first.
+    ///
+    /// Postings are in document ID order, so numbering documents by importance
+    /// puts every term's most important documents at the front of its run.
+    pub order_by: Option<&'a str>,
 }
 
 /// Builds `input` into `output`.
@@ -43,6 +48,7 @@ pub fn run(
         attrs,
         sections,
         generation,
+        order_by,
     } = *recipe;
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
@@ -84,7 +90,14 @@ pub fn run(
     // Requiring the caller to have sorted the corpus that way would be a
     // requirement they cannot check, since the tokenizer decides what the terms
     // are — so the ordering is done here instead.
-    let order = dictionary_order(&corpus);
+    //
+    // An order asked for by name overrides it. That costs a dictionary its
+    // implied postings, and whether that is worth paying is what the caller is
+    // choosing.
+    let order = match order_by {
+        Some(name) => Some(importance_order(&corpus, declared, name)?),
+        None => dictionary_order(&corpus),
+    };
     let mut builder = Builder::new(options)?;
     let identity: Vec<u64> = (0..corpus.payloads.len() as u64).collect();
     let sequence = order.as_ref().unwrap_or(&identity);
@@ -136,18 +149,31 @@ pub fn run(
         }
         None => (0..corpus.payloads.len() as u64).collect(),
     };
+    // Renumbering can reverse two documents of one term, and a run is written
+    // in ascending order, so each term's documents are sorted again under their
+    // new IDs.
     match &corpus.positions {
         Some(positions) => {
             for (term, docs) in positions {
+                let mut docs: Vec<_> = docs
+                    .iter()
+                    .map(|(doc, places)| (renumbered[*doc as usize], places))
+                    .collect();
+                docs.sort_unstable_by_key(|&(doc, _)| doc);
                 for (doc, places) in docs {
-                    builder.add_posting_at(term, renumbered[*doc as usize], places)?;
+                    builder.add_posting_at(term, doc, places)?;
                 }
             }
         }
         None => {
             for (term, docs) in &corpus.postings {
-                for (&doc, &freq) in docs {
-                    builder.add_posting(term, renumbered[doc as usize], freq)?;
+                let mut docs: Vec<_> = docs
+                    .iter()
+                    .map(|(&doc, &freq)| (renumbered[doc as usize], freq))
+                    .collect();
+                docs.sort_unstable_by_key(|&(doc, _)| doc);
+                for (doc, freq) in docs {
+                    builder.add_posting(term, doc, freq)?;
                 }
             }
         }
@@ -190,6 +216,9 @@ pub fn run(
                     .collect(),
             ),
         ));
+    }
+    if let Some(name) = order_by {
+        params.push(("order_by", Value::Text(name.to_string())));
     }
 
     let meta = Meta {
@@ -292,6 +321,35 @@ fn dictionary_order(corpus: &corpus::Corpus) -> Option<Vec<u64>> {
         order.push(doc);
     }
     Some(order)
+}
+
+/// The documents by the value of one attribute column, highest first.
+///
+/// Ties keep the order the corpus gave them, so the result is fixed by the
+/// input and a rebuild is byte-identical (`SPEC.md` §3.4).
+fn importance_order(
+    corpus: &corpus::Corpus,
+    declared: &[(String, u8)],
+    name: &str,
+) -> Result<Vec<u64>, Error> {
+    let column = declared
+        .iter()
+        .position(|(declared, _)| declared == name)
+        .ok_or_else(|| Error::Corpus(format!("--order-by '{name}' is not a declared attribute")))?;
+    let decimals = declared[column].1;
+    let mut keyed = Vec::with_capacity(corpus.payloads.len());
+    for (doc, field) in corpus.attributes[column].iter().enumerate() {
+        match crate::payload::parse_values(field, decimals)?.as_slice() {
+            [one] => keyed.push((std::cmp::Reverse(*one), doc as u64)),
+            _ => {
+                return Err(Error::Corpus(format!(
+                    "attribute column '{name}' holds '{field}', which is not one number"
+                )))
+            }
+        }
+    }
+    keyed.sort_unstable();
+    Ok(keyed.into_iter().map(|(_, doc)| doc).collect())
 }
 
 /// Hashes a file without holding it in memory, since a register is large.

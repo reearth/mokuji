@@ -531,3 +531,65 @@ fn a_specified_section_cannot_be_supplied_by_an_application() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("application"));
 }
+
+const RANKED: &str = "tokyo chiyoda\tA\t10\n\
+                      tokyo chuo\tB\t900\n\
+                      tokyo shibuya\tC\t50\n\
+                      osaka chuo\tD\t900\n";
+
+#[test]
+fn order_by_numbers_documents_by_a_column_highest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, RANKED).unwrap();
+    let build = |out: &Path| {
+        mokuji(&[
+            "build",
+            corpus.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "--attribute",
+            "pop",
+            "--order-by",
+            "pop",
+        ])
+    };
+    assert!(build(&index).status.success());
+
+    // A term's run is in document order, which is now the order of the column:
+    // B, then C, then A. The tie between B and D keeps the corpus order.
+    let found = stdout(&mokuji(&["search", index.to_str().unwrap(), "tokyo"]));
+    let docs: Vec<&str> = found
+        .lines()
+        .take(3)
+        .map(|line| line.split('\t').next_back().unwrap())
+        .collect();
+    assert_eq!(docs, ["B", "C", "A"]);
+    let chuo = stdout(&mokuji(&["search", index.to_str().unwrap(), "chuo"]));
+    assert!(chuo.starts_with("0\t") && chuo.contains("\n1\t"), "{chuo}");
+
+    let again = dir.path().join("again.mokuji");
+    assert!(build(&again).status.success());
+    assert_eq!(
+        std::fs::read(&index).unwrap(),
+        std::fs::read(&again).unwrap()
+    );
+}
+
+#[test]
+fn order_by_needs_a_declared_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    std::fs::write(&corpus, RANKED).unwrap();
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        dir.path().join("out.mokuji").to_str().unwrap(),
+        "--attribute",
+        "pop",
+        "--order-by",
+        "population",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not a declared attribute"));
+}
