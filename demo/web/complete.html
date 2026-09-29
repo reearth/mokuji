@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mokuji place completion</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+      crossorigin=""
+    ></script>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #1f6feb;
+        --panel: #f7f8fa;
+        --good: #1a7f37;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1115;
+          --fg: #e6e8ec;
+          --muted: #9aa1ad;
+          --line: #262a33;
+          --accent: #6ea8fe;
+          --panel: #161a21;
+          --good: #3fb950;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Hiragino Sans",
+          "Noto Sans JP", "Noto Sans Thai", sans-serif;
+      }
+      main { max-width: 64rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      h1 { font-size: 1.5rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+      .lede { color: var(--muted); margin: 0 0 1.5rem; }
+      .lede code { font-size: .9em; }
+      .layout { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+      @media (min-width: 56rem) { .layout { grid-template-columns: 1fr 20rem; } }
+      .box { position: relative; }
+      #typed {
+        width: 100%; font: inherit; font-size: 1.15rem; color: var(--fg); background: var(--bg);
+        border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem;
+      }
+      #typed:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      ol { list-style: none; margin: .5rem 0 0; padding: 0; border: 1px solid var(--line); border-radius: .5rem; overflow: hidden; }
+      ol:empty { display: none; }
+      li { display: flex; justify-content: space-between; gap: 1rem; padding: .4rem .8rem; border-top: 1px solid var(--line); cursor: pointer; }
+      li:first-child { border-top: 0; }
+      li:hover { background: var(--panel); }
+      li span { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .map { height: 22rem; margin-top: 1rem; border: 1px solid var(--line); border-radius: .6rem; background: var(--panel); }
+      .leaflet-container { background: var(--panel); font: inherit; }
+      .hints { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+      .hints button {
+        font: inherit; font-size: .85rem; color: var(--muted); background: var(--bg);
+        border: 1px solid var(--line); border-radius: 999px; padding: .2rem .7rem; cursor: pointer;
+      }
+      .hints button:hover { color: var(--fg); border-color: var(--accent); }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem 1.1rem; align-self: start; }
+      .panel h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .7rem; }
+      .panel .stat + h2, .panel .source + h2 { margin-top: 1.1rem; }
+      .stat { display: flex; justify-content: space-between; gap: 1rem; padding: .22rem 0; }
+      .stat b { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+      .stat.headline b { font-size: 1.35rem; color: var(--accent); }
+      .source { font-size: .85rem; padding: .3rem 0; }
+      .source.table { color: var(--good); }
+      .log { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line);
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: var(--muted); }
+      .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+      .error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Completing a place name, from a static file</h1>
+      <p class="lede">
+        Every place in GeoNames, 12.9 million of them, under all their names, in
+        one <code>.mokuji</code> file on a plain static server. Each keystroke is
+        answered by range requests into it: none before the payload when the
+        prefix is one the file answered ahead of time, and never more than a
+        few when it is not.
+      </p>
+
+      <div class="layout">
+        <div>
+          <div class="box">
+            <input id="typed" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="Start typing a place — Tokyo, black se, 東京タ, สถานี…" disabled />
+            <ol id="results"></ol>
+          </div>
+          <div class="hints" id="hints"></div>
+          <div class="map" id="map"></div>
+          <p class="note" id="status">Loading the index&hellip;</p>
+        </div>
+
+        <aside class="panel">
+          <h2>This keystroke</h2>
+          <div class="stat headline"><span>Range requests</span><b id="requests">&mdash;</b></div>
+          <div class="stat"><span>Before the payload</span><b id="before">&mdash;</b></div>
+          <div class="stat"><span>Bytes fetched</span><b id="bytes">&mdash;</b></div>
+          <div class="source" id="source">&nbsp;</div>
+
+          <h2>The file</h2>
+          <div class="stat"><span>Places</span><b id="places">&mdash;</b></div>
+          <div class="stat"><span>File size</span><b id="filesize">&mdash;</b></div>
+          <div class="stat"><span>Opening cost</span><b id="opencost">&mdash;</b></div>
+          <div class="stat"><span>Prefixes answered ahead</span><b id="entries">&mdash;</b></div>
+          <div class="stat"><span>Any other prefix</span><b id="coverage">&mdash;</b></div>
+          <div class="log" id="log"></div>
+        </aside>
+      </div>
+
+      <p class="note">
+        Each name is one term (<code>name-list</code> in
+        <code>TOKENIZERS.md</code>), so <code>black se</code> is a prefix of
+        <code>black sea</code> rather than a word and part of another. Places
+        are numbered most-named first, so the first documents a prefix matches
+        are the ones worth showing. Each is listed under its main name, which
+        need not be the name that matched: <code>s</code> finds the Atlantic
+        Ocean because one of its names in another language begins with it.
+      </p>
+      <p class="note">
+        A short prefix matches millions of names and spans hundreds of
+        dictionary blocks. The file carries a completions section
+        (<code>SPEC.md</code> §5.3.5) with the first ten places for every such
+        prefix, held with the rest of the opening read. Any prefix without an
+        entry is guaranteed cheap: fewer terms than the file states, and fewer
+        bytes of postings. Green is the section answering; otherwise the
+        dictionary did, within that bound.
+      </p>
+    </main>
+
+    <script type="module">
+      import { MokujiIndex } from "./mokuji.js";
+
+      const $ = (id) => document.getElementById(id);
+      const bytes = (n) =>
+        n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+      const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+      const map = L.map("map", { worldCopyJump: true }).setView([25, 10], 2);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(map);
+      const pins = L.layerGroup().addTo(map);
+
+      const EXAMPLES = ["s", "san ", "black se", "東京タ", "mont", "สถานี", "zü"];
+
+      let index;
+      let running = false;
+      let again = false;
+
+      // The payload is what the corpus line carried after the names: the
+      // display name, then longitude, latitude, population, and name count.
+      function place(payload) {
+        const [name, lon, lat, population] = payload.split("\t");
+        return { name, lon: Number(lon), lat: Number(lat), population: Number(population) };
+      }
+
+      // One query at a time, then the latest thing typed. Overlapping queries
+      // would share the request counter, and the panel is only worth reading
+      // if the count it shows belongs to the keystroke it names.
+      async function run() {
+        if (running) {
+          again = true;
+          return;
+        }
+        running = true;
+        do {
+          again = false;
+          await once();
+        } while (again);
+        running = false;
+      }
+
+      async function once() {
+        const typed = $("typed").value;
+        if (!typed.trim()) {
+          $("results").innerHTML = "";
+          pins.clearLayers();
+          return;
+        }
+        const requests = [];
+        index.onRequest = (r) => requests.push(r);
+        index.resetStats();
+
+        let r;
+        try {
+          r = await index.complete(typed, 10);
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
+          return;
+        }
+        const places = r.payloads.map(place);
+        $("requests").textContent = index.stats.requests;
+        $("before").textContent = r.requestsBeforePayload;
+        $("bytes").textContent = bytes(index.stats.bytes);
+        const source = $("source");
+        source.className = r.fromTable ? "source table" : "source";
+        source.textContent = r.fromTable
+          ? `“${r.normalized}” — answered by the completions section`
+          : `“${r.normalized}” — no entry, so the dictionary`;
+        $("log").innerHTML = requests
+          .map((q) => `<div>Range ${q.offset.toLocaleString()} +${q.length.toLocaleString()}</div>`)
+          .join("");
+
+        $("results").innerHTML = places
+          .map(
+            (p, i) =>
+              `<li data-i="${i}">${escape(p.name)}<span>${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` +
+              `${p.population ? ` · ${p.population.toLocaleString()}` : ""}</span></li>`,
+          )
+          .join("");
+        pins.clearLayers();
+        for (const p of places) {
+          L.circleMarker([p.lat, p.lon], { radius: 6, color: "#1f6feb", weight: 2, fillOpacity: 0.5 })
+            .bindTooltip(escape(p.name))
+            .addTo(pins);
+        }
+        $("status").textContent = places.length
+          ? `${places.length} place${places.length === 1 ? "" : "s"} for “${typed}”.`
+          : `Nothing begins with “${r.normalized}”.`;
+      }
+
+      $("typed").addEventListener("input", run);
+      $("results").addEventListener("click", (event) => {
+        const li = event.target.closest("li");
+        if (!li) return;
+        const [lat, lon] = li.querySelector("span").textContent.split(" · ")[0].split(", ").map(Number);
+        map.setView([lat, lon], 10);
+      });
+
+      (async () => {
+        try {
+          index = await MokujiIndex.open("./names.mokuji");
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
+          return;
+        }
+        const c = index.completions;
+        $("places").textContent = index.numDocs.toLocaleString();
+        $("filesize").textContent = bytes(index.fileLength ?? 0);
+        $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
+        $("entries").textContent = c ? c.entries.size.toLocaleString() : "none";
+        $("coverage").textContent = c
+          ? `< ${c.minTerms.toLocaleString()} terms, < ${bytes(c.maxSpan)}`
+          : "—";
+
+        $("hints").innerHTML = EXAMPLES.map((e) => `<button>${escape(e)}</button>`).join("");
+        $("hints").addEventListener("click", (event) => {
+          if (event.target.tagName !== "BUTTON") return;
+          $("typed").value = event.target.textContent;
+          $("typed").focus();
+          run();
+        });
+        $("typed").disabled = false;
+        $("typed").focus();
+        $("status").textContent = "Type a place name.";
+      })();
+    </script>
+  </body>
+</html>

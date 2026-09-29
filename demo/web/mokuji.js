@@ -830,8 +830,9 @@ export class MokujiIndex {
       const postings = await this.postingsSpan(entries);
       docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b).slice(0, limit);
     }
+    const requestsBeforePayload = this.stats.requests;
     const payloads = await this.payloadSpan(docs);
-    return { normalized, fromTable, docs, payloads };
+    return { normalized, fromTable, docs, payloads, requestsBeforePayload };
   }
 
   /** Complete a prefix, returning every matching document with its payload.
