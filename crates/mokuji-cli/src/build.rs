@@ -220,6 +220,18 @@ pub fn run(
     if let Some(name) = order_by {
         params.push(("order_by", Value::Text(name.to_string())));
     }
+    if let Some(c) = options.completions {
+        // Which documents an entry lists is this writer's choice, and the
+        // file has to say what it was: the smallest document IDs, which rank
+        // by whatever the documents were numbered by.
+        params.push((
+            "completions",
+            Value::Text(format!(
+                "{},{},{} by document order",
+                c.min_terms, c.max_span, c.docs_per_entry
+            )),
+        ));
+    }
 
     let meta = Meta {
         generation,

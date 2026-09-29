@@ -40,6 +40,12 @@ pub enum Tokenizer {
     /// The analyzer that needs no dictionary, which is the only kind a reader
     /// with no server can be relied on to have. See `TOKENIZERS.md`.
     Bigram,
+    /// Names separated by U+001F, each one term after normalization.
+    ///
+    /// What completion wants: a finished word and an unfinished one are then a
+    /// prefix of one term, which a completions section can answer ahead of
+    /// time, rather than an intersection nothing precomputed covers.
+    NameList,
 }
 
 impl Tokenizer {
@@ -51,6 +57,7 @@ impl Tokenizer {
             Tokenizer::JaAddress => "ja-address",
             Tokenizer::JaAddressBigram => "ja-address-bigram",
             Tokenizer::Bigram => "bigram",
+            Tokenizer::NameList => "name-list",
         }
     }
 
@@ -67,6 +74,9 @@ impl Tokenizer {
             // which would destroy the thing being prefixed.
             Tokenizer::SpaceSplit | Tokenizer::Identity | Tokenizer::Bigram => query.to_string(),
             Tokenizer::JaAddress | Tokenizer::JaAddressBigram => ja_address(query),
+            // What was typed is a prefix of one name, so it is normalized as a
+            // name and not split.
+            Tokenizer::NameList => name(query),
         }
     }
 
@@ -86,6 +96,7 @@ impl Tokenizer {
             "ja-address" => Some(Tokenizer::JaAddress),
             "ja-address-bigram" => Some(Tokenizer::JaAddressBigram),
             "bigram" => Some(Tokenizer::Bigram),
+            "name-list" => Some(Tokenizer::NameList),
             _ => None,
         }
     }
@@ -105,8 +116,31 @@ impl Tokenizer {
             Tokenizer::JaAddress => vec![ja_address(text)],
             Tokenizer::JaAddressBigram => bigram(&ja_address(text)),
             Tokenizer::Bigram => bigram(text),
+            Tokenizer::NameList => text
+                .split('\u{1f}')
+                .map(name)
+                .filter(|n| !n.is_empty())
+                .collect(),
         }
     }
+}
+
+/// One name as `name-list` normalizes it: NFKC, the Unicode default lowercase
+/// mapping with no locale, and every run of `White_Space` one space.
+///
+/// `char::is_whitespace` is `White_Space` exactly. That matters here: Python's
+/// `str.isspace` also counts U+001C to U+001F, which would treat the separator
+/// itself as a space.
+pub fn name(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let composed: String = text.nfkc().collect();
+    composed
+        .to_lowercase()
+        .split(char::is_whitespace)
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The `bigram` tokenizer, as registered in `TOKENIZERS.md`.
@@ -596,12 +630,27 @@ mod tests {
     }
 
     #[test]
+    fn name_list_makes_each_name_one_term() {
+        let terms = Tokenizer::NameList.split("Black  Sea\u{1f}Черное море\u{1f} \u{1f}ＴＯＫＹＯ");
+        assert_eq!(terms, ["black sea", "черное море", "tokyo"]);
+        assert_eq!(
+            Tokenizer::NameList.normalize_query("Black\u{a0}Se"),
+            "black se"
+        );
+        // Default case conversion, not folding, and the final sigma is kept.
+        assert_eq!(name("İstanbul"), "i\u{307}stanbul");
+        assert_eq!(name("ΟΔΟΣ"), "οδος");
+    }
+
+    #[test]
     fn identifiers_round_trip() {
         for t in [
             Tokenizer::SpaceSplit,
             Tokenizer::Identity,
             Tokenizer::JaAddress,
+            Tokenizer::JaAddressBigram,
             Tokenizer::Bigram,
+            Tokenizer::NameList,
         ] {
             assert_eq!(Tokenizer::parse(t.id()), Some(t));
         }

@@ -6,6 +6,7 @@
 //! tokenizer and payload encoding the command line uses.
 
 pub mod build;
+pub mod complete;
 pub mod corpus;
 pub mod dump;
 pub mod info;

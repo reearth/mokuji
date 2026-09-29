@@ -64,9 +64,9 @@ def main():
     parser.add_argument(
         "--whole-names",
         action="store_true",
-        help="write each name as one space-split term, lowercased, its own "
-        "spaces replaced by U+00A0, so that a name is completed as a whole "
-        "rather than word by word",
+        help="separate the names by U+001F rather than spaces, for the "
+        "name-list tokenizer, so that a name is completed as a whole rather "
+        "than word by word",
     )
     args = parser.parse_args()
 
@@ -84,8 +84,7 @@ def main():
             # Tabs and newlines would break the corpus; a name containing one is
             # a data problem rather than something to guess at.
             if args.whole_names:
-                terms = dict.fromkeys(n.lower().replace(" ", "\u00a0") for n in names)
-                text = " ".join(terms).replace("\t", "\u00a0")
+                text = "\x1f".join(names).replace("\t", " ")
             else:
                 text = " ".join(names).replace("\t", " ")
             sink.write(
