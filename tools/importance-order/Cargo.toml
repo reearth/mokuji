@@ -1,0 +1,15 @@
+[package]
+name = "importance-order"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+mokuji-cli = { path = "../../crates/mokuji-cli" }
+mokuji-codec = { path = "../../crates/mokuji-codec" }
+mokuji-format = { path = "../../crates/mokuji-format" }
+mokuji-read = { path = "../../crates/mokuji-read" }
+
+[profile.release]
+opt-level = 3
+
+[workspace]
