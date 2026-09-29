@@ -16,56 +16,12 @@
 //!     importance-order corpus.mokuji ordered.mokuji <prior> queries.txt [-k 10] [--head 1024]
 
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::os::unix::fs::FileExt;
 
+use importance_order::{decode_head, FileReader};
 use mokuji_cli::corpus::Tokenizer;
-use mokuji_codec::{bitpack, varint};
-use mokuji_format::{Error, Flags, Result};
+use mokuji_format::{Flags, Result};
 use mokuji_read::block_on::block_on;
 use mokuji_read::{postings, CountingReader, Index, RangeReader, TermEntry, TermIndex};
-
-struct FileReader {
-    file: File,
-    len: u64,
-}
-
-impl FileReader {
-    fn open(path: &str) -> Self {
-        let file = File::open(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let len = file.metadata().unwrap().len();
-        FileReader { file, len }
-    }
-
-    fn read(&self, offset: u64, len: u32) -> Result<Vec<u8>> {
-        if offset + u64::from(len) > self.len {
-            return Err(Error::OutOfBounds {
-                offset,
-                len: u64::from(len),
-                file_len: self.len,
-            });
-        }
-        let mut buf = vec![0; len as usize];
-        self.file
-            .read_exact_at(&mut buf, offset)
-            .expect("reading the index");
-        Ok(buf)
-    }
-}
-
-impl RangeReader for FileReader {
-    fn file_len(&self) -> u64 {
-        self.len
-    }
-
-    fn read_range(
-        &self,
-        offset: u64,
-        len: u32,
-    ) -> impl std::future::Future<Output = Result<Vec<u8>>> {
-        std::future::ready(self.read(offset, len))
-    }
-}
 
 type Reader = CountingReader<FileReader>;
 
@@ -178,34 +134,6 @@ fn full(
     matched.truncate(k);
     matched.sort_unstable();
     Ok(matched)
-}
-
-/// As many documents as the first bytes of a run hold, and whether that was
-/// all of them.
-fn decode_head(head: &[u8], total_len: u64) -> Result<(Vec<u64>, bool)> {
-    let (count, n) = varint::decode(&head[1..])?;
-    let mut pos = 1 + n;
-    let mut docs = Vec::new();
-    let mut previous: Option<u64> = None;
-    let mut remaining = count as usize;
-    while remaining > 0 {
-        let group = remaining.min(128);
-        let Ok((values, next)) = bitpack::decode_group(head, pos, group) else {
-            break;
-        };
-        for value in values {
-            let doc = match previous {
-                None => value,
-                Some(p) => p + value + 1,
-            };
-            docs.push(doc);
-            previous = Some(doc);
-        }
-        pos = next;
-        remaining -= group;
-    }
-    let complete = remaining == 0 || head.len() as u64 == total_len;
-    Ok((docs, complete))
 }
 
 /// The heads of the runs, and the rest only when the heads cannot settle it.
