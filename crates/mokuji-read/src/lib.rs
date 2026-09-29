@@ -11,6 +11,7 @@
 //! number of range reads performed, not only the result returned.
 
 pub mod block_on;
+mod completions;
 mod counting;
 mod index;
 pub mod postings;
@@ -18,6 +19,7 @@ mod reader;
 mod slice;
 pub mod term;
 
+pub use completions::Completions;
 pub use counting::{CountingReader, ReadStats};
 pub use index::{Column, Index, Match, OpenOptions, Payload};
 pub use postings::Postings;

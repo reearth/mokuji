@@ -20,6 +20,8 @@ impl SectionId {
     pub const TERM_BLOCKS: SectionId = SectionId(0x0011);
     /// Term block ordinal to offset and length.
     pub const TERM_BLOCK_OFFSETS: SectionId = SectionId(0x0012);
+    /// The documents to show first for each expensive prefix. Optional.
+    pub const COMPLETIONS: SectionId = SectionId(0x0013);
     /// Postings runs, one per term.
     pub const POSTINGS: SectionId = SectionId(0x0020);
     /// Per-document payload in document ID order.
@@ -48,6 +50,7 @@ impl SectionId {
             Self::TERM_INDEX => "term_index",
             Self::TERM_BLOCKS => "term_blocks",
             Self::TERM_BLOCK_OFFSETS => "term_block_offsets",
+            Self::COMPLETIONS => "completions",
             Self::POSTINGS => "postings",
             Self::PAYLOAD => "payload",
             Self::PAYLOAD_OFFSETS => "payload_offsets",

@@ -41,6 +41,7 @@ fn options_strategy() -> impl Strategy<Value = Options> {
             positions: false,
             doc_lengths,
             compress,
+            completions: None,
         })
 }
 
@@ -352,6 +353,90 @@ fn positions_need_frequencies() {
     let options = Options {
         positions: true,
         has_freqs: false,
+        ..Options::default()
+    };
+    assert!(Builder::new(options).is_err());
+}
+
+proptest! {
+    /// Every expensive prefix has an entry, every entry is an expensive prefix,
+    /// and each lists the first documents of its prefix — checked against every
+    /// byte prefix of every term, the definition in `SPEC.md` §5.3.5, rather
+    /// than against the walk the writer uses to avoid enumerating them.
+    #[test]
+    fn completions_cover_exactly_the_expensive_prefixes(
+        corpus in corpus_strategy(),
+        options in options_strategy(),
+        min_terms in 0..4u64,
+        max_span in prop_oneof![Just(0u64), 1..24u64],
+        docs_per_entry in 1..4u32,
+    ) {
+        prop_assume!(min_terms != 0 || max_span != 0);
+        let options = Options {
+            completions: Some(mokuji_write::Completions { min_terms, max_span, docs_per_entry }),
+            ..options
+        };
+        let (bytes, expected) = build(&corpus, options);
+        let reader = CountingReader::new(SliceReader::new(bytes));
+        let index = block_on(Index::open(&reader)).unwrap();
+        let completions = index.completions().expect("asked for").clone();
+
+        let mut prefixes = std::collections::BTreeSet::new();
+        for term in expected.keys() {
+            for len in 1..=term.len() {
+                prefixes.insert(term.as_bytes()[..len].to_vec());
+            }
+        }
+        let mut expensive = 0;
+        for prefix in &prefixes {
+            let entries = block_on(index.prefix(prefix, usize::MAX)).unwrap();
+            let span: u64 = entries.iter().map(|(_, e)| e.postings_len).sum();
+            let costly = (min_terms != 0 && entries.len() as u64 >= min_terms)
+                || (max_span != 0 && span >= max_span);
+            let mut docs: Vec<u64> = expected
+                .iter()
+                .filter(|(term, _)| term.as_bytes().starts_with(prefix))
+                .flat_map(|(_, docs)| docs.keys().copied())
+                .collect();
+            docs.sort_unstable();
+            docs.dedup();
+            docs.truncate(docs_per_entry as usize);
+
+            match completions.get(prefix) {
+                Some(listed) => {
+                    prop_assert!(costly, "{prefix:?} has an entry and is cheap");
+                    prop_assert_eq!(listed, docs.as_slice());
+                    expensive += 1;
+
+                    // Answered from the resident set, at no read.
+                    reader.reset();
+                    let (got, from_table) =
+                        block_on(index.complete(prefix, docs_per_entry as usize)).unwrap();
+                    prop_assert!(from_table);
+                    prop_assert_eq!(got, docs);
+                    prop_assert_eq!(reader.reads(), 0);
+                }
+                None => {
+                    prop_assert!(!costly, "{prefix:?} is expensive and has no entry");
+                    let (got, from_table) =
+                        block_on(index.complete(prefix, docs_per_entry as usize)).unwrap();
+                    prop_assert!(!from_table);
+                    prop_assert_eq!(got, docs);
+                }
+            }
+        }
+        prop_assert_eq!(completions.len(), expensive);
+    }
+}
+
+#[test]
+fn completions_need_something_to_cover() {
+    let options = Options {
+        completions: Some(mokuji_write::Completions {
+            min_terms: 0,
+            max_span: 0,
+            docs_per_entry: 10,
+        }),
         ..Options::default()
     };
     assert!(Builder::new(options).is_err());

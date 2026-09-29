@@ -176,6 +176,7 @@ mod dictionary {
             positions: false,
             doc_lengths: false,
             compress,
+            completions: None,
         })
         .unwrap();
 
