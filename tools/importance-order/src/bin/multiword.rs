@@ -3,15 +3,17 @@
 //! - `words`: the gazetteer as `bigram` indexes it. The words already typed are
 //!   exact terms; the last, unfinished one is a prefix whose terms' runs are
 //!   united; the two are intersected.
-//! - `names`: every name one term, so what has been typed is a single prefix of
-//!   a name, spaces and all.
+//! - `names`: every name one term under `name-list`, so what has been typed is
+//!   a single prefix of a name, spaces and all.
 //!
-//! Each is measured without and with the table `completion` builds, held
-//! resident: a prefix in the table is answered by it, at no read, when it is the
-//! whole question. In `words` it is the whole question only when nothing else
-//! was typed; an unfinished word after a finished one still has to be united
-//! and intersected. Whether a prefix is in the table is decided here from an
-//! uncounted copy of the file, the same test `completion` applies.
+//! Each is measured without and with completions. For `names` that is the
+//! completions section the file carries, read through `Index::complete`, and
+//! its answers are checked against the walk without it. `words` carries none,
+//! so its table is simulated: a prefix the `completion` binary would keep is
+//! answered at no read when it is the whole question — only when nothing else
+//! was typed, since an unfinished word after a finished one still has to be
+//! united and intersected. Which prefixes those are is decided from an
+//! uncounted copy of the file.
 //!
 //! The queries file holds `class<TAB>typed` lines.
 //!
@@ -189,6 +191,7 @@ fn main() {
     // class -> strategy -> tally
     let mut tallies: BTreeMap<String, BTreeMap<&str, Tally>> = BTreeMap::new();
     let mut overlap: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    let mut section_wrong = 0u64;
 
     for (class, query) in &typed {
         // Words: every token exact but the last, which is unfinished when the
@@ -209,16 +212,14 @@ fn main() {
         tokens.sort();
         tokens.dedup();
 
-        // Names: the whole of what was typed, as the converter wrote a name.
-        let key = query.to_lowercase().replace(' ', "\u{a0}").into_bytes();
+        // Names: the whole of what was typed, normalized as a name.
+        let key = mokuji_cli::corpus::name(query).into_bytes();
 
         let word_expensive = partial.as_ref().is_some_and(|p| {
             prefix_docs(&words.oracle, p, min_terms, max_span)
                 .unwrap()
                 .1
         });
-        let (name_truth, name_expensive) =
-            prefix_docs(&names.oracle, &key, min_terms, max_span).unwrap();
 
         let mut results: Vec<Vec<u64>> = Vec::new();
         for (label, files, exact, prefix, expensive) in [
@@ -236,16 +237,17 @@ fn main() {
                 &names,
                 &[][..],
                 Some(key.as_slice()),
-                name_expensive,
+                false,
             ),
         ] {
             let before = files.stats();
-            let (mut top, from_table) =
-                complete(&files.index, exact, prefix, k, limits, expensive).unwrap();
-            if from_table {
-                top = if label.starts_with("names") {
-                    name_truth.iter().copied().take(k).collect()
-                } else {
+            let (mut top, from_table) = if label == "names + table" {
+                block_on(names.index.complete(&key, k)).unwrap()
+            } else {
+                complete(&files.index, exact, prefix, k, limits, expensive).unwrap()
+            };
+            if from_table && label == "words + table" {
+                top = {
                     let p = partial.as_deref().unwrap();
                     prefix_docs(&words.oracle, p, min_terms, max_span)
                         .unwrap()
@@ -271,6 +273,10 @@ fn main() {
             tally.empty += u64::from(top.is_empty());
             results.push(top);
         }
+        // The section has to give what the walk without it gives.
+        if results[2] != results[3] {
+            section_wrong += 1;
+        }
         // Both files number the same places the same way, so their answers
         // can be compared by ID.
         let shared = results[0].iter().filter(|d| results[2].contains(d)).count() as u64;
@@ -280,8 +286,9 @@ fn main() {
     }
 
     println!(
-        "top {k}; a prefix is in the table at {min_terms} terms or {max_span} bytes of postings\n"
+        "top {k}; a prefix is in the table at {min_terms} terms or {max_span} bytes of postings"
     );
+    println!("names: the completions section disagreed with the walk {section_wrong} time(s)\n");
     for (class, strategies) in &mut tallies {
         let n = strategies.values().next().map_or(0, |t| t.reads.len());
         println!("## {class}, {n} queries\n");
