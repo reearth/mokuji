@@ -27,6 +27,9 @@ usage:
                                        read one more tab-separated field per
                                        line as a column of numbers, readable
                                        without fetching payload; repeatable
+        --order-by <column>            number documents by this attribute,
+                                       highest first, so every term's postings
+                                       begin with its most important documents
         --payload <how>                text (default), or ints:<decimals> to
                                        store the payload as delta-coded fixed
                                        point numbers
@@ -114,6 +117,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut attributes: Vec<(String, u8)> = Vec::new();
     let mut attrs: Vec<(String, String)> = Vec::new();
     let mut sections: Vec<(u16, String)> = Vec::new();
+    let mut order_by: Option<&str> = None;
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -128,6 +132,13 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .map_err(|_| Error::Usage(format!("{flag} is too large")))?;
             }
             "--generation" => generation = take_number(flag, &mut rest)?,
+            "--order-by" => {
+                let (name, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--order-by needs a column name".into()))?;
+                rest = tail;
+                order_by = Some(name);
+            }
             "--source" => {
                 let (path, tail) = rest
                     .split_first()
@@ -231,6 +242,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             attrs: &attrs,
             sections: &sections,
             generation,
+            order_by,
         },
         options,
         tokenizer,
