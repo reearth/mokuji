@@ -360,6 +360,9 @@ pub fn parse(
             }
             postings.entry(key.into_bytes()).or_default().insert(doc, 1);
             payloads.push(payload.as_bytes().to_vec());
+            for (column, field) in attributes.iter_mut().zip(&fields) {
+                column.push((*field).to_string());
+            }
             continue;
         }
 
@@ -548,6 +551,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(corpus.attributes, vec![vec!["7", "8"], vec!["-2", "3"]]);
+    }
+
+    #[test]
+    fn a_key_tokenizer_keeps_the_columns_of_the_lines_it_keeps() {
+        let corpus = parse("b\tP\t7\nb\tQ\t8\na\tR\t9\n", Tokenizer::Identity, 1, false).unwrap();
+        assert_eq!(corpus.duplicate_keys, 1);
+        assert_eq!(corpus.attributes, vec![vec!["7", "9"]]);
     }
 
     #[test]
