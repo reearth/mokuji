@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mokuji over a static STAC catalog</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+      crossorigin=""
+    ></script>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #1f6feb;
+        --panel: #f7f8fa;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1115;
+          --fg: #e6e8ec;
+          --muted: #9aa1ad;
+          --line: #262a33;
+          --accent: #6ea8fe;
+          --panel: #161a21;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Hiragino Sans",
+          "Noto Sans JP", sans-serif;
+      }
+      main { max-width: 64rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      h1 { font-size: 1.5rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+      .lede { color: var(--muted); margin: 0 0 1.5rem; }
+      .lede code { font-size: .9em; }
+      .layout { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+      @media (min-width: 56rem) { .layout { grid-template-columns: 1fr 20rem; } }
+      .map { height: 28rem; border: 1px solid var(--line); border-radius: .6rem; background: var(--panel); }
+      .leaflet-container { background: var(--panel); font: inherit; }
+      form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin: 0 0 .8rem; }
+      label { display: flex; flex-direction: column; font-size: .78rem; color: var(--muted); gap: .15rem; }
+      input, select, button {
+        font: inherit; font-size: .9rem; color: var(--fg); background: var(--bg);
+        border: 1px solid var(--line); border-radius: .4rem; padding: .3rem .5rem;
+      }
+      input[type="text"] { width: 11rem; }
+      button[type="submit"] { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+      .hints { margin: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+      .hints button { font-size: .85rem; color: var(--muted); border-radius: 999px; padding: .2rem .7rem; cursor: pointer; }
+      .hints button:hover { color: var(--fg); border-color: var(--accent); }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem 1.1rem; align-self: start; }
+      .panel h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .7rem; }
+      .panel h2 + h2, .panel .stat + h2 { margin-top: 1.1rem; }
+      .stat { display: flex; justify-content: space-between; gap: 1rem; padding: .22rem 0; }
+      .stat b { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .stat.headline b { font-size: 1.35rem; color: var(--accent); }
+      .stat.versus b { color: var(--muted); }
+      .cond { font-size: .85rem; padding: .15rem 0; }
+      .cond span { color: var(--muted); }
+      .swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: .15rem; margin-right: .35rem; vertical-align: baseline; }
+      .log { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line);
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: var(--muted); }
+      .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: .85rem; }
+      th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+      th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+      td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+      a { color: var(--accent); }
+      .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+      .error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>A static STAC catalog, searched</h1>
+      <p class="lede">
+        Maxar Open Data publishes its catalog as static STAC: JSON files you
+        follow from <code>catalog.json</code> down to each item. Nothing there
+        answers <em>which images cover this place in this week</em> &mdash;
+        that is what a STAC API server is for. Here the same question is
+        answered by one static <code>stac.mokuji</code> beside the catalog,
+        with a handful of range requests.
+      </p>
+
+      <form id="form">
+        <label>Words in the title<input type="text" id="words" placeholder="earthquake" /></label>
+        <label>From<input type="date" id="from" /></label>
+        <label>To<input type="date" id="to" /></label>
+        <label>Clouds at most
+          <select id="clouds">
+            <option value="">any</option>
+            <option value="0">0%</option>
+            <option value="10">10%</option>
+            <option value="20">20%</option>
+            <option value="50">50%</option>
+          </select>
+        </label>
+        <label><span><input type="checkbox" id="useMap" checked /> Within the map</span></label>
+        <button type="submit">Search</button>
+      </form>
+
+      <div class="layout">
+        <div>
+          <div class="map" id="map"></div>
+          <div class="hints" id="hints"></div>
+          <p class="note" id="status">Loading the index&hellip;</p>
+        </div>
+
+        <aside class="panel">
+          <h2>This query</h2>
+          <div class="stat headline"><span>Range requests</span><b id="requests">&mdash;</b></div>
+          <div class="stat"><span>Bytes fetched</span><b id="bytes">&mdash;</b></div>
+          <div id="conditions"></div>
+          <div class="stat"><span>Matched in the index</span><b id="matched">&mdash;</b></div>
+          <div class="stat">
+            <span><i class="swatch" style="background:#f59e0b"></i>Fetched</span>
+            <b id="candidates">&mdash;</b>
+          </div>
+          <div class="stat">
+            <span><i class="swatch" style="background:#1f6feb"></i>Inside the map</span>
+            <b id="answers">&mdash;</b>
+          </div>
+
+          <h2>The file</h2>
+          <div class="stat"><span>Items</span><b id="items">&mdash;</b></div>
+          <div class="stat"><span>File size</span><b id="filesize">&mdash;</b></div>
+          <div class="stat"><span>Opening cost</span><b id="opencost">&mdash;</b></div>
+          <div class="stat versus"><span>Walking the catalog instead</span><b id="walk">&mdash;</b></div>
+          <div class="log" id="log"></div>
+        </aside>
+      </div>
+
+      <table>
+        <thead><tr><th>Date</th><th>Collection</th><th>Item</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+
+      <p class="note">
+        Each item is indexed under three kinds of term: the words of its
+        collection's title (<code>w:</code>), the geohash cells its bbox touches
+        at five precisions (<code>g1:</code>&ndash;<code>g5:</code>), and its
+        date (<code>d:</code>). A query is the intersection of the three. A
+        period is a <em>range</em> of date terms, read in one walk because dates
+        written as <code>YYYY-MM-DD</code> sort in the order of time. Cloud cover
+        is a resident column, so filtering by it costs no request at all.
+      </p>
+      <p class="note">
+        The orange rectangles are what the index returned; the blue ones also
+        touch the map as the page sees it. A cell can touch the view when the
+        item inside it does not, so the index narrows and the page decides.
+        Only the first 50 matches are fetched and drawn.
+      </p>
+    </main>
+
+    <script type="module">
+      import { MokujiIndex } from "./mokuji.js";
+      import { search } from "./stac.js";
+
+      const $ = (id) => document.getElementById(id);
+      const bytes = (n) =>
+        n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+      const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+      const map = L.map("map").setView([37.1, 137.0], 8);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(map);
+      const drawn = L.layerGroup().addTo(map);
+
+      const EXAMPLES = [
+        ["Noto, 1 Jan 2024", [37.1, 137.0], 8, "earthquake", "2024-01-01", "2024-01-31"],
+        ["Kahramanmaraş, Feb 2023", [37.4, 37.0], 8, "earthquake", "2023-02-06", "2023-02-28"],
+        ["Los Angeles fires, Jan 2025", [34.1, -118.4], 10, "", "2025-01-07", "2025-01-31"],
+        ["Hurricane Ian, Florida", [26.6, -81.9], 9, "hurricane", "2022-09-27", "2022-10-10"],
+        ["Anything in Japan, ever", [36.5, 138.0], 5, "", "", ""],
+      ];
+
+      let index;
+      let base = "";
+
+      async function run() {
+        const words = $("words").value.trim().split(/\s+/).filter(Boolean);
+        const b = map.getBounds();
+        const bbox = $("useMap").checked ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] : null;
+        const from = $("from").value || null;
+        const to = $("to").value || null;
+        const maxClouds = $("clouds").value === "" ? null : Number($("clouds").value);
+
+        const requests = [];
+        index.onRequest = (r) => requests.push(r);
+        index.resetStats();
+
+        let r;
+        try {
+          r = await search(index, { words, bbox, from, to, maxClouds });
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
+          return;
+        }
+
+        drawn.clearLayers();
+        const inside = new Set(r.results.map((c) => c.doc));
+        for (const c of r.candidates) {
+          const [x0, y0, x1, y1] = c.bbox;
+          const hit = inside.has(c.doc);
+          L.rectangle([[y0, x0], [y1, x1]], {
+            color: hit ? "#1f6feb" : "#ea8c00",
+            weight: 1.5,
+            fillOpacity: 0.15,
+          })
+            .bindTooltip(`${c.title}<br>${c.datetime}`)
+            .addTo(drawn);
+        }
+
+        $("requests").textContent = index.stats.requests;
+        $("bytes").textContent = bytes(index.stats.bytes);
+        $("conditions").innerHTML = r.conditions
+          .map((c) => `<div class="cond">${c.kind} <span>${escape(c.label)}</span> &rarr; ${c.docs.length.toLocaleString()}</div>`)
+          .join("") + (maxClouds !== null ? `<div class="cond">clouds <span>&le; ${maxClouds}%, resident, no read</span></div>` : "");
+        $("matched").textContent = r.matched.toLocaleString();
+        $("candidates").textContent = r.candidates.length;
+        $("answers").textContent = r.results.length;
+        $("log").innerHTML = requests
+          .map((q) => `<div>Range ${q.offset.toLocaleString()} +${q.length.toLocaleString()}</div>`)
+          .join("");
+        $("results").innerHTML = r.results
+          .map(
+            (c) =>
+              `<tr><td>${escape(c.datetime.slice(0, 10))}</td><td>${escape(c.title)}</td>` +
+              `<td class="mono"><a href="${escape(base + c.url)}" target="_blank" rel="noopener">${escape(c.url.split("/").slice(-3).join("/"))}</a></td></tr>`,
+          )
+          .join("");
+        $("status").textContent =
+          `${r.matched.toLocaleString()} item${r.matched === 1 ? "" : "s"} matched; ` +
+          `${r.candidates.length} fetched, ${r.results.length} inside the map.`;
+      }
+
+      $("form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        run();
+      });
+
+      (async () => {
+        try {
+          index = await MokujiIndex.open("./stac.mokuji");
+        } catch (err) {
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
+          return;
+        }
+        base = index.meta?.attrs?.["base-url"] ?? "";
+        const walk = index.meta?.attrs?.["catalog-documents"];
+        $("items").textContent = index.numDocs.toLocaleString();
+        $("filesize").textContent = bytes(index.fileLength ?? 0);
+        $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
+        $("walk").textContent = walk ? `${Number(walk).toLocaleString()} requests` : "—";
+
+        $("hints").innerHTML = EXAMPLES.map(([name], i) => `<button data-i="${i}">${escape(name)}</button>`).join("");
+        $("hints").addEventListener("click", (event) => {
+          if (event.target.tagName !== "BUTTON") return;
+          const [, center, zoom, words, from, to] = EXAMPLES[Number(event.target.dataset.i)];
+          map.setView(center, zoom);
+          $("words").value = words;
+          $("from").value = from;
+          $("to").value = to;
+          $("useMap").checked = true;
+          run();
+        });
+
+        const [, center, zoom, words, from, to] = EXAMPLES[0];
+        map.setView(center, zoom);
+        $("words").value = words;
+        $("from").value = from;
+        $("to").value = to;
+        run();
+      })();
+    </script>
+  </body>
+</html>

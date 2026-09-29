@@ -1,11 +1,13 @@
-# Two pages, one reader
+# Three pages, one reader
 
 The same `.mokuji` file, read by a page. No server logic, no API, no
 WebAssembly, and no bundled decompressor.
 
 `index.html` completes an address prefix. `reverse.html` does the other
-direction on a map: click a point, get the 町丁目 that holds it. Both are the
-same 300 lines of `mokuji.js` over the same file layout.
+direction on a map: click a point, get the 町丁目 that holds it. `stac.html`
+finds satellite images by word, place and period in a static STAC catalog; see
+[../stac](../stac). All three are the same `mokuji.js` over the same file
+layout.
 
 Build the indexes first — [../addresses](../addresses) and
 [../reverse](../reverse) — then:

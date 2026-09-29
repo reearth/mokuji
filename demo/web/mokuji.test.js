@@ -117,6 +117,25 @@ test("a prefix range costs the reads the specification says", async () => {
   assert.equal(index.stats.requests, 4);
 });
 
+test("range returns the terms between two keys, both inclusive", async () => {
+  const index = await MokujiIndex.open(await fileSource("dict"));
+  const terms = async (low, high, limit) =>
+    (await index.range(low, high, limit)).map((e) => new TextDecoder().decode(e.term));
+
+  assert.deepEqual(await terms("東京都千代田区丸の内1丁目1番2号", "東京都港区赤坂1丁目1番1号"), [
+    "東京都千代田区丸の内1丁目1番2号",
+    "東京都千代田区丸の内2丁目1番1号",
+    "東京都港区赤坂1丁目1番1号",
+  ]);
+  // Neither end has to be a term.
+  assert.deepEqual(await terms("東京都千代田区丸の内1丁目1番1号a", "東京都千代田区丸の内3"), [
+    "東京都千代田区丸の内1丁目1番2号",
+    "東京都千代田区丸の内2丁目1番1号",
+  ]);
+  assert.deepEqual(await terms("東京都", "東京都千代田区丸の内9", 1), ["東京都千代田区丸の内1丁目1番1号"]);
+  assert.deepEqual(await terms("北海道", "千葉県"), [], "an empty range reads nothing past its first block");
+});
+
 test("holds the tokenizer the index declares", async () => {
   const index = await MokujiIndex.open(await fileSource("dict"));
   assert.equal(index.tokenizerId, "identity");
