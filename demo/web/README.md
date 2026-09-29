@@ -1,4 +1,4 @@
-# Three pages, one reader
+# Four pages, one reader
 
 The same `.mokuji` file, read by a page. No server logic, no API, no
 WebAssembly, and no bundled decompressor.
@@ -6,8 +6,9 @@ WebAssembly, and no bundled decompressor.
 `index.html` completes an address prefix. `reverse.html` does the other
 direction on a map: click a point, get the 町丁目 that holds it. `stac.html`
 finds satellite images by word, place and period in a static STAC catalog; see
-[../stac](../stac). All three are the same `mokuji.js` over the same file
-layout.
+[../stac](../stac). `complete.html` completes a place name as it is typed,
+from every place in GeoNames. All four are the same `mokuji.js` over the same
+file layout.
 
 Build the indexes first — [../addresses](../addresses) and
 [../reverse](../reverse) — then:
@@ -102,3 +103,34 @@ format:
 - If the page is on a different origin from the object, CORS must allow the
   `Range` request header and expose `Content-Range`, which a reader needs to
   learn the file's length.
+
+## Completing a name as it is typed
+
+`complete.html` answers every keystroke from one file of all 12,854,245 places
+in GeoNames, each under every name it has. Build it — the sort numbers the
+places most-named first, which is what makes the first documents of a prefix
+the ones worth showing:
+
+```sh
+python3 ../poi/geonames.py --input allCountries.txt --out names.tsv --whole-names
+LC_ALL=C sort -t$'\t' -k6,6nr -s names.tsv > names-ranked.tsv
+mokuji build names-ranked.tsv names.mokuji --tokenizer name-list \
+  --no-doc-lengths --docs-per-payload-block 256 --completions 1024,16384,10
+python3 serve.py --names names.mokuji
+```
+
+Sorting the corpus rather than passing `--order-by` gives the same numbering
+without a column, and the page wants none: columns and document lengths are
+resident, and at this size they would make opening cost tens of megabytes.
+As built, opening costs **2 requests and 816 KB** of a 406 MB file — the term
+index, the offset tables, and the completions section.
+
+A prefix with an entry in that section costs **no request before its
+payload**: `s`, `mont`, `สถานี`. One without an entry is guaranteed cheap —
+fewer than 1,024 terms and 16 KB of postings — and costs a few: `black se`,
+`東京タ` and `zü` are each 2 requests and 6–12 KB before their payload. The panel says
+which each keystroke was, and the log lists every range it read.
+
+The page runs one query at a time and then the latest thing typed, so the count
+beside a keystroke is that keystroke's alone.
+
