@@ -7,7 +7,7 @@ use mokuji_write::{Options, PayloadEncoding};
 
 use mokuji_cli::corpus::Tokenizer;
 use mokuji_cli::info::{self, Error};
-use mokuji_cli::{build, dump, prefix, search, verify};
+use mokuji_cli::{build, complete, dump, prefix, search, verify};
 
 const USAGE: &str = "\
 mokuji - a cloud-optimized concordance format
@@ -27,6 +27,12 @@ usage:
                                        read one more tab-separated field per
                                        line as a column of numbers, readable
                                        without fetching payload; repeatable
+        --completions <terms>,<bytes>,<n>
+                                       list the first n documents of every
+                                       prefix that at least <terms> terms
+                                       begin with, or whose postings reach
+                                       <bytes>; 0 for either promises nothing
+                                       on that count (SPEC.md 5.3.5)
         --order-by <column>            number documents by this attribute,
                                        highest first, so every term's postings
                                        begin with its most important documents
@@ -40,7 +46,8 @@ usage:
                                        the metadata; repeatable, for a
                                        parameter a reader needs but the format
                                        has no opinion about
-        --tokenizer <id>               space-split (default) or identity
+        --tokenizer <id>               a TOKENIZERS.md identifier; space-split
+                                       by default
         --source <path>                record this file's hash as a source too;
                                        repeatable, for the register a corpus
                                        was converted from
@@ -64,6 +71,10 @@ usage:
                                        hierarchical key such as an address is
                                        for. --resident holds the whole
                                        dictionary, so a lookup costs no read
+    mokuji complete <file> <typed> [-n <limit>]
+                                       the first documents for what has been
+                                       typed, from the completions section
+                                       when the prefix has an entry there
     mokuji verify <file> [--source <p>] check the whole file, and its provenance
 
     mokuji --version
@@ -90,6 +101,7 @@ fn main() -> ExitCode {
         ["info", path] => info::run(path.as_ref()),
         ["search", path, terms @ ..] => search_command(path, terms),
         ["prefix", path, needle, flags @ ..] => prefix_command(path, needle, flags),
+        ["complete", path, typed, flags @ ..] => complete_command(path, typed, flags),
         ["build", input, output, flags @ ..] => build_command(input, output, flags),
         ["verify", path, flags @ ..] => verify_command(path, flags),
         [cmd, ..] => {
@@ -132,6 +144,26 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .map_err(|_| Error::Usage(format!("{flag} is too large")))?;
             }
             "--generation" => generation = take_number(flag, &mut rest)?,
+            "--completions" => {
+                let (spec, tail) = rest.split_first().ok_or_else(|| {
+                    Error::Usage("--completions needs <terms>,<bytes>,<n>".into())
+                })?;
+                rest = tail;
+                let parts: Vec<u64> = spec
+                    .split(',')
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| Error::Usage(format!("'{spec}' is not <terms>,<bytes>,<n>")))?;
+                let [min_terms, max_span, docs] = parts[..] else {
+                    return Err(Error::Usage(format!("'{spec}' is not <terms>,<bytes>,<n>")));
+                };
+                options.completions = Some(mokuji_write::Completions {
+                    min_terms,
+                    max_span,
+                    docs_per_entry: u32::try_from(docs)
+                        .map_err(|_| Error::Usage(format!("{flag} lists too many")))?,
+                });
+            }
             "--order-by" => {
                 let (name, tail) = rest
                     .split_first()
@@ -324,6 +356,17 @@ fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error>
         }
     }
     prefix::run(path.as_ref(), needle, limit, resident)
+}
+
+fn complete_command(path: &str, typed: &str, flags: &[&str]) -> Result<(), Error> {
+    let limit = match flags {
+        [] => 10,
+        ["-n" | "--limit", n] => n
+            .parse()
+            .map_err(|_| Error::Usage(format!("'{n}' is not a number")))?,
+        _ => return Err(Error::Usage("complete takes at most -n <limit>".into())),
+    };
+    complete::run(path.as_ref(), typed, limit)
 }
 
 fn verify_command(path: &str, flags: &[&str]) -> Result<(), Error> {

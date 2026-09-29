@@ -593,3 +593,130 @@ fn order_by_needs_a_declared_column() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("not a declared attribute"));
 }
+
+/// Places under all their names, `name-list` style: U+001F between names.
+const NAMES: &str = "Black Sea\u{1f}Černé moře\tBlack Sea\n\
+                     Black Forest\u{1f}Schwarzwald\tBlack Forest\n\
+                     Blackpool\tBlackpool\n\
+                     Bled\tBled\n\
+                     Tokyo\u{1f}東京\tTokyo\n";
+
+fn names_index(dir: &Path, completions: &str) -> std::path::PathBuf {
+    let corpus = dir.join("names.tsv");
+    let index = dir.join("names.mokuji");
+    std::fs::write(&corpus, NAMES).unwrap();
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--tokenizer",
+        "name-list",
+        "--completions",
+        completions,
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    index
+}
+
+#[test]
+fn complete_answers_an_expensive_prefix_from_the_table() {
+    let dir = tempfile::tempdir().unwrap();
+    // `b`, `bl` and `bla`... are shared by at least three names.
+    let index = names_index(dir.path(), "3,0,2");
+
+    let output = mokuji(&["complete", index.to_str().unwrap(), "BL", "-n", "2"]);
+    let out = stdout(&output);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(out, "0\tBlack Sea\n1\tBlack Forest\n");
+    assert!(err.contains("from the completions section"), "{err}");
+    assert!(err.contains("0 before the payload"), "{err}");
+
+    // `black s` is two names' worth, so it is cheap and walks the dictionary.
+    let output = mokuji(&["complete", index.to_str().unwrap(), "Black S"]);
+    assert_eq!(stdout(&output), "0\tBlack Sea\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("so it is cheap"));
+
+    let verified = mokuji(&["verify", index.to_str().unwrap()]);
+    assert!(verified.status.success(), "{}", stdout(&verified));
+    assert!(stdout(&verified).contains("completions     "));
+}
+
+#[test]
+fn verify_rejects_completions_that_break_their_promises() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = std::fs::read(names_index(dir.path(), "3,0,2")).unwrap();
+    let sections = |bytes: &[u8]| {
+        let header = Header::parse(bytes).unwrap();
+        let start = header.section_table_offset as usize;
+        parse_section_table(
+            &bytes[start..start + header.section_table_len as usize],
+            header.section_count,
+        )
+        .unwrap()
+    };
+    let meta = sections(&built)
+        .into_iter()
+        .find(|s| s.id == SectionId::META)
+        .map(|s| built[s.offset as usize..(s.offset + s.length) as usize].to_vec())
+        .unwrap();
+
+    // The same file stored raw, so that a promise can be broken by one byte.
+    let corpus =
+        mokuji_cli::corpus::parse(NAMES, mokuji_cli::corpus::Tokenizer::NameList, 0, false)
+            .unwrap();
+    let mut builder = mokuji_write::Builder::new(mokuji_write::Options {
+        compress: false,
+        completions: Some(mokuji_write::Completions {
+            min_terms: 3,
+            max_span: 0,
+            docs_per_entry: 2,
+        }),
+        ..mokuji_write::Options::default()
+    })
+    .unwrap();
+    for payload in &corpus.payloads {
+        builder.add_document(payload.clone()).unwrap();
+    }
+    for (term, docs) in &corpus.postings {
+        for (&doc, &freq) in docs {
+            builder.add_posting(term, doc, freq).unwrap();
+        }
+    }
+    let raw = builder.finish(&meta).unwrap();
+    let at = sections(&raw)
+        .into_iter()
+        .find(|s| s.id == SectionId::COMPLETIONS)
+        .expect("a completions section")
+        .offset as usize;
+    let check = |bytes: &[u8], name: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        mokuji(&["verify", path.to_str().unwrap()])
+    };
+    assert!(check(&raw, "raw.mokuji").status.success());
+
+    // Claiming that two terms are enough makes `black ` expensive — two names
+    // begin with it — and it has no entry.
+    let mut claims_more = raw.clone();
+    assert_eq!(claims_more[at], 3, "min_terms leads the section");
+    claims_more[at] = 2;
+    let output = check(&claims_more, "more.mokuji");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("has no completion entry"));
+
+    // The first entry is `b`, listing documents 0 and 1: after the four
+    // header varints, a key of 0, 1, `b`, a count of 2, then zigzag deltas.
+    // Making the second delta 4 lists Tokyo, which no `b` term names.
+    let mut stray = raw.clone();
+    assert_eq!(&stray[at + 4..at + 10], &[0, 1, b'b', 2, 0, 2]);
+    stray[at + 9] = 8;
+    let output = check(&stray, "stray.mokuji");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("which holds no term beginning with it")
+    );
+}

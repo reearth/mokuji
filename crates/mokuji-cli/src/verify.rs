@@ -61,6 +61,17 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
         // to index. Worth reporting, not worth rejecting.
         println!("                (these differ; the tokenizer may drop terms it does not index)");
     }
+    if let Some(completions) = index.completions() {
+        let checked = block_on(check_completions(&index, &stats.first_bytes))?;
+        println!(
+            "completions     {} entries, covering {} terms or {} bytes, {} documents each",
+            completions.len(),
+            completions.min_terms,
+            completions.max_span,
+            completions.docs_per_entry
+        );
+        println!("                {checked} prefixes checked for coverage");
+    }
     println!("bytes read      {}", reader.stats().bytes);
 
     match source {
@@ -78,12 +89,26 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
     Ok(())
 }
 
-#[derive(Default)]
 struct Stats {
     terms: u64,
     blocks: u32,
     postings: u64,
     tokens: u64,
+    /// Terms and postings bytes by first byte: the one-byte prefixes, which
+    /// coverage starts from.
+    first_bytes: Vec<(u64, u64)>,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Stats {
+            terms: 0,
+            blocks: 0,
+            postings: 0,
+            tokens: 0,
+            first_bytes: vec![(0, 0); 256],
+        }
+    }
 }
 
 /// Reads every block and checks the structure holds together.
@@ -129,6 +154,11 @@ async fn walk<R: RangeReader>(index: &Index<R>) -> Result<Stats, Error> {
                 )));
             }
 
+            if let Some(&first) = term.first() {
+                let slot = &mut stats.first_bytes[usize::from(first)];
+                slot.0 += 1;
+                slot.1 += entry.postings_len;
+            }
             let postings = index.postings(&entry).await?;
             stats.postings += postings.len() as u64;
             stats.tokens += postings.freqs.iter().sum::<u64>();
@@ -142,6 +172,91 @@ async fn walk<R: RangeReader>(index: &Index<R>) -> Result<Stats, Error> {
         index.read_payload(doc).await?;
     }
     Ok(stats)
+}
+
+/// Checks what `SPEC.md` §5.3.5 requires of a writer and a reader cannot see:
+/// that each entry lists documents its prefix matches, as many as it should,
+/// and that every expensive prefix has one. Returns how many prefixes were
+/// tested for coverage.
+///
+/// Coverage is tested without enumerating every prefix. Term counts and
+/// postings sizes only shrink as a prefix grows, so the shortest expensive
+/// prefix missing an entry, if there is one, is either one byte long or one
+/// byte longer than a prefix that has an entry — and those are what is tried.
+async fn check_completions<R: RangeReader>(
+    index: &Index<R>,
+    first_bytes: &[(u64, u64)],
+) -> Result<u64, Error> {
+    let completions = index.completions().expect("checked by the caller");
+    let expensive = |count: u64, span: u64| {
+        (completions.min_terms != 0 && count >= completions.min_terms)
+            || (completions.max_span != 0 && span >= completions.max_span)
+    };
+    let missing = |prefix: &[u8]| {
+        Error::Invalid(format!(
+            "prefix {:?} is expensive and has no completion entry",
+            String::from_utf8_lossy(prefix)
+        ))
+    };
+
+    let mut checked = 0u64;
+    if completions.covers() {
+        for (byte, &(count, span)) in first_bytes.iter().enumerate() {
+            checked += u64::from(count > 0);
+            if expensive(count, span) && completions.get(&[byte as u8]).is_none() {
+                return Err(missing(&[byte as u8]));
+            }
+        }
+    }
+
+    for (prefix, listed) in completions.entries() {
+        let matched = index.prefix(prefix, usize::MAX).await?;
+        let entries: Vec<_> = matched.iter().map(|(_, e)| *e).collect();
+        let mut docs: Vec<u64> = index
+            .postings_span(&entries)
+            .await?
+            .into_iter()
+            .flat_map(|p| p.docs)
+            .collect();
+        docs.sort_unstable();
+        docs.dedup();
+
+        let what = || String::from_utf8_lossy(prefix).into_owned();
+        if let Some(stray) = listed.iter().find(|d| docs.binary_search(d).is_err()) {
+            return Err(Error::Invalid(format!(
+                "the completion for {:?} lists document {stray}, which holds no term beginning with it",
+                what()
+            )));
+        }
+        let due = (docs.len() as u64).min(completions.docs_per_entry);
+        if listed.len() as u64 != due {
+            return Err(Error::Invalid(format!(
+                "the completion for {:?} lists {} documents where it should list {due}",
+                what(),
+                listed.len()
+            )));
+        }
+
+        if completions.covers() {
+            let mut children: std::collections::BTreeMap<u8, (u64, u64)> = Default::default();
+            for (term, entry) in &matched {
+                if let Some(&next) = term.get(prefix.len()) {
+                    let child = children.entry(next).or_default();
+                    child.0 += 1;
+                    child.1 += entry.postings_len;
+                }
+            }
+            for (next, (count, span)) in children {
+                checked += 1;
+                let mut child = prefix.to_vec();
+                child.push(next);
+                if expensive(count, span) && completions.get(&child).is_none() {
+                    return Err(missing(&child));
+                }
+            }
+        }
+    }
+    Ok(checked)
 }
 
 fn check_source(meta: &Meta, source: &Path) -> Result<(), Error> {
