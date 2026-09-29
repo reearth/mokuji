@@ -315,6 +315,9 @@ mod names {
         }
         let built = builder.finish(&meta).unwrap();
         assert_eq!(built.len(), expected.len(), "lengths differ");
-        assert!(built == expected, "names.mokuji is not reproduced byte for byte");
+        assert!(
+            built == expected,
+            "names.mokuji is not reproduced byte for byte"
+        );
     }
 }

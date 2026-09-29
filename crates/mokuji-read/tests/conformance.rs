@@ -146,7 +146,10 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
 #[test]
 fn every_completion_comes_from_where_the_case_says_within_its_reads() {
     let suite = suite();
-    assert!(!suite.completion.is_empty(), "no completion cases were loaded");
+    assert!(
+        !suite.completion.is_empty(),
+        "no completion cases were loaded"
+    );
 
     for case in &suite.completion {
         let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
