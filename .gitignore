@@ -1,4 +1,6 @@
 /target
+/tools/*/target
+/tools/*/Cargo.lock
 **/*.rs.bk
 *.mokuji
 !conformance/fixtures/*.mokuji
