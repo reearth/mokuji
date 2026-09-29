@@ -122,3 +122,46 @@ on every result.
 
 So a dictionary should stay in key order. Where an address needs a rank, it
 belongs in a column or in a table beside the dictionary, not in the numbering.
+
+### A table for the prefixes that are expensive
+
+The prefix table above says a short prefix cannot be answered from the
+dictionary within a small bound. It can be answered ahead of time instead. The
+`completion` binary in the same crate reads an ordered file and builds, for
+every prefix that is expensive, the ten most important documents holding a term
+that begins with it — the ten smallest IDs among the heads of those terms' runs,
+since the file is numbered by importance.
+
+A prefix is expensive if it matches at least 1,024 terms, which would span more
+than a block or two of the dictionary, or if those terms' postings together
+exceed 16 KB, which a reader would fetch to find the heads among them. Every
+other prefix is already cheap.
+
+```sh
+cd importance-order && cargo run --release --bin completion -- \
+  ../ordered.mokuji --chars 12 --max-span 16384
+```
+
+On the same 12.9 million places:
+
+| Characters | expensive prefixes | table, deflated | cheap prefixes, worst |
+|---|---|---|---|
+| 1 | 320 | 3.8 KB | 743 terms, 16.3 KB |
+| 2 | 888 | 9.4 KB | 986 terms, 16.4 KB |
+| 3 | 1,424 | 22.3 KB | 1,020 terms, 16.3 KB |
+| 4 | 750 | 14.2 KB | 1,023 terms, 16.3 KB |
+| 5 | 202 | 4.6 KB | 985 terms, 16.3 KB |
+| 6–11 | 177 | 4.8 KB | 944 terms, 16.4 KB |
+| 12 | 0 | — | 132 terms, 14.4 KB |
+| **All** | **3,761** | **59 KB** | |
+
+The table runs out at twelve characters, and it has to stay out: a longer
+prefix matches a subset of what a shorter one does, so once no prefix of some
+length is expensive, none longer is. **59 KB decides every prefix of every
+length.** Held resident, it answers an expensive prefix with no read before the
+payload, and leaves every other prefix at most two or three dictionary blocks
+and 16 KB of postings.
+
+It stores document IDs, not a ranking, so the format needs nothing new to carry
+it beyond a section to put it in; whether that section belongs in the
+specification is the question this measurement is for.
