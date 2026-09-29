@@ -165,3 +165,49 @@ and 16 KB of postings.
 It stores document IDs, not a ranking, so the format needs nothing new to carry
 it beyond a section to put it in; whether that section belongs in the
 specification is the question this measurement is for.
+
+### Completing more than one word
+
+The table decides a prefix of one term. What someone types into a search box is
+often a finished word and an unfinished one — `black se` — and the `multiword`
+binary measures that, two ways, on files numbered by importance:
+
+- **words**, the `bigram` file above. Finished words are exact terms; the
+  unfinished one is a prefix whose runs are united, then intersected with them.
+- **names**, a second file where every name is one term, so what was typed is
+  one prefix of a name. `geonames.py --whole-names` writes that corpus: names
+  lowercased, their own spaces replaced by U+00A0, built with `space-split`.
+
+```sh
+python3 ../demo/poi/geonames.py --input allCountries.txt --out names.tsv --whole-names
+mokuji build names.tsv names.mokuji --tokenizer space-split \
+  --attribute lon:5 --attribute lat:5 --attribute population --attribute names \
+  --order-by names
+cd importance-order && cargo run --release --bin multiword -- \
+  ../ordered.mokuji ../names.mokuji typed.txt
+```
+
+The queries are the first 1,000 famous places typed partway: the first word cut
+after one to three letters (`lon`), the second word cut the same way
+(`black se`), and a Japanese name cut after two or three characters (`東京タ`).
+Reads and bytes before the payload, with the table held resident:
+
+| Typed | words | names + table |
+|---|---|---|
+| First word, 710 | p50 0, p99 3 reads; p99 22 KB | p50 0, p99 3 reads; p99 18 KB |
+| Second word, 1,089 | p50 **29**, p99 **529** reads; p99 **13 MB** | p50 2, p99 3 reads; p99 19 KB |
+| Japanese, 977 | 4 reads; p99 13 KB | 2–3 reads; p99 13 KB |
+
+Words fail on the second word, and the table cannot rescue them. The table holds
+the best ten for `se` alone, and the best ten of an intersection are not among
+the best ten of either side, so the reader unites the runs of every term
+beginning `se` — hundreds of dictionary blocks and megabytes of postings — to
+intersect them with `black`.
+
+Names turn the same query into one prefix, and the table then covers it: no
+typed query cost more than 3 reads or 24 KB before its payload. The whole-name
+file is 417 MB against 368 MB for words, and it is a second file rather than a
+replacement. It completes a name from its start only; `sea` does not find
+`Black Sea`, which is why the two agree on 35–55% of their answers. A search
+that finds a word anywhere still needs the word file; completion is better
+served by the name file.
