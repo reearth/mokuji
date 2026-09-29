@@ -6,7 +6,7 @@ file has to be downloaded whole, which is the one thing the format exists to
 avoid. Twenty lines of handler are cheaper than explaining why the demo appears
 to work but transfers four megabytes.
 
-Usage: python3 serve.py [--index PATH] [--reverse PATH] [--port N]
+Usage: python3 serve.py [--index PATH] [--reverse PATH] [--stac PATH] [--port N]
 """
 
 import argparse
@@ -21,6 +21,7 @@ HERE = pathlib.Path(__file__).parent
 class Handler(http.server.SimpleHTTPRequestHandler):
     index_path: pathlib.Path
     reverse_path: pathlib.Path | None = None
+    stac_path: pathlib.Path | None = None
 
     def translate_path(self, path):
         name = path.split("?")[0]
@@ -28,6 +29,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(self.index_path)
         if name == "/reverse.mokuji" and self.reverse_path:
             return str(self.reverse_path)
+        if name == "/stac.mokuji" and self.stac_path:
+            return str(self.stac_path)
         return str(HERE / name.lstrip("/"))
 
     def do_GET(self):
@@ -74,6 +77,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", default="addresses.mokuji")
     parser.add_argument("--reverse", help="the index reverse.html reads")
+    parser.add_argument("--stac", help="the index stac.html reads")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
 
@@ -86,6 +90,11 @@ def main():
         if not Handler.reverse_path.is_file():
             raise SystemExit(f"no index at {Handler.reverse_path}")
         served.append(f"{Handler.reverse_path.name} at /reverse.html")
+    if args.stac:
+        Handler.stac_path = pathlib.Path(args.stac).resolve()
+        if not Handler.stac_path.is_file():
+            raise SystemExit(f"no index at {Handler.stac_path}")
+        served.append(f"{Handler.stac_path.name} at /stac.html")
 
     print(f"serving {', '.join(served)} at http://localhost:{args.port}/")
     http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()

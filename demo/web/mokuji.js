@@ -626,6 +626,32 @@ export class MokujiIndex {
     return found;
   }
 
+  /** Terms from `low` to `high`, both inclusive, at most `limit` of them.
+   *
+   * The same walk as `prefix`, with a different test for where it stops: the
+   * dictionary is sorted, so a range of keys is a run of neighbouring entries,
+   * and whether the run continues past a block is answerable from the resident
+   * index alone.
+   */
+  async range(lowText, highText, limit = Infinity) {
+    const low = encoder.encode(lowText);
+    const high = encoder.encode(highText);
+    const start = this.blockFor(low);
+
+    const found = [];
+    for (let ordinal = start; ordinal < this.blockCount; ordinal++) {
+      if (ordinal > start && compare(this.boundaries[ordinal], high) > 0) break;
+      for (const entry of await this.termBlock(ordinal)) {
+        if (compare(entry.term, high) > 0) return found;
+        if (compare(entry.term, low) >= 0) {
+          found.push(entry);
+          if (found.length === limit) return found;
+        }
+      }
+    }
+    return found;
+  }
+
   // The postings a dictionary entry implies by carrying no run (SPEC.md
   // §5.3.4): the term names one document, whose ID is the term's own, once.
   implied(entry) {
