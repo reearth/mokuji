@@ -22,6 +22,8 @@ struct Case {
     docs: Vec<u64>,
     payloads: Vec<String>,
     reads: u32,
+    #[serde(default)]
+    countries: Option<Vec<String>>,
 }
 
 fn fixtures() -> PathBuf {
@@ -35,10 +37,14 @@ fn every_collection_case_holds() {
     assert!(!suite.collection.is_empty());
 
     for case in &suite.collection {
-        let manifest = Manifest::parse(
+        let mut manifest = Manifest::parse(
             &std::fs::read_to_string(fixtures().join(format!("{}.json", case.manifest))).unwrap(),
         )
         .unwrap();
+        if let Some(countries) = &case.countries {
+            let codes: Vec<&str> = countries.iter().map(String::as_str).collect();
+            manifest = manifest.within(&codes);
+        }
         let readers: Vec<CountingReader<SliceReader>> = manifest
             .segments
             .iter()

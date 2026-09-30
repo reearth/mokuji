@@ -13,7 +13,12 @@
     {
       "path": "names-delta.mokuji",
       "content_hash": "sha2-256:10f7a6d84a6857b72aa9f207a5b17127be848818496e7ea33ffe8072915609c2",
-      "length": 861
+      "length": 861,
+      "region": {
+        "countries": [
+          "JP"
+        ]
+      }
     }
   ]
 }

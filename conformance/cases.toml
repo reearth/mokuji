@@ -275,3 +275,31 @@ payloads = ["Tokyo Tower"]
 # boundary key `東京タワー`, read on faith (SPEC.md §4.1), then that block, its
 # run, and the payload.
 reads = 5
+
+# `names-delta` states that its places are in Japan (MANIFEST.md §7); `names`
+# states no region. `countries` restricts a case to the segments whose region
+# includes one of them, and those with none; segment numbers are then positions
+# among those.
+
+[[collection]]
+name = "a segment elsewhere is not opened"
+manifest = "collection"
+prefix = "東京タ"
+limit = 10
+countries = ["FR"]
+segments = []
+docs = []
+payloads = []
+reads = 1 # names alone: the one block that proves it absent
+
+[[collection]]
+name = "a segment in the place asked about is"
+manifest = "collection"
+prefix = "東京タ"
+limit = 10
+countries = ["JP", "KR"]
+segments = [1]
+docs = [1]
+payloads = ["Tokyo Tower"]
+reads = 5
+

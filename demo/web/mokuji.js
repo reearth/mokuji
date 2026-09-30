@@ -885,9 +885,20 @@ export class MokujiCollection {
    * independent, so opening them costs one round trip however many there are.
    * `sourceFor(url)` may supply a byte source instead of fetching.
    */
-  static async open(url, sourceFor = (u) => u) {
-    const manifest =
+  static async open(url, sourceFor = (u) => u, { countries = null } = {}) {
+    let manifest =
       typeof url === "string" ? await (await fetch(url, { cache: "no-store" })).json() : url;
+    const listed = manifest.segments.length;
+    // About a place: only the segments whose region includes it, and those
+    // with none (MANIFEST.md §7). The others are never opened.
+    if (countries) {
+      manifest = {
+        ...manifest,
+        segments: manifest.segments.filter(
+          (s) => !s.region || s.region.countries.some((c) => countries.includes(c)),
+        ),
+      };
+    }
     if (String(manifest.mokuji_manifest ?? "").split(".")[0] !== "0") {
       throw new Error(`manifest version ${manifest.mokuji_manifest} is not one this reader implements`);
     }
@@ -911,7 +922,10 @@ export class MokujiCollection {
         throw new Error(`${manifest.segments[i].path} was tokenized differently from the first segment`);
       }
     }
-    return new MokujiCollection(manifest, segments);
+    const collection = new MokujiCollection(manifest, segments);
+    // How many the manifest lists, before a region left some out.
+    collection.manifestSegments = listed;
+    return collection;
   }
 
   resetStats() {

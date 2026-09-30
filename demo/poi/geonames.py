@@ -36,7 +36,7 @@ import pathlib
 import sys
 
 # The columns of the GeoNames export, which has no header row.
-GEONAMEID, NAME, ASCIINAME, ALTERNATES, LAT, LON, FCLASS, FCODE = range(8)
+GEONAMEID, NAME, ASCIINAME, ALTERNATES, LAT, LON, FCLASS, FCODE, COUNTRY = range(9)
 POPULATION = 14
 
 
@@ -62,6 +62,11 @@ def main():
         "by default because an address index covers it better",
     )
     parser.add_argument(
+        "--countries",
+        help="ISO 3166 codes to keep, comma separated; all by default. What a "
+        "regional shard is cut by",
+    )
+    parser.add_argument(
         "--whole-names",
         action="store_true",
         help="separate the names by U+001F rather than spaces, for the "
@@ -70,11 +75,15 @@ def main():
     )
     args = parser.parse_args()
 
+    countries = set(args.countries.split(",")) if args.countries else None
     out = pathlib.Path(args.out)
     kept = skipped = 0
     with open(args.input, encoding="utf-8") as handle, out.open("w", encoding="utf-8") as sink:
         for row in csv.reader(handle, delimiter="\t", quoting=csv.QUOTE_NONE):
             if len(row) <= POPULATION or row[FCLASS] not in args.classes:
+                skipped += 1
+                continue
+            if countries is not None and row[COUNTRY] not in countries:
                 skipped += 1
                 continue
             names = names_of(row)

@@ -90,6 +90,11 @@ search, complete and verify take a manifest wherever they take a file.
                                        one more file, after the rest
     mokuji manifest delete <manifest.json> <file> <doc>...
                                        these documents of that file are gone
+    mokuji manifest region <manifest.json> <file> <CC,CC,...|->
+                                       every document of that file is in these
+                                       countries; - for anywhere. search and
+                                       complete then take --countries <CC,...>
+                                       and open only the segments there
     mokuji compact <manifest.json> <output.mokuji>
                                        fold the collection into one file that
                                        answers exactly as it did
@@ -132,6 +137,9 @@ fn main() -> ExitCode {
             })
             .collect::<Result<Vec<_>, _>>()
             .and_then(|docs| collection::delete(path.as_ref(), file, &docs)),
+        ["manifest", "region", path, file, countries] => {
+            collection::region(path.as_ref(), file, countries)
+        }
         ["compact", manifest, output] => compact::run(manifest.as_ref(), output.as_ref()),
         ["build", input, output, flags @ ..] => build_command(input, output, flags),
         ["verify", path, flags @ ..] => verify_command(path, flags),
@@ -332,18 +340,28 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
 
 fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
     if collection::is_manifest(path.as_ref()) {
-        let (limit, terms) = match args {
-            ["-n" | "--limit", n, terms @ ..] => (
-                n.parse()
-                    .map_err(|_| Error::Usage(format!("'{n}' is not a number")))?,
-                terms,
-            ),
-            terms => (10, terms),
-        };
+        let mut limit = 10;
+        let mut countries = None;
+        let mut terms = Vec::new();
+        let mut rest = args;
+        while let Some((arg, tail)) = rest.split_first() {
+            rest = tail;
+            match *arg {
+                "-n" | "--limit" => limit = take_number(arg, &mut rest)? as usize,
+                "--countries" => {
+                    let (list, tail) = rest
+                        .split_first()
+                        .ok_or_else(|| Error::Usage("--countries needs a list".into()))?;
+                    rest = tail;
+                    countries = Some(*list);
+                }
+                term => terms.push(term),
+            }
+        }
         if terms.is_empty() {
             return Err(Error::NoTerms);
         }
-        return collection::search(path.as_ref(), terms, limit);
+        return collection::search(path.as_ref(), &terms, limit, countries);
     }
     let mut limit = 10;
     let mut boost: Option<&str> = None;
@@ -422,15 +440,30 @@ fn prefix_command(path: &str, needle: &str, flags: &[&str]) -> Result<(), Error>
 }
 
 fn complete_command(path: &str, typed: &str, flags: &[&str]) -> Result<(), Error> {
-    let limit = match flags {
-        [] => 10,
-        ["-n" | "--limit", n] => n
-            .parse()
-            .map_err(|_| Error::Usage(format!("'{n}' is not a number")))?,
-        _ => return Err(Error::Usage("complete takes at most -n <limit>".into())),
-    };
+    let mut limit = 10;
+    let mut countries = None;
+    let mut rest = flags;
+    while let Some((flag, tail)) = rest.split_first() {
+        rest = tail;
+        match *flag {
+            "-n" | "--limit" => limit = take_number(flag, &mut rest)? as usize,
+            "--countries" => {
+                let (list, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage("--countries needs a list".into()))?;
+                rest = tail;
+                countries = Some(*list);
+            }
+            other => return Err(Error::Usage(format!("unknown option '{other}'"))),
+        }
+    }
     if collection::is_manifest(path.as_ref()) {
-        return collection::complete(path.as_ref(), typed, limit);
+        return collection::complete(path.as_ref(), typed, limit, countries);
+    }
+    if countries.is_some() {
+        return Err(Error::Usage(
+            "--countries needs a manifest, whose segments have regions".into(),
+        ));
     }
     complete::run(path.as_ref(), typed, limit)
 }

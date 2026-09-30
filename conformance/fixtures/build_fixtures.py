@@ -94,10 +94,13 @@ NAME_DELTA_DOCUMENTS = [
 ]
 
 # `names`, then `names-delta`, with Black Sea — the first document every `b`
-# entry of `names` lists — deleted.
-COLLECTION = [("names", [0]), ("names-delta", [])]
+# entry of `names` lists — deleted. The delta's places are all in Japan, and
+# the manifest says so; `names` states no region, so it is asked whatever the
+# place (MANIFEST.md 7).
+COLLECTION = [("names", [0], None), ("names-delta", [], ["JP"])]
 
-# prefix, limit, expected (segment, document, payload) triples, reads
+# prefix, limit, expected (segment, document, payload) triples, reads, and
+# optionally the countries the query is about
 COLLECTION_CASES = [
     # The `bl` entry lists Black Sea and Black Forest. With Black Sea deleted it
     # is short, and lists no more than that, so `names` reads its dictionary.
@@ -110,6 +113,11 @@ COLLECTION_CASES = [
     # before the boundary key `東京タワー`, so the block before it is read on
     # faith (SPEC.md 4.1), then that one, then its run and the payload.
     ("東京タ", 10, [(1, 1, "Tokyo Tower")], 5),
+    # About France, so the delta is not opened: its region is Japan. `names`
+    # is, and proves the prefix absent with one block.
+    ("東京タ", 10, [], 1, ["FR"]),
+    # About Japan: both, and the same answer as with no place given.
+    ("東京タ", 10, [(1, 1, "Tokyo Tower")], 5, ["JP", "KR"]),
 ]
 
 DOCUMENTS = [
@@ -1144,9 +1152,16 @@ def main():
         print(f"wrote {name}.mokuji ({len(data)} bytes) and {name}.hex")
 
     # The collection, from the fixtures just built.
-    built = {name: (HERE / f"{name}.mokuji").read_bytes() for name, _ in COLLECTION}
-    segments = [(built[name], deletes) for name, deletes in COLLECTION]
-    for prefix, limit, expected, expected_reads in COLLECTION_CASES:
+    built = {name: (HERE / f"{name}.mokuji").read_bytes() for name, _, _ in COLLECTION}
+    for prefix, limit, expected, expected_reads, *about in COLLECTION_CASES:
+        # Restricted to a place, the collection is its segments whose region
+        # includes it and those with none, in the same order (MANIFEST.md 7).
+        # Segment numbers in results are positions in the restricted list.
+        segments = [
+            (built[name], deletes)
+            for name, deletes, region in COLLECTION
+            if not about or region is None or set(region) & set(about[0])
+        ]
         got, reads = collection_complete(segments, prefix, limit)
         assert got == expected, ("collection", prefix, got, expected)
         assert reads == expected_reads, ("collection", prefix, reads, expected_reads)
@@ -1160,8 +1175,9 @@ def main():
                     "content_hash": "sha2-256:" + hashlib.sha256(built[name]).hexdigest(),
                     "length": len(built[name]),
                     **({"deletes": deletes} if deletes else {}),
+                    **({"region": {"countries": region}} if region else {}),
                 }
-                for name, deletes in COLLECTION
+                for name, deletes, region in COLLECTION
             ],
         },
         indent=2,

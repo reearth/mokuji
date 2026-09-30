@@ -119,7 +119,9 @@ for (const testCase of tables.collection ?? []) {
     );
     const sources = new Map();
     for (const s of manifest.segments) sources.set(s.path, await fileSource(s.path.replace(/\.mokuji$/, "")));
-    const collection = await MokujiCollection.open(manifest, (path) => sources.get(path));
+    const collection = await MokujiCollection.open(manifest, (path) => sources.get(path), {
+      countries: testCase.countries ?? null,
+    });
     collection.resetStats();
     const { hits, payloads } = await collection.complete(testCase.prefix, testCase.limit);
     assert.deepEqual(hits.map((h) => h.segment), testCase.segments);

@@ -342,3 +342,33 @@ fn a_linked_segment_is_named_where_it_is_linked() {
     let text = std::fs::read_to_string(&manifest).unwrap();
     assert!(text.contains("\"path\": \"base-2026-09.mokuji\""), "{text}");
 }
+
+#[test]
+fn a_region_keeps_a_segment_out_of_queries_about_elsewhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = collection(dir.path());
+    let m = manifest.to_str().unwrap();
+    let set = ok(mokuji(&["manifest", "region", m, "delta.mokuji", "JP"]));
+    assert!(String::from_utf8_lossy(&set.stdout).contains("delta.mokuji is in JP"));
+
+    // The base has no region, so it may hold anything and is always asked.
+    let jp = ok(mokuji(&["complete", m, "tokyo", "--countries", "JP,KR"]));
+    assert_eq!(payloads(&jp), ["Tokyo", "Tokyo Tower"]);
+    assert!(String::from_utf8_lossy(&jp.stderr).contains("opened:   2 segment(s)"));
+
+    let fr = ok(mokuji(&["complete", m, "tokyo", "--countries", "FR"]));
+    assert_eq!(payloads(&fr), ["Tokyo"]);
+    assert!(String::from_utf8_lossy(&fr.stderr).contains("opened:   1 segment(s)"));
+
+    let unscoped = ok(mokuji(&["search", m, "東京タワー"]));
+    assert_eq!(payloads(&unscoped), ["Tokyo Tower"]);
+    let elsewhere = ok(mokuji(&["search", m, "東京タワー", "--countries", "FR"]));
+    assert!(payloads(&elsewhere).is_empty());
+
+    ok(mokuji(&["manifest", "region", m, "delta.mokuji", "-"]));
+    let anywhere = ok(mokuji(&["complete", m, "tokyo", "--countries", "FR"]));
+    assert_eq!(payloads(&anywhere), ["Tokyo", "Tokyo Tower"]);
+
+    let bad = mokuji(&["manifest", "region", m, "delta.mokuji", "jpn"]);
+    assert!(!bad.status.success(), "not an ISO 3166-1 alpha-2 code");
+}
