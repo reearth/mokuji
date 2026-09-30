@@ -485,6 +485,10 @@ export class MokujiIndex {
 
     index.meta = cbor(await resident(SECTION.META))[0];
     index.tokenizerId = index.meta?.tokenizer?.id ?? "identity";
+    // The index's license and the credit its results carry (SPEC.md §6). A
+    // page that shows results owes the credit, so it is kept at hand.
+    index.license = typeof index.meta?.license === "string" ? index.meta.license : null;
+    index.attribution = typeof index.meta?.attribution === "string" ? index.meta.attribution : null;
     index.normalize = TOKENIZERS[index.tokenizerId];
     if (!index.normalize) {
       // Readable, just not reachable by an unnormalized query. Saying so beats

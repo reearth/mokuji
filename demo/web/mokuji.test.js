@@ -123,6 +123,15 @@ test("name-list agrees with the other implementations", () => {
   assert.equal(nameList("ΟΔΟΣ"), "οδος");
 });
 
+test("carries the license and the credit a file states", async () => {
+  const names = await MokujiIndex.open(await fileSource("names"));
+  assert.equal(names.license, "CC0-1.0");
+  assert.equal(names.attribution, "Mokuji conformance fixtures");
+  const tiny = await MokujiIndex.open(await fileSource("tiny"));
+  assert.equal(tiny.license, null);
+  assert.equal(tiny.attribution, null);
+});
+
 test("reads a deflated file", async () => {
   // The fixtures the other implementations reproduce byte for byte are stored
   // raw, so without this the browser's decompression is never exercised.
