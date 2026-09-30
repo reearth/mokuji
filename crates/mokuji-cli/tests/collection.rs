@@ -88,7 +88,7 @@ fn a_collection_is_its_segments_in_order_less_what_was_deleted() {
     let said = String::from_utf8_lossy(&deleted.stdout);
     assert!(said.contains("generation 3"), "{said}");
     assert!(
-        said.contains("completion entries now list a deleted document"),
+        said.contains("entries list a deleted document; the most any has lost is 1 of 2"),
         "{said}"
     );
 
