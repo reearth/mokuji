@@ -1,15 +1,16 @@
-// The browser reader, against the conformance suite.
+// The JavaScript reader, against the conformance suite.
 //
-// `mokuji.js` is a third implementation of SPEC.md and the only one written for
-// the transport the format was designed for, so it is the one most worth
-// holding to the same cases as the others. Run with `node --test demo/web`.
+// This is a third implementation of SPEC.md and the only one written for the
+// transport the format was designed for, so it is the one most worth holding to
+// the same cases as the others. Run with `npm test` in js/; it tests the built
+// dist/, which is what everyone else imports.
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { MokujiCollection, MokujiIndex, jaAddress, nameList } from "./mokuji.js";
+import { MokujiCollection, MokujiIndex, jaAddress, nameList } from "../dist/index.js";
 
 const CONFORMANCE = fileURLToPath(new URL("../../conformance/", import.meta.url));
 

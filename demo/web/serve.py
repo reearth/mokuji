@@ -34,6 +34,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(self.reverse_path)
         if name == "/stac.mokuji" and self.stac_path:
             return str(self.stac_path)
+        # The reader, built: mokuji.js re-exports ../../js/dist/index.js, which
+        # a browser resolves to /js/dist/index.js.
+        if name.startswith("/js/"):
+            rest = name[len("/js/"):]
+            if ".." not in rest.split("/"):
+                return str(HERE.parent.parent / "js" / rest)
+            return str(HERE / "not-found")
         if name == "/names.mokuji" and self.names_path:
             return str(self.names_path)
         # A collection is a manifest and the files beside it (MANIFEST.md), so

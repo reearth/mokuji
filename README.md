@@ -62,6 +62,8 @@ The reference implementation, in Rust.
 | `mokuji-write` | Deterministic writer |
 | `mokuji-meta` | The metadata section, and the canonical CBOR it is written in |
 | `mokuji-cli` | The `mokuji` command |
+| `mokuji-manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
+| `js/` (`@reearth/mokuji`) | The reader in TypeScript, for browsers, workers and Node |
 
 The crate boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
@@ -182,9 +184,11 @@ measurements, the provenance chain back to the register, and what the numbers do
 and do not show.
 
 A browser reads the same kind of file in [demo/web](demo/web) — Tokyo at
-residence level, 1,744,962 addresses in 8.7 MB — in about 400 lines of plain
-JavaScript with no WebAssembly and no bundled decompressor. That is what the
-choice of deflate as the required codec buys: browsers already have it.
+residence level, 1,744,962 addresses in 8.7 MB — with a reader of 13 KB
+gzipped, no WebAssembly and no bundled decompressor. That is what the choice of
+deflate as the required codec buys: browsers already have it. The reader is the
+`@reearth/mokuji` package in [js](js), which a page, a Cloudflare Worker and
+Node all use unchanged.
 
 ## Scope
 

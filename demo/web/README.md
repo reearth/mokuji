@@ -7,8 +7,10 @@ WebAssembly, and no bundled decompressor.
 direction on a map: click a point, get the 町丁目 that holds it. `stac.html`
 finds satellite images by word, place and period in a static STAC catalog; see
 [../stac](../stac). `complete.html` completes a place name as it is typed,
-from every place in GeoNames. All four are the same `mokuji.js` over the same
-file layout.
+from every place in GeoNames. All four read with the same reader, the
+`@reearth/mokuji` package in [../../js](../../js), over the same file layout.
+`mokuji.js` here only re-exports its build, and `serve.py` serves `js/` so that
+a browser can load it.
 
 Build the indexes first — [../addresses](../addresses) and
 [../reverse](../reverse) — then:
@@ -74,7 +76,7 @@ metadata section, which is why it also carries about forty lines of CBOR.
 
 ## Why there is no WebAssembly here
 
-`mokuji.js` is about 300 lines and pulls in nothing. That is possible because
+The reader is 13 KB gzipped and pulls in nothing. That is possible because
 the required compression codec is raw deflate, which browsers implement as
 `DecompressionStream("deflate-raw")`. Had the format required zstd, this page
 would have to ship a decompressor several times its own size, and the argument

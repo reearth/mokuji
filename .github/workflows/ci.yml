@@ -32,9 +32,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The browser reader is a third implementation of the specification and
-      # answers to the same conformance cases as the others.
-      - run: node --test 'demo/web/*.test.js'
+      # The JavaScript reader is a third implementation of the specification
+      # and answers to the same conformance cases as the others.
+      - run: npm ci
+        working-directory: js
+      - run: npm test
+        working-directory: js
+      # dist/ is committed, so that the package can be depended on straight
+      # from git without a build step; it has to be what src/ builds.
+      - name: js/dist is current
+        run: git diff --exit-code -- js/dist
 
   msrv:
     runs-on: ubuntu-latest
