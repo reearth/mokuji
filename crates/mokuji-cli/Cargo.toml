@@ -19,12 +19,14 @@ path = "src/main.rs"
 [dependencies]
 mokuji-format.workspace = true
 mokuji-meta.workspace = true
+mokuji-manifest.workspace = true
 mokuji-read.workspace = true
 mokuji-write.workspace = true
 sha2 = "0.10"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
+proptest = "1"
 tempfile = "3"
 
 

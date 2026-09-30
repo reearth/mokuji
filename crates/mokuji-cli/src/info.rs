@@ -42,6 +42,15 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<mokuji_manifest::Error> for Error {
+    fn from(e: mokuji_manifest::Error) -> Self {
+        match e {
+            mokuji_manifest::Error::Format(e) => Error::Format(e),
+            other => Error::Invalid(other.to_string()),
+        }
+    }
+}
+
 impl From<mokuji_format::Error> for Error {
     fn from(e: mokuji_format::Error) -> Self {
         Error::Format(e)
