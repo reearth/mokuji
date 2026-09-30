@@ -76,7 +76,21 @@ fn relative(manifest: &Path, file: &Path) -> String {
             }
         })
         .and_then(|p| p.canonicalize().ok());
-    let full = file.canonicalize().ok();
+    // The file's directory is resolved and the file itself is not: a segment
+    // linked into the manifest's directory is published from there, not from
+    // wherever the link points.
+    let full = file
+        .parent()
+        .map(|p| {
+            if p.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                p
+            }
+        })
+        .and_then(|p| p.canonicalize().ok())
+        .zip(file.file_name())
+        .map(|(dir, name)| dir.join(name));
     match (base, full) {
         (Some(base), Some(full)) => match full.strip_prefix(&base) {
             Ok(rest) => rest.display().to_string(),

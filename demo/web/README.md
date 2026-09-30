@@ -139,3 +139,42 @@ and it shows OpenStreetMap's.
 The page runs one query at a time and then the latest thing typed, so the count
 beside a keystroke is that keystroke's alone.
 
+## A collection: the base, and what changed since
+
+`complete.html?manifest=<url>` reads a collection (`MANIFEST.md`) instead of
+one file: a base, the segments added after it, and the documents deleted from
+each. This one adds Takanawa Gateway Station, which opened in 2020 and which
+GeoNames does not have. It also replaces Takanawadai Eki with Takanawadai
+Station, which gains its Japanese name: the old document is deleted from the
+base, and the new one is added in the delta.
+
+```sh
+mkdir collection && ln -s ../names.mokuji collection/base-2026-09.mokuji
+printf 'Takanawa Gateway Station\x1fTakanawa Gateway\x1f高輪ゲートウェイ駅\x1f高輪ゲートウェイ\tTakanawa Gateway Station\t139.74077\t35.63551\t0\t4\n' > delta.tsv
+printf 'Takanawadai Station\x1fTakanawadai Eki\x1f高輪台駅\tTakanawadai Station\t139.73019\t35.63155\t0\t3\n' >> delta.tsv
+mokuji build delta.tsv collection/delta-2026-09-30.mokuji --tokenizer name-list \
+  --no-doc-lengths --docs-per-payload-block 256 --completions 1024,16384,20 \
+  --license CC-BY-4.0 --attribution "GeoNames (geonames.org), CC BY 4.0"
+mokuji manifest new collection/names.json collection/base-2026-09.mokuji
+mokuji manifest add collection/names.json collection/delta-2026-09-30.mokuji
+mokuji search collection/names.json "takanawadai eki"      # base, document 498492
+mokuji manifest delete collection/names.json base-2026-09.mokuji 498492
+python3 serve.py --collection collection    # open /complete.html?manifest=collection/names.json
+```
+
+`takanawad` then completes to the post office in the base and to the station in
+the delta, marked *added*. The old station is gone. `takanawa g` finds only
+the new one. Opening costs one request for the manifest and one per segment,
+asked at once. The log marks each range with the segment it read.
+
+Collection order puts the base before the delta, so a new place never
+completes a prefix the base already fills with ten. With *rank across
+segments* checked, the page instead asks every segment for its first ten and
+ranks them by how many names each place has, which is in the payload. The page
+brings that score, not the format (`MANIFEST.md` §3.3). This delta's stations
+have three or four names each, so they still lose to the base's; a place known
+by more names would not.
+
+`serve.py` reads only the range asked for. It used to read the whole file for
+every request, which a 400 MB index made slow enough to notice.
+

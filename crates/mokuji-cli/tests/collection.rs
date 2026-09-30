@@ -323,3 +323,22 @@ mod folding {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_linked_segment_is_named_where_it_is_linked() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let real = build(elsewhere.path(), "base", BASE);
+    let link = dir.path().join("base-2026-09.mokuji");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let manifest = dir.path().join("m.json");
+    ok(mokuji(&[
+        "manifest",
+        "new",
+        manifest.to_str().unwrap(),
+        link.to_str().unwrap(),
+    ]));
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("\"path\": \"base-2026-09.mokuji\""), "{text}");
+}
