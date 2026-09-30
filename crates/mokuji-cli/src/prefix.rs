@@ -28,7 +28,8 @@ pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(),
     // The query has to go through whatever the terms went through, or it will
     // not match them. The index records which tokenizer that was, so a reader
     // does not have to be told.
-    let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    let meta = Meta::parse(index.meta())?;
+    let recorded = meta.tokenizer.id.clone();
     let normalized = match Tokenizer::parse(&recorded) {
         Some(tokenizer) => tokenizer.normalize_query(query),
         None => {
@@ -89,5 +90,10 @@ pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(),
         reader.stats().bytes,
         reader.file_len()
     );
+    // Results derived from a licensed database carry its credit with them;
+    // the file says what that is, so the tool says it too.
+    if let Some(attribution) = &meta.attribution {
+        eprintln!("data:     {attribution}");
+    }
     Ok(())
 }

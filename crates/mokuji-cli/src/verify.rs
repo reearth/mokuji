@@ -25,6 +25,12 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
         meta.generator.name, meta.generator.version
     );
     println!("tokenizer       {}", meta.tokenizer.id);
+    if let Some(license) = &meta.license {
+        println!("license         {license}");
+    }
+    if let Some(attribution) = &meta.attribution {
+        println!("attribution     {attribution}");
+    }
     if let Some(mokuji_meta::Value::Map(entries)) = &meta.attrs {
         for (key, value) in entries {
             let key = match key {

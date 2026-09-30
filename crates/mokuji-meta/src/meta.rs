@@ -112,6 +112,15 @@ pub struct Meta {
     pub tokenizer: Tokenizer,
     /// Application-defined additions, or `None` if absent.
     pub attrs: Option<Value>,
+    /// The license the index itself is published under, as an SPDX license
+    /// expression such as `ODbL-1.0`, or `None` if the file does not say.
+    ///
+    /// The index's, not its sources'. An index derived from a database under a
+    /// share-alike license is usually itself a derivative database, and the
+    /// file is the thing being distributed.
+    pub license: Option<String>,
+    /// What a consumer shows alongside results from this file, or `None`.
+    pub attribution: Option<String>,
 }
 
 impl Meta {
@@ -152,6 +161,12 @@ impl Meta {
         ];
         if let Some(attrs) = &self.attrs {
             entries.push(("attrs", attrs.clone()));
+        }
+        if let Some(license) = &self.license {
+            entries.push(("license", Value::Text(license.clone())));
+        }
+        if let Some(attribution) = &self.attribution {
+            entries.push(("attribution", Value::Text(attribution.clone())));
         }
         cbor::encode(&cbor::map(entries))
     }
@@ -220,7 +235,21 @@ impl Meta {
                 })?,
             },
             attrs: value.get("attrs").cloned(),
+            license: optional_text(&value, "license", "metadata license is not text")?,
+            attribution: optional_text(&value, "attribution", "metadata attribution is not text")?,
         })
+    }
+}
+
+/// A key that may be absent, but is text when present. A license that is a
+/// number is a malformed file, not an unlicensed one.
+fn optional_text(value: &Value, key: &str, detail: &'static str) -> Result<Option<String>> {
+    match value.get(key) {
+        None => Ok(None),
+        Some(v) => v
+            .as_text()
+            .map(|t| Some(t.to_string()))
+            .ok_or(Error::Malformed { detail }),
     }
 }
 
@@ -245,6 +274,8 @@ mod tests {
                 params: cbor::map::<&str>([]),
             },
             attrs: None,
+            license: None,
+            attribution: None,
         }
     }
 
@@ -266,6 +297,32 @@ mod tests {
         let mut meta = sample();
         meta.attrs = Some(cbor::map([("region", Value::Text("jp".into()))]));
         assert_eq!(Meta::parse(&meta.encode()).unwrap(), meta);
+    }
+
+    #[test]
+    fn round_trips_a_license_and_its_attribution() {
+        let mut meta = sample();
+        meta.license = Some("ODbL-1.0".into());
+        meta.attribution = Some("© OpenStreetMap contributors".into());
+        assert_eq!(Meta::parse(&meta.encode()).unwrap(), meta);
+    }
+
+    #[test]
+    fn a_license_that_is_not_text_is_malformed() {
+        let entries = match cbor::decode(&sample().encode()).unwrap() {
+            Value::Map(entries) => entries,
+            _ => unreachable!(),
+        };
+        // Rebuilt through `map`, so that the keys stay in canonical order and
+        // the only thing wrong is the license.
+        let mut keyed: Vec<(String, Value)> = entries
+            .into_iter()
+            .map(|(k, v)| (k.as_text().unwrap().to_string(), v))
+            .collect();
+        let valid = cbor::encode(&cbor::map(keyed.clone()));
+        assert!(Meta::parse(&valid).is_ok());
+        keyed.push(("license".into(), Value::Uint(1)));
+        assert!(Meta::parse(&cbor::encode(&cbor::map(keyed))).is_err());
     }
 
     #[test]

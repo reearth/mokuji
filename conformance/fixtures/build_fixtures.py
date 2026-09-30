@@ -356,7 +356,7 @@ def chunk(items, size):
 
 def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
           tokenizer_id="space-split", doc_lengths=False, columns=None,
-          positions=False, extra=None, completions=None):
+          positions=False, extra=None, completions=None, license=None):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, tokenizer_id)
     terms = list(index)
@@ -429,6 +429,8 @@ def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
                 },
             },
             "tokenizer": {"id": tokenizer_id, "params": {}},
+            # The index's license and the credit its results carry (SPEC.md 6).
+            **({"license": license[0], "attribution": license[1]} if license else {}),
         }
     )
 
@@ -972,6 +974,7 @@ FIXTURES = [
         "decimals": None,
         "tokenizer_id": "name-list",
         "completions": (2, 0, 2),
+        "license": ("CC0-1.0", "Mokuji conformance fixtures"),
         "cases": [
             (["tokyo"], {4: "Tokyo"}, 3),
             (["東京"], {4: "Tokyo"}, 3),
@@ -1032,6 +1035,7 @@ def main():
             positions=spec.get("positions", False),
             extra=spec.get("extra"),
             completions=spec.get("completions"),
+            license=spec.get("license"),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

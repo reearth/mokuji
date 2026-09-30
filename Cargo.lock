@@ -235,6 +235,7 @@ version = "0.0.0"
 dependencies = [
  "mokuji-codec",
  "mokuji-format",
+ "mokuji-meta",
  "serde",
  "toml",
 ]

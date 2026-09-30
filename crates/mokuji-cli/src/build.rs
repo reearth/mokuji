@@ -27,6 +27,10 @@ pub struct Recipe<'a> {
     pub sections: &'a [(u16, String)],
     /// Generation number.
     pub generation: u64,
+    /// The license the index is published under, as an SPDX expression.
+    pub license: Option<&'a str>,
+    /// What a consumer shows alongside results from the index.
+    pub attribution: Option<&'a str>,
     /// An attribute column to number the documents by, highest first.
     ///
     /// Postings are in document ID order, so numbering documents by importance
@@ -49,6 +53,8 @@ pub fn run(
         sections,
         generation,
         order_by,
+        license,
+        attribution,
     } = *recipe;
     let raw = std::fs::read(input)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Corpus("input is not UTF-8".into()))?;
@@ -258,6 +264,8 @@ pub fn run(
                     .map(|(key, value)| (key.clone(), Value::Text(value.clone()))),
             )
         }),
+        license: license.map(str::to_string),
+        attribution: attribution.map(str::to_string),
     };
 
     // Attached last, so that what a reader of the format proper looks for is
@@ -284,6 +292,9 @@ pub fn run(
             corpus.duplicate_keys,
             tokenizer.id()
         );
+    }
+    if let Some(license) = &meta.license {
+        println!("licensed as {license}");
     }
     for source in &meta.sources {
         println!("derived from {}", source.content_hash);
