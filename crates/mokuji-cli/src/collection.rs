@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mokuji_manifest::{Collection, Manifest, Segment, VERSION};
+use mokuji_manifest::{Collection, Manifest, Region, Segment, VERSION};
 use mokuji_meta::{ContentHash, Meta};
 use mokuji_read::{block_on::block_on, CountingReader, RangeReader, SliceReader};
 
@@ -60,6 +60,7 @@ fn describe(manifest: &Path, file: &Path) -> Result<Segment, Error> {
         content_hash: ContentHash::sha2_256(&crate::build::hash_file(file)?).to_string(),
         length,
         deletes: Vec::new(),
+        region: None,
     })
 }
 
@@ -212,6 +213,42 @@ pub fn delete(path: &Path, segment_path: &str, docs: &[u64]) -> Result<(), Error
     Ok(())
 }
 
+/// `mokuji manifest region`: where a segment's documents are, or `-` for
+/// anywhere.
+pub fn region(path: &Path, segment_path: &str, countries: &str) -> Result<(), Error> {
+    let mut manifest = read(path)?;
+    let segment = manifest
+        .segments
+        .iter_mut()
+        .find(|s| s.path == segment_path)
+        .ok_or_else(|| Error::Usage(format!("no segment '{segment_path}' in the manifest")))?;
+    segment.region = match countries {
+        "-" => None,
+        list => Some(Region {
+            countries: list.split(',').map(str::to_string).collect(),
+        }),
+    };
+    manifest.generation += 1;
+    write(path, &manifest)?;
+    println!(
+        "generation {}: {segment_path} is {}",
+        manifest.generation,
+        match countries {
+            "-" => "anywhere".to_string(),
+            list => format!("in {list}"),
+        }
+    );
+    Ok(())
+}
+
+/// The manifest, restricted to these countries when any are given.
+fn scoped(manifest: Manifest, countries: Option<&str>) -> Manifest {
+    match countries {
+        Some(list) => manifest.within(&list.split(',').collect::<Vec<_>>()),
+        None => manifest,
+    }
+}
+
 /// Checks a manifest against its files: that each is there, is the length and
 /// hash the manifest says, and opens alongside the others.
 pub fn check(path: &Path, manifest: &Manifest) -> Result<(), Error> {
@@ -254,6 +291,7 @@ fn tokenizer_of<R: RangeReader>(collection: &Collection<R>) -> Result<Option<Tok
 }
 
 fn report(readers: &[CountingReader<SliceReader>]) {
+    eprintln!("opened:   {} segment(s)", readers.len());
     let per: Vec<u32> = readers.iter().map(|r| r.reads()).collect();
     let bytes: u64 = readers.iter().map(|r| r.stats().bytes).sum();
     eprintln!(
@@ -265,8 +303,16 @@ fn report(readers: &[CountingReader<SliceReader>]) {
 }
 
 /// `mokuji search` on a manifest: every term, in every segment, less deletes.
-pub fn search(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
-    let manifest = read(path)?;
+///
+/// With `countries`, only the segments whose region includes one of them, and
+/// those with none: the others are not opened at all.
+pub fn search(
+    path: &Path,
+    terms: &[&str],
+    limit: usize,
+    countries: Option<&str>,
+) -> Result<(), Error> {
+    let manifest = scoped(read(path)?, countries);
     let readers = open(path, &manifest)?;
     let collection = block_on(Collection::open(&manifest, readers.iter().collect()))?;
     readers.iter().for_each(CountingReader::reset);
@@ -289,9 +335,14 @@ pub fn search(path: &Path, terms: &[&str], limit: usize) -> Result<(), Error> {
     Ok(())
 }
 
-/// `mokuji complete` on a manifest.
-pub fn complete(path: &Path, typed: &str, limit: usize) -> Result<(), Error> {
-    let manifest = read(path)?;
+/// `mokuji complete` on a manifest, within `countries` if given.
+pub fn complete(
+    path: &Path,
+    typed: &str,
+    limit: usize,
+    countries: Option<&str>,
+) -> Result<(), Error> {
+    let manifest = scoped(read(path)?, countries);
     let readers = open(path, &manifest)?;
     let collection = block_on(Collection::open(&manifest, readers.iter().collect()))?;
     readers.iter().for_each(CountingReader::reset);

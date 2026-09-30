@@ -22,7 +22,8 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 fixtures/build_fixtures.py   builds tiny, tiny-extra, dict, names and names-delta,
                              independently of mokuji-write, and collection.json
 fixtures/collection.json     a manifest (MANIFEST.md): names, then names-delta,
-                             with one document of names deleted
+                             with one document of names deleted; names-delta
+                             states a region, Japan, and names states none
 fixtures/*.corpus.txt        the sources they are derived from
 fixtures/*.mokuji             the fixtures
 fixtures/*.hex               annotated hex dumps

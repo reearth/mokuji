@@ -14,7 +14,7 @@ mod collection;
 mod manifest;
 
 pub use collection::{Collection, Completion, Hit};
-pub use manifest::{Manifest, Segment, VERSION};
+pub use manifest::{Manifest, Region, Segment, VERSION};
 
 /// What can go wrong reading a manifest or opening a collection.
 #[derive(Debug)]

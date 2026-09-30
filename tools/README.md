@@ -244,3 +244,8 @@ that asks every segment, while round trips stay at three; and deletes that fall
 on important places stop mattering once completion entries list more than a
 page shows — at twenty documents to an entry, 12,854 of them left no prefix
 reading its dictionary.
+
+The same tool measures shards: point it at one continent's file as the base
+with no deltas, or at one continent with the other six as its "deltas", which
+is what a query about no place pays. The figures are in `MANIFEST.md` §7.1.
+
