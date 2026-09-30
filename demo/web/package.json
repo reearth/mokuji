@@ -2,8 +2,5 @@
   "name": "mokuji-web-demo",
   "private": true,
   "type": "module",
-  "description": "A Mokuji reader for the browser, and its tests. Not published; the browser loads mokuji.js directly.",
-  "scripts": {
-    "test": "node --test '*.test.js'"
-  }
+  "description": "Pages that read Mokuji files in the browser. The reader itself is the @reearth/mokuji package in ../../js."
 }
