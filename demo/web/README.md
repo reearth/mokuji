@@ -178,3 +178,31 @@ by more names would not.
 `serve.py` reads only the range asked for. It used to read the whole file for
 every request, which a 400 MB index made slow enough to notice.
 
+## Shards: a collection cut by place
+
+The same places, cut into seven continents by GeoNames' own country table,
+each a segment whose manifest entry states its countries (`MANIFEST.md` §7).
+
+```sh
+curl -O https://download.geonames.org/export/dump/countryInfo.txt
+for c in AF AN AS EU NA OC SA; do
+  codes=$(grep -v '^#' countryInfo.txt | awk -F'\t' -v c=$c '$9==c{print $1}' | paste -sd, -)
+  python3 ../poi/geonames.py --input allCountries.txt --out $c.tsv --whole-names --countries "$codes"
+  LC_ALL=C sort -t$'\t' -k6,6nr -s $c.tsv > $c.ranked.tsv
+  mokuji build $c.ranked.tsv shards/$c.mokuji --tokenizer name-list --no-doc-lengths \
+    --docs-per-payload-block 256 --completions 1024,16384,20 \
+    --license CC-BY-4.0 --attribution "GeoNames (geonames.org), CC BY 4.0"
+done
+mokuji manifest new shards/world.json shards/{AF,AN,AS,EU,NA,OC,SA}.mokuji
+# then, for each continent:
+mokuji manifest region shards/world.json AS.mokuji "$codes"
+python3 serve.py --collection shards
+```
+
+`/complete.html?manifest=collection/world.json&countries=JP` opens Asia alone:
+3 requests and 361 KB, with the manifest. Without `countries` it opens all
+seven: 9 requests and 1.9 MB, since this reader asks for 256 KB when it opens a
+file and most of these are small enough to fetch whole. Each keystroke costs the
+same three round trips either way. Results are tagged with the shard they came
+from, and ranked across shards by name count.
+
