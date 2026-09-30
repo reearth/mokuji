@@ -7,7 +7,7 @@ use mokuji_write::{Options, PayloadEncoding};
 
 use mokuji_cli::corpus::Tokenizer;
 use mokuji_cli::info::{self, Error};
-use mokuji_cli::{build, complete, dump, prefix, search, verify};
+use mokuji_cli::{build, collection, compact, complete, dump, prefix, search, verify};
 
 const USAGE: &str = "\
 mokuji - a cloud-optimized concordance format
@@ -81,6 +81,19 @@ usage:
                                        when the prefix has an entry there
     mokuji verify <file> [--source <p>] check the whole file, and its provenance
 
+A collection is several files and a manifest listing them (MANIFEST.md).
+search, complete and verify take a manifest wherever they take a file.
+
+    mokuji manifest new <manifest.json> <file>...
+                                       a collection of these files, in order
+    mokuji manifest add <manifest.json> <file>
+                                       one more file, after the rest
+    mokuji manifest delete <manifest.json> <file> <doc>...
+                                       these documents of that file are gone
+    mokuji compact <manifest.json> <output.mokuji>
+                                       fold the collection into one file that
+                                       answers exactly as it did
+
     mokuji --version
     mokuji --help
 
@@ -106,6 +119,20 @@ fn main() -> ExitCode {
         ["search", path, terms @ ..] => search_command(path, terms),
         ["prefix", path, needle, flags @ ..] => prefix_command(path, needle, flags),
         ["complete", path, typed, flags @ ..] => complete_command(path, typed, flags),
+        ["manifest", "new", path, files @ ..] => {
+            let files: Vec<&Path> = files.iter().map(Path::new).collect();
+            collection::new(path.as_ref(), &files)
+        }
+        ["manifest", "add", path, file] => collection::add(path.as_ref(), file.as_ref()),
+        ["manifest", "delete", path, file, docs @ ..] if !docs.is_empty() => docs
+            .iter()
+            .map(|d| {
+                d.parse::<u64>()
+                    .map_err(|_| Error::Usage(format!("'{d}' is not a document ID")))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|docs| collection::delete(path.as_ref(), file, &docs)),
+        ["compact", manifest, output] => compact::run(manifest.as_ref(), output.as_ref()),
         ["build", input, output, flags @ ..] => build_command(input, output, flags),
         ["verify", path, flags @ ..] => verify_command(path, flags),
         [cmd, ..] => {
@@ -304,6 +331,20 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
 }
 
 fn search_command(path: &str, args: &[&str]) -> Result<(), Error> {
+    if collection::is_manifest(path.as_ref()) {
+        let (limit, terms) = match args {
+            ["-n" | "--limit", n, terms @ ..] => (
+                n.parse()
+                    .map_err(|_| Error::Usage(format!("'{n}' is not a number")))?,
+                terms,
+            ),
+            terms => (10, terms),
+        };
+        if terms.is_empty() {
+            return Err(Error::NoTerms);
+        }
+        return collection::search(path.as_ref(), terms, limit);
+    }
     let mut limit = 10;
     let mut boost: Option<&str> = None;
     let mut length_norm = 0.75;
@@ -388,10 +429,21 @@ fn complete_command(path: &str, typed: &str, flags: &[&str]) -> Result<(), Error
             .map_err(|_| Error::Usage(format!("'{n}' is not a number")))?,
         _ => return Err(Error::Usage("complete takes at most -n <limit>".into())),
     };
+    if collection::is_manifest(path.as_ref()) {
+        return collection::complete(path.as_ref(), typed, limit);
+    }
     complete::run(path.as_ref(), typed, limit)
 }
 
 fn verify_command(path: &str, flags: &[&str]) -> Result<(), Error> {
+    if collection::is_manifest(path.as_ref()) {
+        if !flags.is_empty() {
+            return Err(Error::Usage(
+                "verify takes no options for a manifest".into(),
+            ));
+        }
+        return collection::verify(path.as_ref());
+    }
     let source = match flags {
         [] => None,
         ["--source", source] => Some(*source),

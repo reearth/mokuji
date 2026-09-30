@@ -376,7 +376,7 @@ fn importance_order(
 }
 
 /// Hashes a file without holding it in memory, since a register is large.
-fn hash_file(path: &Path) -> Result<Vec<u8>, Error> {
+pub(crate) fn hash_file(path: &Path) -> Result<Vec<u8>, Error> {
     use std::io::Read;
 
     let mut file = std::fs::File::open(path)?;

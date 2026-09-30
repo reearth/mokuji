@@ -7,6 +7,7 @@ members = [
     "crates/mokuji-read",
     "crates/mokuji-write",
     "crates/mokuji-cli",
+    "crates/mokuji-manifest",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ mokuji-meta = { path = "crates/mokuji-meta", version = "0.0.0" }
 mokuji-codec = { path = "crates/mokuji-codec", version = "0.0.0" }
 mokuji-read = { path = "crates/mokuji-read", version = "0.0.0" }
 mokuji-write = { path = "crates/mokuji-write", version = "0.0.0" }
+mokuji-manifest = { path = "crates/mokuji-manifest", version = "0.0.0" }
 
 [workspace.lints.rust]
 missing_docs = "warn"
