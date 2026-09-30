@@ -115,7 +115,8 @@ the ones worth showing:
 python3 ../poi/geonames.py --input allCountries.txt --out names.tsv --whole-names
 LC_ALL=C sort -t$'\t' -k6,6nr -s names.tsv > names-ranked.tsv
 mokuji build names-ranked.tsv names.mokuji --tokenizer name-list \
-  --no-doc-lengths --docs-per-payload-block 256 --completions 1024,16384,10
+  --no-doc-lengths --docs-per-payload-block 256 --completions 1024,16384,10 \
+  --license CC-BY-4.0 --attribution "GeoNames (geonames.org), CC BY 4.0"
 python3 serve.py --names names.mokuji
 ```
 
@@ -130,6 +131,10 @@ payload**: `s`, `mont`, `สถานี`. One without an entry is guaranteed ch
 fewer than 1,024 terms and 16 KB of postings — and costs a few: `black se`,
 `東京タ` and `zü` are each 2 requests and 6–12 KB before their payload. The panel says
 which each keystroke was, and the log lists every range it read.
+
+The credit under the map is the one the file states (`SPEC.md` §6), not one the
+page was written to know: point the page at an index built from OpenStreetMap
+and it shows OpenStreetMap's.
 
 The page runs one query at a time and then the latest thing typed, so the count
 beside a keystroke is that keystroke's alone.

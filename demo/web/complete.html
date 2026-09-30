@@ -81,6 +81,8 @@
       .log { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line);
              font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: var(--muted); }
       .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .credit { color: var(--muted); font-size: .8rem; margin: .4rem 0 0; }
+      .credit:empty { display: none; }
       .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
       .error { color: #b42318; }
     </style>
@@ -105,6 +107,7 @@
           </div>
           <div class="hints" id="hints"></div>
           <div class="map" id="map"></div>
+          <p class="credit" id="credit"></p>
           <p class="note" id="status">Loading the index&hellip;</p>
         </div>
 
@@ -252,6 +255,12 @@
         } catch (err) {
           $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
+        }
+        // The file states the credit its results carry (SPEC.md §6), so the
+        // page shows what the file says rather than what the page assumes.
+        if (index.attribution) {
+          $("credit").textContent =
+            `Places: ${index.attribution}` + (index.license ? ` · the index is ${index.license}` : "");
         }
         const c = index.completions;
         $("places").textContent = index.numDocs.toLocaleString();
