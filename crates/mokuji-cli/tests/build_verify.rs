@@ -720,3 +720,55 @@ fn verify_rejects_completions_that_break_their_promises() {
         String::from_utf8_lossy(&output.stderr).contains("which holds no term beginning with it")
     );
 }
+
+#[test]
+fn the_license_and_attribution_travel_with_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    let built = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--license",
+        "ODbL-1.0",
+        "--attribution",
+        "© OpenStreetMap contributors",
+    ]);
+    assert!(built.status.success());
+    assert!(stdout(&built).contains("licensed as ODbL-1.0"));
+
+    let verified = stdout(&mokuji(&["verify", index.to_str().unwrap()]));
+    assert!(verified.contains("license         ODbL-1.0"), "{verified}");
+    assert!(verified.contains("attribution     © OpenStreetMap contributors"));
+
+    // A query shows the credit its results carry.
+    let searched = mokuji(&["search", index.to_str().unwrap(), "tokyo"]);
+    assert!(String::from_utf8_lossy(&searched.stderr)
+        .contains("data:     © OpenStreetMap contributors"));
+}
+
+#[test]
+fn a_file_that_states_no_license_says_nothing_about_one() {
+    let (_dir, index) = searchable();
+    let verified = stdout(&mokuji(&["verify", index.to_str().unwrap()]));
+    assert!(!verified.contains("license"));
+    let searched = mokuji(&["search", index.to_str().unwrap(), "tokyo"]);
+    assert!(!String::from_utf8_lossy(&searched.stderr).contains("data:"));
+}
+
+#[test]
+fn build_rejects_an_empty_license() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        dir.path().join("out.mokuji").to_str().unwrap(),
+        "--license",
+        "",
+    ]);
+    assert!(!output.status.success());
+}

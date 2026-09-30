@@ -52,6 +52,10 @@ usage:
                                        repeatable, for the register a corpus
                                        was converted from
         --generation <n>               generation number (default 1)
+        --license <spdx>               the license the index is published
+                                       under, e.g. ODbL-1.0 for one derived
+                                       from OpenStreetMap
+        --attribution <text>           what to show alongside its results
 
     mokuji dump <file>                  write the index back out as a corpus
     mokuji info <file>                  print the header and section table
@@ -130,6 +134,8 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut attrs: Vec<(String, String)> = Vec::new();
     let mut sections: Vec<(u16, String)> = Vec::new();
     let mut order_by: Option<&str> = None;
+    let mut license: Option<&str> = None;
+    let mut attribution: Option<&str> = None;
     let mut rest = flags;
 
     while let Some((flag, tail)) = rest.split_first() {
@@ -163,6 +169,20 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     docs_per_entry: u32::try_from(docs)
                         .map_err(|_| Error::Usage(format!("{flag} lists too many")))?,
                 });
+            }
+            "--license" | "--attribution" => {
+                let (value, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage(format!("{flag} needs a value")))?;
+                rest = tail;
+                if value.is_empty() {
+                    return Err(Error::Usage(format!("{flag} needs a value")));
+                }
+                if *flag == "--license" {
+                    license = Some(value);
+                } else {
+                    attribution = Some(value);
+                }
             }
             "--order-by" => {
                 let (name, tail) = rest
@@ -275,6 +295,8 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             sections: &sections,
             generation,
             order_by,
+            license,
+            attribution,
         },
         options,
         tokenizer,

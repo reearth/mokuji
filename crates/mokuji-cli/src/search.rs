@@ -73,7 +73,8 @@ pub fn run(path: &Path, terms: &[&str], query: &Query<'_>) -> Result<(), Error> 
     // each through the tokenizer rather than merely rewriting it: an analyzer
     // that splits turns one word the user typed into several that must all be
     // present.
-    let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    let meta = Meta::parse(index.meta())?;
+    let recorded = meta.tokenizer.id.clone();
     let terms: Vec<String> = match Tokenizer::parse(&recorded) {
         Some(tokenizer) => terms.iter().flat_map(|t| tokenizer.split(t)).collect(),
         None => {
@@ -166,6 +167,11 @@ pub fn run(path: &Path, terms: &[&str], query: &Query<'_>) -> Result<(), Error> 
         reader.stats().bytes,
         reader.file_len()
     );
+    // Results derived from a licensed database carry its credit with them;
+    // the file says what that is, so the tool says it too.
+    if let Some(attribution) = &meta.attribution {
+        eprintln!("data:     {attribution}");
+    }
     Ok(())
 }
 

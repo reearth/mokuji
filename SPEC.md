@@ -875,6 +875,8 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 | `generator.params` | map | yes | Full build parameters |
 | `tokenizer.id` | text | yes | Identifier from the tokenizer registry |
 | `tokenizer.params` | map | yes | Tokenizer parameters |
+| `license` | text | no | The license the index is published under, as an SPDX license expression |
+| `attribution` | text | no | What a consumer shows alongside results from this file |
 | `attrs` | map | no | Application-defined |
 
 `generator.params` and `tokenizer.params` together with the source content
@@ -885,6 +887,21 @@ source of truth — a register, a corpus — but an index is often produced from
 one by a program, and a chain that names the register and the result while
 omitting the step between them is checkable only in parts. Recording the
 transform's own hash as a source closes it, and needs no other mechanism.
+
+`license` is the license of **the index**, not of its sources. An index built
+from a database is usually a derivative of it, and where that database's license
+is share-alike — OpenStreetMap's ODbL — the index is covered too. And the index
+is what is distributed: to a reader that fetches it in ranges as much as to one
+that downloads it whole. The value
+SHOULD be an SPDX license expression (`ODbL-1.0`, `CC-BY-4.0`,
+`ODbL-1.0 AND CC-BY-4.0`); a reader MUST NOT reject a file for one it does not
+recognize.
+
+`attribution` is the credit that has to travel with results derived from this
+file — `© OpenStreetMap contributors`, say. A reader that shows results to a
+person SHOULD show it with them. It is a single piece of text, for the file as a
+whole: sources that need crediting differently are better kept in separate
+files, and their credits combined by whatever queries them together.
 
 `tokenizer.id` is drawn from `TOKENIZERS.md`, published alongside this
 specification. That registry standardizes identifiers; it does not standardize
@@ -1123,6 +1140,26 @@ of 29 reads and up to 13 MB. Indexing each name as one term (`name-list`,
 answered every one of 2,776 partly typed names in at most 3 reads and 24 KB
 before the payload — the same answers, in all 2,776, as walking the dictionary
 without them.
+
+**The license and the credit are in the metadata, not in `attrs`.**
+`attrs` is where an application puts what only it understands, and a reader
+that did not write a file cannot know which key there means what. A license is
+not like that: every file has one whether it says so or not, and the one reader
+that most needs to find it — a page that shows results to a person, and owes
+them a credit — is a reader that knows nothing about the application that built
+the file. So the key is named here, and its value is left as text.
+
+It is the index's license rather than a list of its sources' because the
+question a publisher has to answer is what the file they are distributing may
+be used for, and a derived database answers that for itself. Where the sources'
+licenses matter as provenance, they belong beside the sources' hashes; nothing
+is set aside for that until something needs it.
+
+One credit per file, rather than one per document, follows from keeping sources
+that license differently in different files. A file that mixes an ODbL source
+with others can bring the others within the ODbL's reach, which is a reason to
+keep them apart that has nothing to do with this format, and once they are apart, a file
+has one credit to state.
 
 ## Appendix B. A worked example
 

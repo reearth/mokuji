@@ -176,6 +176,17 @@ fn every_completion_comes_from_where_the_case_says_within_its_reads() {
 }
 
 #[test]
+fn a_fixture_states_its_license_and_credit() {
+    let index = block_on(Index::open(SliceReader::new(load("names")))).unwrap();
+    let meta = mokuji_meta::Meta::parse(index.meta()).unwrap();
+    assert_eq!(meta.license.as_deref(), Some("CC0-1.0"));
+    assert_eq!(
+        meta.attribution.as_deref(),
+        Some("Mokuji conformance fixtures")
+    );
+}
+
+#[test]
 fn opening_the_file_costs_one_read() {
     let reader = CountingReader::new(SliceReader::new(load("tiny")));
     block_on(Index::open(&reader)).unwrap();

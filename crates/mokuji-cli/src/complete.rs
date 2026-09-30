@@ -20,7 +20,8 @@ pub fn run(path: &Path, typed: &str, limit: usize) -> Result<(), Error> {
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
 
-    let recorded = Meta::parse(index.meta())?.tokenizer.id;
+    let meta = Meta::parse(index.meta())?;
+    let recorded = meta.tokenizer.id.clone();
     let normalized = match Tokenizer::parse(&recorded) {
         Some(tokenizer) => tokenizer.normalize_query(typed),
         None => typed.to_string(),
@@ -57,5 +58,10 @@ pub fn run(path: &Path, typed: &str, limit: usize) -> Result<(), Error> {
         reader.stats().bytes,
         reader.file_len()
     );
+    // Results derived from a licensed database carry its credit with them;
+    // the file says what that is, so the tool says it too.
+    if let Some(attribution) = &meta.attribution {
+        eprintln!("data:     {attribution}");
+    }
     Ok(())
 }
