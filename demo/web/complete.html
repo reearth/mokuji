@@ -83,6 +83,9 @@
       .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .credit { color: var(--muted); font-size: .8rem; margin: .4rem 0 0; }
       .credit:empty { display: none; }
+      .rank { display: block; color: var(--muted); font-size: .85rem; margin: .6rem 0 0; }
+      li em { font-style: normal; font-size: .72rem; color: var(--good); border: 1px solid var(--good);
+              border-radius: 999px; padding: 0 .4rem; margin-left: .4rem; }
       .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
       .error { color: #b42318; }
     </style>
@@ -105,6 +108,10 @@
                    placeholder="Start typing a place — Tokyo, black se, 東京タ, สถานี…" disabled />
             <ol id="results"></ol>
           </div>
+          <label class="rank" id="rankLabel" hidden>
+            <input type="checkbox" id="rank" checked />
+            Rank across segments by how many names a place has
+          </label>
           <div class="hints" id="hints"></div>
           <div class="map" id="map"></div>
           <p class="credit" id="credit"></p>
@@ -115,11 +122,14 @@
           <h2>This keystroke</h2>
           <div class="stat headline"><span>Range requests</span><b id="requests">&mdash;</b></div>
           <div class="stat"><span>Before the payload</span><b id="before">&mdash;</b></div>
+          <div class="stat"><span>Round trips</span><b id="trips">&mdash;</b></div>
           <div class="stat"><span>Bytes fetched</span><b id="bytes">&mdash;</b></div>
           <div class="source" id="source">&nbsp;</div>
 
           <h2>The file</h2>
           <div class="stat"><span>Places</span><b id="places">&mdash;</b></div>
+          <div class="stat"><span>Segments</span><b id="segments">1</b></div>
+          <div class="stat"><span>Deleted</span><b id="deleted">0</b></div>
           <div class="stat"><span>File size</span><b id="filesize">&mdash;</b></div>
           <div class="stat"><span>Opening cost</span><b id="opencost">&mdash;</b></div>
           <div class="stat"><span>Prefixes answered ahead</span><b id="entries">&mdash;</b></div>
@@ -149,7 +159,7 @@
     </main>
 
     <script type="module">
-      import { MokujiIndex } from "./mokuji.js";
+      import { MokujiCollection, MokujiIndex } from "./mokuji.js";
 
       const $ = (id) => document.getElementById(id);
       const bytes = (n) =>
@@ -163,17 +173,22 @@
       }).addTo(map);
       const pins = L.layerGroup().addTo(map);
 
-      const EXAMPLES = ["s", "san ", "black se", "東京タ", "mont", "สถานี", "zü"];
+      // With ?manifest=<url>, a collection (MANIFEST.md) rather than one file.
+      const manifestUrl = new URLSearchParams(location.search).get("manifest");
+      const EXAMPLES = manifestUrl
+        ? ["takanawad", "takanawa g", "高輪台", "s", "東京タ"]
+        : ["s", "san ", "black se", "東京タ", "mont", "สถานี", "zü"];
 
-      let index;
+      let source;
+      let segments;
       let running = false;
       let again = false;
 
       // The payload is what the corpus line carried after the names: the
       // display name, then longitude, latitude, population, and name count.
       function place(payload) {
-        const [name, lon, lat, population] = payload.split("\t");
-        return { name, lon: Number(lon), lat: Number(lat), population: Number(population) };
+        const [name, lon, lat, population, names] = payload.split("\t");
+        return { name, lon: Number(lon), lat: Number(lat), population: Number(population), names: Number(names) };
       }
 
       // One query at a time, then the latest thing typed. Overlapping queries
@@ -192,6 +207,31 @@
         running = false;
       }
 
+      // One file answers in its own order. A collection answers in collection
+      // order — or, asked for every segment's first ten, ranked here by a
+      // score the page has and the format does not: how many names a place
+      // has, which is in the payload.
+      async function ask(typed) {
+        if (!manifestUrl) {
+          const r = await source.complete(typed, 10);
+          return { ...r, segments: r.docs.map(() => 0), consulted: [{ segment: 0, fromTable: r.fromTable }] };
+        }
+        const ranked = $("rank").checked;
+        const r = ranked ? await source.candidates(typed, 10) : await source.complete(typed, 10);
+        let items = r.hits.map((h, i) => ({ segment: h.segment, payload: r.payloads[i], order: i }));
+        if (ranked) {
+          items.sort((a, b) => place(b.payload).names - place(a.payload).names || a.order - b.order);
+          items = items.slice(0, 10);
+        }
+        return {
+          normalized: r.normalized,
+          payloads: items.map((x) => x.payload),
+          segments: items.map((x) => x.segment),
+          consulted: r.consulted,
+          requestsBeforePayload: r.requestsBeforePayload,
+        };
+      }
+
       async function once() {
         const typed = $("typed").value;
         if (!typed.trim()) {
@@ -200,41 +240,65 @@
           return;
         }
         const requests = [];
-        index.onRequest = (r) => requests.push(r);
-        index.resetStats();
+        segments.forEach((s, i) => (s.onRequest = (r) => requests.push({ ...r, segment: i })));
+        source.resetStats();
 
         let r;
         try {
-          r = await index.complete(typed, 10);
+          r = await ask(typed);
         } catch (err) {
           $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
+        const stats = source.stats;
         const places = r.payloads.map(place);
-        $("requests").textContent = index.stats.requests;
+        $("requests").textContent = stats.requests;
         $("before").textContent = r.requestsBeforePayload;
-        $("bytes").textContent = bytes(index.stats.bytes);
-        const source = $("source");
-        source.className = r.fromTable ? "source table" : "source";
-        source.textContent = r.fromTable
-          ? `“${r.normalized}” — answered by the completions section`
-          : `“${r.normalized}” — no entry, so the dictionary`;
+        $("trips").textContent = stats.roundTrips ?? stats.requests;
+        $("bytes").textContent = bytes(stats.bytes);
+        const allTable = r.consulted.every((c) => c.fromTable);
+        const source$ = $("source");
+        source$.className = allTable ? "source table" : "source";
+        source$.textContent =
+          r.consulted.length > 1
+            ? `“${r.normalized}” — ` +
+              r.consulted.map((c) => `segment ${c.segment}: ${c.fromTable ? "section" : "dictionary"}`).join(", ")
+            : allTable
+              ? `“${r.normalized}” — answered by the completions section`
+              : `“${r.normalized}” — no entry, so the dictionary`;
         $("log").innerHTML = requests
-          .map((q) => `<div>Range ${q.offset.toLocaleString()} +${q.length.toLocaleString()}</div>`)
+          .map(
+            (q) =>
+              `<div>${segments.length > 1 ? `#${q.segment} ` : ""}Range ${q.offset.toLocaleString()} +${q.length.toLocaleString()}</div>`,
+          )
           .join("");
 
         $("results").innerHTML = places
           .map(
             (p, i) =>
-              `<li data-i="${i}">${escape(p.name)}<span>${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` +
+              `<li data-i="${i}">${escape(p.name)}${r.segments[i] > 0 ? "<em>added</em>" : ""}` +
+              `<span>${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` +
               `${p.population ? ` · ${p.population.toLocaleString()}` : ""}</span></li>`,
           )
           .join("");
         pins.clearLayers();
-        for (const p of places) {
-          L.circleMarker([p.lat, p.lon], { radius: 6, color: "#1f6feb", weight: 2, fillOpacity: 0.5 })
+        places.forEach((p, i) => {
+          const added = r.segments[i] > 0;
+          L.circleMarker([p.lat, p.lon], {
+            radius: added ? 8 : 6,
+            color: added ? "#1a7f37" : "#1f6feb",
+            weight: 2,
+            fillOpacity: 0.5,
+          })
             .bindTooltip(escape(p.name))
             .addTo(pins);
+        });
+        // Close in on what came back, unless it is spread over the world.
+        if (places.length) {
+          const bounds = L.latLngBounds(places.map((p) => [p.lat, p.lon]));
+          if (bounds.getNorthEast().distanceTo(bounds.getSouthWest()) < 2e6) {
+            map.fitBounds(bounds.pad(0.5), { maxZoom: 13 });
+          }
         }
         $("status").textContent = places.length
           ? `${places.length} place${places.length === 1 ? "" : "s"} for “${typed}”.`
@@ -242,34 +306,52 @@
       }
 
       $("typed").addEventListener("input", run);
+      $("rank").addEventListener("change", run);
       $("results").addEventListener("click", (event) => {
         const li = event.target.closest("li");
         if (!li) return;
         const [lat, lon] = li.querySelector("span").textContent.split(" · ")[0].split(", ").map(Number);
-        map.setView([lat, lon], 10);
+        map.setView([lat, lon], 13);
       });
 
       (async () => {
         try {
-          index = await MokujiIndex.open("./names.mokuji");
+          if (manifestUrl) {
+            source = await MokujiCollection.open(manifestUrl);
+            segments = source.segments;
+          } else {
+            source = await MokujiIndex.open("./names.mokuji");
+            segments = [source];
+          }
         } catch (err) {
           $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
-        // The file states the credit its results carry (SPEC.md §6), so the
-        // page shows what the file says rather than what the page assumes.
-        if (index.attribution) {
+        // Each file states the credit its results carry (SPEC.md §6), so the
+        // page shows what the files say rather than what the page assumes.
+        const credits = [...new Set(segments.map((s) => s.attribution).filter(Boolean))];
+        const licenses = [...new Set(segments.map((s) => s.license).filter(Boolean))];
+        if (credits.length) {
           $("credit").textContent =
-            `Places: ${index.attribution}` + (index.license ? ` · the index is ${index.license}` : "");
+            `Places: ${credits.join("; ")}` + (licenses.length ? ` · the index is ${licenses.join(", ")}` : "");
         }
-        const c = index.completions;
-        $("places").textContent = index.numDocs.toLocaleString();
-        $("filesize").textContent = bytes(index.fileLength ?? 0);
-        $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
+        const base = segments[0];
+        const c = base.completions;
+        const stats = source.stats;
+        const deleted = manifestUrl
+          ? source.manifest.segments.reduce((n, s) => n + (s.deletes?.length ?? 0), 0)
+          : 0;
+        $("places").textContent = (segments.reduce((n, s) => n + s.numDocs, 0) - deleted).toLocaleString();
+        $("segments").textContent = segments.length;
+        $("deleted").textContent = deleted.toLocaleString();
+        $("filesize").textContent = bytes(segments.reduce((n, s) => n + (s.fileLength ?? 0), 0));
+        $("opencost").textContent =
+          `${stats.requests + (manifestUrl ? 1 : 0)} request${stats.requests === 1 ? "" : "s"}, ${bytes(stats.bytes)}`;
         $("entries").textContent = c ? c.entries.size.toLocaleString() : "none";
         $("coverage").textContent = c
           ? `< ${c.minTerms.toLocaleString()} terms, < ${bytes(c.maxSpan)}`
           : "—";
+        $("rankLabel").hidden = !manifestUrl;
 
         $("hints").innerHTML = EXAMPLES.map((e) => `<button>${escape(e)}</button>`).join("");
         $("hints").addEventListener("click", (event) => {

@@ -7,7 +7,7 @@ avoid. Twenty lines of handler are cheaper than explaining why the demo appears
 to work but transfers four megabytes.
 
 Usage: python3 serve.py [--index PATH] [--reverse PATH] [--stac PATH] [--names PATH]
-                        [--port N]
+                        [--collection DIR] [--port N]
 """
 
 import argparse
@@ -24,6 +24,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     reverse_path: pathlib.Path | None = None
     stac_path: pathlib.Path | None = None
     names_path: pathlib.Path | None = None
+    collection_dir: pathlib.Path | None = None
 
     def translate_path(self, path):
         name = path.split("?")[0]
@@ -35,6 +36,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(self.stac_path)
         if name == "/names.mokuji" and self.names_path:
             return str(self.names_path)
+        # A collection is a manifest and the files beside it (MANIFEST.md), so
+        # its directory is served whole, under /collection/.
+        # Links inside it are followed, since a segment is often linked in
+        # from where it was built; a path climbing out of it is not.
+        if name.startswith("/collection/") and self.collection_dir:
+            rest = name[len("/collection/"):]
+            if ".." not in rest.split("/"):
+                return str(self.collection_dir / rest)
+            return str(HERE / "not-found")
         return str(HERE / name.lstrip("/"))
 
     def do_GET(self):
@@ -45,24 +55,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
             return
 
-        data = path.read_bytes()
+        # Only the range asked for is read. Reading the whole file per request
+        # costs nothing on a small index and seconds on a planet-sized one.
+        size = path.stat().st_size
         content_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         match = re.fullmatch(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
 
         if match:
             start = int(match.group(1))
-            end = int(match.group(2)) if match.group(2) else len(data) - 1
-            end = min(end, len(data) - 1)
+            end = int(match.group(2)) if match.group(2) else size - 1
+            end = min(end, size - 1)
             if start > end:
                 self.send_response(416)
-                self.send_header("Content-Range", f"bytes */{len(data)}")
+                self.send_header("Content-Range", f"bytes */{size}")
                 self.end_headers()
                 return
-            body = data[start : end + 1]
+            with path.open("rb") as f:
+                f.seek(start)
+                body = f.read(end + 1 - start)
             self.send_response(206)
-            self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         else:
-            body = data
+            body = path.read_bytes()
             self.send_response(200)
 
         self.send_header("Content-Type", content_type)
@@ -83,6 +97,7 @@ def main():
     parser.add_argument("--reverse", help="the index reverse.html reads")
     parser.add_argument("--stac", help="the index stac.html reads")
     parser.add_argument("--names", help="the index complete.html reads")
+    parser.add_argument("--collection", help="a directory holding a manifest and its segments")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
 
@@ -105,6 +120,11 @@ def main():
         if not Handler.names_path.is_file():
             raise SystemExit(f"no index at {Handler.names_path}")
         served.append(f"{Handler.names_path.name} at /complete.html")
+    if args.collection:
+        Handler.collection_dir = pathlib.Path(args.collection)
+        if not Handler.collection_dir.is_dir():
+            raise SystemExit(f"no directory at {Handler.collection_dir}")
+        served.append(f"{Handler.collection_dir}/ at /collection/")
 
     print(f"serving {', '.join(served)} at http://localhost:{args.port}/")
     http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
