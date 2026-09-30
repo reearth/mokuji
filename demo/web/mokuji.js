@@ -822,21 +822,22 @@ export class MokujiIndex {
    */
   async complete(typed, limit = 10) {
     const normalized = this.normalize(typed);
-    const prefix = encoder.encode(normalized);
-    let docs = null;
-    const listed = this.completions?.entries.get(byteKey(prefix));
-    if (listed && (limit <= listed.length || listed.length < this.completions.docsPerEntry)) {
-      docs = listed.slice(0, limit);
-    }
-    const fromTable = docs !== null;
-    if (!fromTable) {
-      const entries = await this.prefix(normalized, Infinity);
-      const postings = await this.postingsSpan(entries);
-      docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b).slice(0, limit);
-    }
+    const { docs, fromTable } = await this.completeDocs(normalized, limit);
     const requestsBeforePayload = this.stats.requests;
     const payloads = await this.payloadSpan(docs);
     return { normalized, fromTable, docs, payloads, requestsBeforePayload };
+  }
+
+  /** `complete` for a prefix already normalized, without the payload. */
+  async completeDocs(normalized, limit) {
+    const listed = this.completions?.entries.get(byteKey(encoder.encode(normalized)));
+    if (listed && (limit <= listed.length || listed.length < this.completions.docsPerEntry)) {
+      return { docs: listed.slice(0, limit), fromTable: true };
+    }
+    const entries = await this.prefix(normalized, Infinity);
+    const postings = await this.postingsSpan(entries);
+    const docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b).slice(0, limit);
+    return { docs, fromTable: false };
   }
 
   /** Complete a prefix, returning every matching document with its payload.
@@ -865,5 +866,136 @@ export class MokujiIndex {
       }
     });
     return { normalized, results };
+  }
+}
+
+/**
+ * A collection: segments in a manifest's order, less their deletes
+ * (MANIFEST.md). Every segment is an ordinary Mokuji file, opened on its own.
+ */
+export class MokujiCollection {
+  constructor(manifest, segments) {
+    this.manifest = manifest;
+    this.segments = segments;
+    this.deletes = manifest.segments.map((s) => new Set(s.deletes ?? []));
+  }
+
+  /**
+   * Opens the manifest at `url` and every segment it names, at once: they are
+   * independent, so opening them costs one round trip however many there are.
+   * `sourceFor(url)` may supply a byte source instead of fetching.
+   */
+  static async open(url, sourceFor = (u) => u) {
+    const manifest =
+      typeof url === "string" ? await (await fetch(url, { cache: "no-store" })).json() : url;
+    if (String(manifest.mokuji_manifest ?? "").split(".")[0] !== "0") {
+      throw new Error(`manifest version ${manifest.mokuji_manifest} is not one this reader implements`);
+    }
+    const base = typeof url === "string" ? new URL(url, globalThis.location?.href) : null;
+    const segments = await Promise.all(
+      manifest.segments.map(async (s) => {
+        const index = await MokujiIndex.open(sourceFor(base ? new URL(s.path, base).href : s.path));
+        if (index.fileLength !== undefined && index.fileLength !== s.length) {
+          throw new Error(`${s.path} is ${index.fileLength} bytes, not the ${s.length} the manifest says`);
+        }
+        const deletes = s.deletes ?? [];
+        if (deletes.some((d, i) => d >= index.numDocs || (i > 0 && d <= deletes[i - 1]))) {
+          throw new Error(`${s.path} has deletes that are out of order or out of range`);
+        }
+        return index;
+      }),
+    );
+    const tokenizer = JSON.stringify(segments[0].meta?.tokenizer);
+    for (const [i, index] of segments.entries()) {
+      if (JSON.stringify(index.meta?.tokenizer) !== tokenizer) {
+        throw new Error(`${manifest.segments[i].path} was tokenized differently from the first segment`);
+      }
+    }
+    return new MokujiCollection(manifest, segments);
+  }
+
+  resetStats() {
+    for (const index of this.segments) index.resetStats();
+  }
+
+  /** Requests and bytes, summed; and the most requests any one segment made. */
+  get stats() {
+    const per = this.segments.map((s) => s.stats);
+    return {
+      requests: per.reduce((a, s) => a + s.requests, 0),
+      bytes: per.reduce((a, s) => a + s.bytes, 0),
+      roundTrips: Math.max(0, ...per.map((s) => s.requests)),
+    };
+  }
+
+  normalize(typed) {
+    return this.segments[0].normalize(typed);
+  }
+
+  /** One segment's first `need` live documents: the entry, then all it
+   * lists, then as many again as the segment has deletes (MANIFEST.md §3.2). */
+  async liveIn(at, normalized, need) {
+    const index = this.segments[at];
+    const deleted = this.deletes[at];
+    const listed = index.completions?.docsPerEntry ?? 0;
+    let fromTable = true;
+    let live = [];
+    for (const ask of [need, Math.max(listed, need), need + deleted.size]) {
+      const found = await index.completeDocs(normalized, ask);
+      fromTable &&= found.fromTable;
+      live = found.docs.filter((d) => !deleted.has(d));
+      if (live.length >= need || found.docs.length < ask) break;
+    }
+    return { live: live.slice(0, need), fromTable };
+  }
+
+  /** The first `limit` live documents, in collection order. */
+  async complete(typed, limit = 10) {
+    const normalized = this.normalize(typed);
+    const hits = [];
+    const consulted = [];
+    for (let at = 0; at < this.segments.length && hits.length < limit; at++) {
+      const { live, fromTable } = await this.liveIn(at, normalized, limit - hits.length);
+      consulted.push({ segment: at, fromTable });
+      for (const doc of live) hits.push({ segment: at, doc });
+    }
+    const requestsBeforePayload = this.stats.requests;
+    return { normalized, hits, consulted, payloads: await this.payloads(hits), requestsBeforePayload };
+  }
+
+  /** Every segment's own first `limit`, asked at once, for a caller that
+   * ranks across segments by a score of its own (MANIFEST.md §3.3). */
+  async candidates(typed, limit = 10) {
+    const normalized = this.normalize(typed);
+    const lists = await Promise.all(this.segments.map((_, at) => this.liveIn(at, normalized, limit)));
+    const hits = lists.flatMap(({ live }, segment) => live.map((doc) => ({ segment, doc })));
+    const requestsBeforePayload = this.stats.requests;
+    return {
+      normalized,
+      hits,
+      consulted: lists.map(({ fromTable }, segment) => ({ segment, fromTable })),
+      payloads: await this.payloads(hits),
+      requestsBeforePayload,
+    };
+  }
+
+  /** Payload for hits, one span per segment, in the hits' order. */
+  async payloads(hits) {
+    const out = new Array(hits.length);
+    await Promise.all(
+      this.segments.map(async (index, at) => {
+        const mine = hits.map((h, i) => [h, i]).filter(([h]) => h.segment === at);
+        if (mine.length === 0) return;
+        mine.sort(([a], [b]) => a.doc - b.doc);
+        const payloads = await index.payloadSpan(mine.map(([h]) => h.doc));
+        mine.forEach(([, i], j) => (out[i] = payloads[j]));
+      }),
+    );
+    return out;
+  }
+
+  /** Each segment's credit, once each, for a page that shows results. */
+  get attributions() {
+    return [...new Set(this.segments.map((s) => s.attribution).filter(Boolean))];
   }
 }

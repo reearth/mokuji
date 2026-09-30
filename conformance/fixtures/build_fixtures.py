@@ -15,6 +15,7 @@ Usage: python3 build_fixtures.py [--check]
 
 import argparse
 import hashlib
+import json
 import pathlib
 import re
 import sys
@@ -83,6 +84,32 @@ NAME_DOCUMENTS = [
     ("Bled", "Bled"),
     ("Tokyo\x1f東京", "Tokyo"),
     ("Tohoku\x1f東北", "Tohoku"),
+]
+
+# A segment added to `names` later (MANIFEST.md): a new place, and a new one
+# with a name in another script.
+NAME_DELTA_DOCUMENTS = [
+    ("Black Mountain", "Black Mountain"),
+    ("Tokyo Tower\x1f東京タワー", "Tokyo Tower"),
+]
+
+# `names`, then `names-delta`, with Black Sea — the first document every `b`
+# entry of `names` lists — deleted.
+COLLECTION = [("names", [0]), ("names-delta", [])]
+
+# prefix, limit, expected (segment, document, payload) triples, reads
+COLLECTION_CASES = [
+    # The `bl` entry lists Black Sea and Black Forest. With Black Sea deleted it
+    # is short, and lists no more than that, so `names` reads its dictionary.
+    ("bl", 2, [(0, 1, "Black Forest"), (0, 2, "Blackpool")], 5),
+    # `names` has two live `black` places and the delta a third, after them.
+    ("black", 10, [(0, 1, "Black Forest"), (0, 2, "Blackpool"), (1, 0, "Black Mountain")], 7),
+    # The base fills the limit, so the delta is never asked.
+    ("t", 2, [(0, 4, "Tokyo"), (0, 5, "Tohoku")], 1),
+    # Nothing in `names`: one block proves it. In the delta, the prefix sorts
+    # before the boundary key `東京タワー`, so the block before it is read on
+    # faith (SPEC.md 4.1), then that one, then its run and the payload.
+    ("東京タ", 10, [(1, 1, "Tokyo Tower")], 5),
 ]
 
 DOCUMENTS = [
@@ -828,7 +855,7 @@ def read_completions(section, num_docs):
     return docs_per_entry, entries
 
 
-def complete(data, prefix, limit):
+def complete(data, prefix, limit, payload=True):
     """The first `limit` documents of a prefix, and whether an entry answered.
 
     From the completions section when the prefix has an entry that reaches the
@@ -891,8 +918,59 @@ def complete(data, prefix, limit):
             found |= decode_postings(run, has_freqs, term_id, doc_freq, num_docs).keys()
         docs = sorted(found)[:limit]
 
+    if not payload:
+        return docs, f.reads, from_table
     cache = {}
     return [(d, payload_of(f, resident, d, cache)) for d in docs], f.reads, from_table
+
+
+def listed_per_entry(data):
+    """How many documents a segment's completion entries list, or 0 for none."""
+    f = CountingFile(data)
+    header, _, resident = load_resident(f)
+    if SEC_COMPLETIONS not in resident:
+        return 0
+    num_docs = int.from_bytes(header[16:24], "little")
+    return read_completions(resident[SEC_COMPLETIONS], num_docs)[0]
+
+
+def collection_complete(segments, prefix, limit):
+    """The first `limit` live documents of a prefix across a collection.
+
+    MANIFEST.md 3.2: segments in manifest order, stopping once there are
+    enough. In each, the entry first; then, if deletes took some, all the entry
+    lists; then as many again as the segment has deletes, which is enough
+    however they fall. `segments` is (file bytes, deletes) in manifest order.
+    Returns (segment, document, payload) triples in collection order, and the
+    reads, payload included.
+    """
+    hits, reads = [], 0
+    for at, (data, deletes) in enumerate(segments):
+        need = limit - len(hits)
+        if need == 0:
+            break
+        live = []
+        for ask in (need, max(listed_per_entry(data), need), need + len(deletes)):
+            docs, spent, _ = complete(data, prefix, ask, payload=False)
+            reads += spent
+            live = [d for d in docs if d not in deletes]
+            if len(live) >= need or len(docs) < ask:
+                break
+        hits += [(at, d) for d in live[:need]]
+
+    out = []
+    for at, (data, _) in enumerate(segments):
+        f = CountingFile(data)
+        _, _, resident = load_resident(f)
+        f.reads = 0
+        cache = {}
+        mine = sorted(d for s, d in hits if s == at)
+        payloads = {d: payload_of(f, resident, d, cache) for d in mine}
+        reads += f.reads
+        out += [(s, d, payloads[d]) for s, d in hits if s == at]
+    order = {(s, d): i for i, (s, d) in enumerate(hits)}
+    out.sort(key=lambda t: order[(t[0], t[1])])
+    return out, reads
 
 
 # --- output ----------------------------------------------------------------
@@ -996,6 +1074,15 @@ FIXTURES = [
             ("x", 10, [], 1, False),
         ],
     },
+    {
+        "name": "names-delta",
+        "documents": NAME_DELTA_DOCUMENTS,
+        "decimals": None,
+        "tokenizer_id": "name-list",
+        "completions": (2, 0, 2),
+        "license": ("CC0-1.0", "Mokuji conformance fixtures"),
+        "cases": [],
+    },
 ]
 
 
@@ -1055,6 +1142,39 @@ def main():
         (HERE / f"{name}.mokuji").write_bytes(data)
         (HERE / f"{name}.hex").write_text(dump)
         print(f"wrote {name}.mokuji ({len(data)} bytes) and {name}.hex")
+
+    # The collection, from the fixtures just built.
+    built = {name: (HERE / f"{name}.mokuji").read_bytes() for name, _ in COLLECTION}
+    segments = [(built[name], deletes) for name, deletes in COLLECTION]
+    for prefix, limit, expected, expected_reads in COLLECTION_CASES:
+        got, reads = collection_complete(segments, prefix, limit)
+        assert got == expected, ("collection", prefix, got, expected)
+        assert reads == expected_reads, ("collection", prefix, reads, expected_reads)
+    manifest = json.dumps(
+        {
+            "mokuji_manifest": "0.1",
+            "generation": 1,
+            "segments": [
+                {
+                    "path": f"{name}.mokuji",
+                    "content_hash": "sha2-256:" + hashlib.sha256(built[name]).hexdigest(),
+                    "length": len(built[name]),
+                    **({"deletes": deletes} if deletes else {}),
+                }
+                for name, deletes in COLLECTION
+            ],
+        },
+        indent=2,
+        ensure_ascii=False,
+    ) + "\n"
+    if args.check:
+        if (HERE / "collection.json").read_text() != manifest:
+            stale.append("collection.json")
+        else:
+            print("collection.json is current")
+    else:
+        (HERE / "collection.json").write_text(manifest)
+        print("wrote collection.json")
 
     if stale:
         sys.exit(f"stale: {', '.join(stale)}; re-run this script")

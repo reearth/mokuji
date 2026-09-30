@@ -1,0 +1,19 @@
+{
+  "mokuji_manifest": "0.1",
+  "generation": 1,
+  "segments": [
+    {
+      "path": "names.mokuji",
+      "content_hash": "sha2-256:3b2c3b0e876b889633c64a1d21d23c852f0d06d6c188020f73c585221b572978",
+      "length": 1104,
+      "deletes": [
+        0
+      ]
+    },
+    {
+      "path": "names-delta.mokuji",
+      "content_hash": "sha2-256:10f7a6d84a6857b72aa9f207a5b17127be848818496e7ea33ffe8072915609c2",
+      "length": 861
+    }
+  ]
+}

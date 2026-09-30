@@ -221,3 +221,57 @@ docs = []
 payloads = []
 from_table = false
 reads = 1 # the one block it would be in
+
+# Collection cases (MANIFEST.md §3.2). `manifest` names a manifest in
+# fixtures/; `segments` and `docs` give each result as the segment it is in and
+# its ID there. Reads include the payload, and exclude opening.
+#
+# `collection` is `names`, then `names-delta`, with Black Sea — the first
+# document every `b` entry of `names` lists — deleted from `names`.
+
+[[collection]]
+name = "a delete leaves an entry short, so the segment reads its dictionary"
+manifest = "collection"
+prefix = "bl"
+limit = 2
+segments = [0, 0]
+docs = [1, 2]
+payloads = ["Black Forest", "Blackpool"]
+# The entry, twice, at no read; then 2 term blocks and 1 postings read; then
+# 2 payload blocks.
+reads = 5
+
+[[collection]]
+name = "a later segment follows every document of an earlier one"
+manifest = "collection"
+prefix = "black"
+limit = 10
+segments = [0, 0, 1]
+docs = [1, 2, 0]
+payloads = ["Black Forest", "Blackpool", "Black Mountain"]
+# names: 2 term blocks, 1 postings. The delta: 1 term block, and `black
+# mountain` names its own document. Payload: 2 blocks in names, 1 in the delta.
+reads = 7
+
+[[collection]]
+name = "a later segment is not asked once the limit is met"
+manifest = "collection"
+prefix = "t"
+limit = 2
+segments = [0, 0]
+docs = [4, 5]
+payloads = ["Tokyo", "Tohoku"]
+reads = 1 # the entry answers; one payload block
+
+[[collection]]
+name = "a prefix only a later segment has"
+manifest = "collection"
+prefix = "東京タ"
+limit = 10
+segments = [1]
+docs = [1]
+payloads = ["Tokyo Tower"]
+# names: the one block that proves it absent. The delta: the block before the
+# boundary key `東京タワー`, read on faith (SPEC.md §4.1), then that block, its
+# run, and the payload.
+reads = 5

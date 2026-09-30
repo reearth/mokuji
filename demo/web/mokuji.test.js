@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { MokujiIndex, jaAddress, nameList } from "./mokuji.js";
+import { MokujiCollection, MokujiIndex, jaAddress, nameList } from "./mokuji.js";
 
 const CONFORMANCE = fileURLToPath(new URL("../../conformance/", import.meta.url));
 
@@ -109,6 +109,23 @@ for (const testCase of tables.completion ?? []) {
     assert.deepEqual(payloads, testCase.payloads);
     assert.equal(fromTable, testCase.from_table);
     assert.equal(index.stats.requests, testCase.reads);
+  });
+}
+
+for (const testCase of tables.collection ?? []) {
+  test(`collection: ${testCase.name}`, async () => {
+    const manifest = JSON.parse(
+      await readFile(`${CONFORMANCE}fixtures/${testCase.manifest}.json`, "utf8"),
+    );
+    const sources = new Map();
+    for (const s of manifest.segments) sources.set(s.path, await fileSource(s.path.replace(/\.mokuji$/, "")));
+    const collection = await MokujiCollection.open(manifest, (path) => sources.get(path));
+    collection.resetStats();
+    const { hits, payloads } = await collection.complete(testCase.prefix, testCase.limit);
+    assert.deepEqual(hits.map((h) => h.segment), testCase.segments);
+    assert.deepEqual(hits.map((h) => h.doc), testCase.docs);
+    assert.deepEqual(payloads, testCase.payloads);
+    assert.equal(collection.stats.requests, testCase.reads);
   });
 }
 
