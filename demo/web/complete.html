@@ -174,7 +174,10 @@
       const pins = L.layerGroup().addTo(map);
 
       // With ?manifest=<url>, a collection (MANIFEST.md) rather than one file.
-      const manifestUrl = new URLSearchParams(location.search).get("manifest");
+      const params = new URLSearchParams(location.search);
+      const manifestUrl = params.get("manifest");
+      // With &countries=JP,KR as well, only the segments there (MANIFEST.md §7).
+      const countries = params.get("countries")?.split(",") ?? null;
       const EXAMPLES = manifestUrl
         ? ["takanawad", "takanawa g", "高輪台", "s", "東京タ"]
         : ["s", "san ", "black se", "東京タ", "mont", "สถานี", "zü"];
@@ -232,6 +235,17 @@
         };
       }
 
+      // Where a result came from. In a sharded collection, the shard; in a base
+      // with deltas, whether it was added after the base.
+      function tag(segment) {
+        const listed = source.manifest?.segments ?? [];
+        if (listed.some((s) => s.region)) {
+          const stem = listed[segment].path.split("/").pop().replace(/\.mokuji$/, "");
+          return `<em>${escape(stem)}</em>`;
+        }
+        return segment > 0 ? "<em>added</em>" : "";
+      }
+
       async function once() {
         const typed = $("typed").value;
         if (!typed.trim()) {
@@ -276,14 +290,14 @@
         $("results").innerHTML = places
           .map(
             (p, i) =>
-              `<li data-i="${i}">${escape(p.name)}${r.segments[i] > 0 ? "<em>added</em>" : ""}` +
+              `<li data-i="${i}">${escape(p.name)}${tag(r.segments[i])}` +
               `<span>${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` +
               `${p.population ? ` · ${p.population.toLocaleString()}` : ""}</span></li>`,
           )
           .join("");
         pins.clearLayers();
         places.forEach((p, i) => {
-          const added = r.segments[i] > 0;
+          const added = r.segments[i] > 0 && !(source.manifest?.segments ?? []).some((s) => s.region);
           L.circleMarker([p.lat, p.lon], {
             radius: added ? 8 : 6,
             color: added ? "#1a7f37" : "#1f6feb",
@@ -317,7 +331,7 @@
       (async () => {
         try {
           if (manifestUrl) {
-            source = await MokujiCollection.open(manifestUrl);
+            source = await MokujiCollection.open(manifestUrl, undefined, { countries });
             segments = source.segments;
           } else {
             source = await MokujiIndex.open("./names.mokuji");
@@ -342,7 +356,9 @@
           ? source.manifest.segments.reduce((n, s) => n + (s.deletes?.length ?? 0), 0)
           : 0;
         $("places").textContent = (segments.reduce((n, s) => n + s.numDocs, 0) - deleted).toLocaleString();
-        $("segments").textContent = segments.length;
+        $("segments").textContent = countries
+          ? `${segments.length} of ${source.manifestSegments}, in ${countries.join(", ")}`
+          : segments.length;
         $("deleted").textContent = deleted.toLocaleString();
         $("filesize").textContent = bytes(segments.reduce((n, s) => n + (s.fileLength ?? 0), 0));
         $("opencost").textContent =
