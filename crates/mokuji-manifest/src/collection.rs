@@ -159,35 +159,72 @@ impl<R: RangeReader> Collection<R> {
     /// `prefix`, in collection order.
     ///
     /// Segments are consulted in order until `limit` are found. In each, the
-    /// completions section answers first; if deletes have taken some of what
-    /// it lists, the segment is asked once more for as many again as it has
-    /// deletes, which is enough however they fall — from its section if that
-    /// still reaches, and from its dictionary if not. A delete that lands in a
-    /// completion makes that prefix cost what it would without the section,
-    /// and correct, until the collection is compacted.
+    /// completions section answers first. If deletes have taken some of what
+    /// it gives, the segment is asked for everything its entry lists — an entry
+    /// that lists more than a page shows has room for deletes, at no read —
+    /// and then, if that is still short, for as many again as it has deletes,
+    /// which is enough however they fall and is read from its dictionary. A
+    /// delete that exhausts an entry's room makes that prefix cost what it
+    /// would without the section, and stay correct, until the collection is
+    /// compacted.
     pub async fn complete(&self, prefix: &[u8], limit: usize) -> Result<Completion> {
         let mut out = Completion::default();
-        for (segment, member) in self.members.iter().enumerate() {
+        for segment in 0..self.members.len() {
             let need = limit - out.hits.len();
             if need == 0 {
                 break;
             }
-            let (docs, mut from_table) = member.index.complete(prefix, need).await?;
-            let mut live: Vec<u64> = docs.iter().copied().filter(|&d| member.live(d)).collect();
-            if live.len() < need && docs.len() == need {
-                let (more, table) = member
-                    .index
-                    .complete(prefix, need + member.deletes.len())
-                    .await?;
-                from_table &= table;
-                live = more.into_iter().filter(|&d| member.live(d)).collect();
-            }
-            live.truncate(need);
-            out.consulted.push((segment, from_table));
-            out.hits
-                .extend(live.into_iter().map(|doc| Hit { segment, doc }));
+            let found = self.complete_in(segment, prefix, need).await?;
+            out.hits.extend(found.hits);
+            out.consulted.extend(found.consulted);
         }
         Ok(out)
+    }
+
+    /// Every segment's own first `limit` live documents for `prefix`, one list
+    /// per segment in manifest order.
+    ///
+    /// What a reader needs to rank across segments. Collection order puts every
+    /// document of an earlier segment before any of a later one, so a place
+    /// added in a later segment is never among the first `limit` of a prefix
+    /// the base already fills. Ranking the lists against each other needs a
+    /// score the segments share, and scores are outside the format (`SPEC.md`
+    /// §1) — so this returns the lists and leaves the ranking to the caller. It
+    /// costs every segment's reads rather than stopping once `limit` are found;
+    /// the segments are independent, so they can be asked at once.
+    pub async fn candidates(&self, prefix: &[u8], limit: usize) -> Result<Vec<Completion>> {
+        let mut out = Vec::with_capacity(self.members.len());
+        for segment in 0..self.members.len() {
+            out.push(self.complete_in(segment, prefix, limit).await?);
+        }
+        Ok(out)
+    }
+
+    async fn complete_in(&self, segment: usize, prefix: &[u8], need: usize) -> Result<Completion> {
+        let member = &self.members[segment];
+        // Asked for what is needed; then, if deletes took some of it, for all
+        // the segment's entry lists, which answers at no read when the entry
+        // lists more than is needed; then for as many again as there are
+        // deletes, which is enough however they fall.
+        let listed = member
+            .index
+            .completions()
+            .map_or(0, |c| c.docs_per_entry as usize);
+        let mut from_table = true;
+        let mut live = Vec::new();
+        for ask in [need, listed.max(need), need + member.deletes.len()] {
+            let (docs, table) = member.index.complete(prefix, ask).await?;
+            from_table &= table;
+            live = docs.iter().copied().filter(|&d| member.live(d)).collect();
+            if live.len() >= need || docs.len() < ask {
+                break;
+            }
+        }
+        live.truncate(need);
+        Ok(Completion {
+            hits: live.into_iter().map(|doc| Hit { segment, doc }).collect(),
+            consulted: vec![(segment, from_table)],
+        })
     }
 
     /// Payload for hits, one span per segment so that neighbours share a read.

@@ -136,9 +136,11 @@ pub fn add(path: &Path, file: &Path) -> Result<(), Error> {
 
 /// `mokuji manifest delete`: these documents of this segment are gone.
 ///
-/// Reports how many completion entries now list a deleted document. Each is a
-/// prefix that the section no longer answers alone, and costs what it would
-/// without one until the collection is compacted — which is what to watch.
+/// Reports how many completion entries now list a deleted document, and the
+/// most any one has lost. An entry answers a page of results at no read while
+/// it still lists that many live documents; once deletes take more than it
+/// lists beyond a page, its prefix reads the dictionary until the collection
+/// is compacted — which is what to watch.
 pub fn delete(path: &Path, segment_path: &str, docs: &[u64]) -> Result<(), Error> {
     let mut manifest = read(path)?;
     let at = manifest
@@ -164,22 +166,34 @@ pub fn delete(path: &Path, segment_path: &str, docs: &[u64]) -> Result<(), Error
     write(path, &manifest)?;
 
     let deleted = &manifest.segments[at].deletes;
-    let touched = index.completions().map_or(0, |c| {
-        c.entries()
-            .filter(|(_, listed)| listed.iter().any(|d| deleted.binary_search(d).is_ok()))
-            .count()
-    });
     println!(
         "generation {}: {} document(s) deleted from {segment_path}",
         manifest.generation,
         deleted.len()
     );
-    if touched > 0 {
-        println!(
-            "{touched} completion entr{} now list a deleted document, and cost a walk \
-             of the dictionary until compacted",
-            if touched == 1 { "y" } else { "ies" }
-        );
+    if let Some(c) = index.completions() {
+        let lost: Vec<usize> = c
+            .entries()
+            .map(|(_, listed)| {
+                listed
+                    .iter()
+                    .filter(|d| deleted.binary_search(d).is_ok())
+                    .count()
+            })
+            .filter(|&n| n > 0)
+            .collect();
+        if let Some(worst) = lost.iter().max() {
+            // An entry that lists more than a page shows answers a page at no
+            // read until deletes take more than the difference; past that the
+            // prefix reads its dictionary until the collection is compacted.
+            println!(
+                "{} completion entr{} list a deleted document; the most any has lost is \
+                 {worst} of {}",
+                lost.len(),
+                if lost.len() == 1 { "y" } else { "ies" },
+                c.docs_per_entry
+            );
+        }
     }
     Ok(())
 }
