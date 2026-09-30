@@ -277,7 +277,17 @@ mod names {
 
     #[test]
     fn reproduces_the_names_fixture_byte_for_byte() {
-        let expected = std::fs::read(conformance("names.mokuji")).expect("fixture");
+        reproduce("names");
+    }
+
+    /// The segment the conformance collection adds after `names`.
+    #[test]
+    fn reproduces_the_names_delta_fixture_byte_for_byte() {
+        reproduce("names-delta");
+    }
+
+    fn reproduce(name: &str) {
+        let expected = std::fs::read(conformance(&format!("{name}.mokuji"))).expect("fixture");
         let header = Header::parse(&expected).unwrap();
         let start = header.section_table_offset as usize;
         let end = start + header.section_table_len as usize;
@@ -288,7 +298,8 @@ mod names {
             .map(|s| expected[s.offset as usize..(s.offset + s.length) as usize].to_vec())
             .expect("meta section");
 
-        let text = std::fs::read_to_string(conformance("names.corpus.txt")).expect("corpus");
+        let text =
+            std::fs::read_to_string(conformance(&format!("{name}.corpus.txt"))).expect("corpus");
         let corpus = corpus::parse(&text, Tokenizer::NameList, 0, false).unwrap();
         let mut builder = Builder::new(Options {
             terms_per_block: 2,
@@ -317,7 +328,7 @@ mod names {
         assert_eq!(built.len(), expected.len(), "lengths differ");
         assert!(
             built == expected,
-            "names.mokuji is not reproduced byte for byte"
+            "{name}.mokuji is not reproduced byte for byte"
         );
     }
 }

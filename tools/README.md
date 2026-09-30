@@ -223,3 +223,24 @@ replacement. It completes a name from its start only; `sea` does not find
 `Black Sea`, which is why the two agree on 35–55% of their answers. A search
 that finds a word anywhere still needs the word file; completion is better
 served by the name file.
+
+## `segments`
+
+What a collection (`MANIFEST.md`) costs as deltas and deletes accumulate. Over
+the name file above as the base, it lays the first `--deltas` of a directory of
+delta files, deletes `--delete-rate` of the base's documents — uniformly, or
+with `--important` among the first 100,000 — and completes the partly typed
+names two ways: in collection order, and every segment's first ten, which is
+what ranking across segments needs.
+
+```sh
+cd importance-order && cargo run --release --bin segments -- \
+  ../names.mokuji ../deltas typed.txt --deltas 4 --delete-rate 0.001 --important
+```
+
+The figures are in `MANIFEST.md` §4 and §5. Two of them decide how to run a
+collection: each delta of 1,000 places adds one read at open and one to a query
+that asks every segment, while round trips stay at three; and deletes that fall
+on important places stop mattering once completion entries list more than a
+page shows — at twenty documents to an entry, 12,854 of them left no prefix
+reading its dictionary.

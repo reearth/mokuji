@@ -245,6 +245,7 @@ dependencies = [
  "mokuji-read",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

@@ -47,7 +47,8 @@ Payload               document ID order, block compressed
 ```
 
 See [SPEC.md](SPEC.md) for the byte layout, the I/O contract, and the decision
-log.
+log, and [MANIFEST.md](MANIFEST.md) for collections: an index that changes, built
+from files that do not.
 
 ## This repository
 
