@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -32,14 +32,21 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      # The browser reader is a third implementation of the specification and
-      # answers to the same conformance cases as the others.
-      - run: node --test 'demo/web/*.test.js'
+      # The JavaScript reader is a third implementation of the specification
+      # and answers to the same conformance cases as the others.
+      - run: npm ci
+        working-directory: js
+      - run: npm test
+        working-directory: js
+      # dist/ is committed, so that the package can be depended on straight
+      # from git without a build step; it has to be what src/ builds.
+      - name: js/dist is current
+        run: git diff --exit-code -- js/dist
 
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@3230091d7ef9483f601620abacc570c22cf44d22 # 1.85.0
+      - uses: dtolnay/rust-toolchain@0acae73baee12cc81c9b1fb9e8f8b7672bf17c6a # 1.85.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo check --all-targets --all-features
