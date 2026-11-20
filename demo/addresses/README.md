@@ -226,18 +226,18 @@ decompressing one 9 KB block per lookup. Same file, different deployment; see
 
 | | addresses | dictionary | per address |
 |---|---|---|---|
-| Town level, nationwide | 725,814 | 3.81 MB | **5.25 B** |
-| Residence level, Tokyo | 1,744,962 | 2.77 MB | **1.58 B** |
+| Town level, nationwide | 725,546 | 2.91 MB | **4.01 B** |
+| Residence level, Tokyo | 1,744,962 | 861 KB | **0.49 B** |
 
 Residence-level addresses are longer but share far more: thousands of doors
 hang off one neighbourhood name, so front-coding pays for the prefix once and
 the rest of each key is a block and a number. Two and a half times as many
-addresses cost three quarters of the dictionary.
+addresses cost under a third of the dictionary.
 
 Nationwide residence level would sit above Tokyo's figure, since 47 prefectures
 share less than one does, but the dominant effect is doors per neighbourhood
-rather than prefectures per country. At two bytes an address, 19 million
-addresses would be a dictionary of roughly 40 MB. That is well under the
+rather than prefectures per country. At a byte an address, 19 million
+addresses would be a dictionary of roughly 20 MB. That is well under the
 50–150 MB estimated earlier from synthetic data — the estimate was
 conservative, which is what estimates from synthetic data usually are.
 
@@ -290,23 +290,24 @@ provenance rather than compression. The metadata records `payload: ints:6`, so
 an index that rounds says that it rounded. A shortened copy that declares the
 shortening is still a true copy; one that shortens silently is not.
 
-### What the real data changed### What the real data changed
+### What the real data changed
 
-The dictionary costs **5.3 bytes per address** compressed, against 1.9 on the
-synthetic corpus — 2.7x worse, and the reason the synthetic numbers are
+The dictionary costs **4.0 bytes per address** compressed, against 1.9 on the
+synthetic corpus — 2.1x worse, and the reason the synthetic numbers are
 reported separately.
 
-That is the measurement the design notes asked for. Extrapolating 5.3 bytes to
+That is the measurement the design notes asked for. Extrapolating 4.0 bytes to
 a nationwide block-level register of roughly 19 million addresses gives about
-100 MB for the dictionary, which lands inside the 50–150 MB that was estimated
-from a synthetic benchmark. Real block-level addresses are longer and share
-longer prefixes than town-level ones, so the true figure is likely lower; that
-is a guess, and the way to settle it is to index them.
+76 MB for the dictionary, which lands inside the 50–150 MB that was estimated
+from a synthetic benchmark. Block-level addresses share longer prefixes than
+town-level ones, so the true figure is lower: Tokyo at residence level costs
+0.49 bytes an address (above), which puts the nationwide register nearer
+20 MB.
 
 Two further things the real data shows:
 
-- **Coordinates are sparse at town level.** `mt_town_pos` has 324,471 points,
-  and only 196,162 of them name a row of the town master, because the master's
+- **Coordinates are sparse at town level.** `mt_town_pos` has 337,641 points,
+  and only 209,329 of them name a row of the town master, because the master's
   rows are mostly 小字 and the points are mostly for 大字・町 and 丁目. How the
   rest are placed is above, under *Where the coordinates come from*.
 - **The registry spells chome two ways.** `一丁目` in one municipality and
@@ -397,7 +398,7 @@ term_index             11.1 KB      44.6 KB  deflate   resident
 term_block_offsets     13.6 KB      13.6 KB  raw       resident
 payload_offsets       218.1 KB     218.1 KB  raw       resident
 postings                    0           0    raw       implied
-term_blocks           864.4 KB      16.2 MB  deflate
+term_blocks           861.4 KB      16.2 MB  deflate
 payload                 6.0 MB       6.0 MB  raw       delta-coded integers
                        -------     -------
                         7.1 MB      22.5 MB   from a 120 MB corpus

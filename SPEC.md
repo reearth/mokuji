@@ -2,7 +2,7 @@
 
 **Version:** 0.1 (draft — not frozen, subject to breaking change)
 **Status:** Draft
-**Date:** 2026-08-24
+**Date:** 2026-11-20
 **Editor:** Eukarya Inc.
 
 > Mokuji — a cloud-optimized concordance format.
