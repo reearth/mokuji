@@ -4,11 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-mokuji-cli = { path = "../../crates/mokuji-cli" }
-mokuji-codec = { path = "../../crates/mokuji-codec" }
-mokuji-format = { path = "../../crates/mokuji-format" }
-mokuji-manifest = { path = "../../crates/mokuji-manifest" }
-mokuji-read = { path = "../../crates/mokuji-read" }
+mokuji = { path = "../..", features = ["cli"] }
 
 [profile.release]
 opt-level = 3

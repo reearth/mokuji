@@ -8,7 +8,7 @@ The first two read a corpus produced by `mokuji dump`, so they measure the index
 as it actually is rather than a corpus as it was before indexing:
 
 ```sh
-cargo run --release -q -p mokuji-cli -- dump tokyo.mokuji > tokyo-dump.tsv
+cargo run --release -q -- dump tokyo.mokuji > tokyo-dump.tsv
 ```
 
 ## `fst-comparison`

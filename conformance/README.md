@@ -20,7 +20,7 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 
 ```
 fixtures/build_fixtures.py   builds tiny, tiny-extra, dict, names and names-delta,
-                             independently of mokuji-write, and collection.json
+                             independently of the Rust writer, and collection.json
 fixtures/collection.json     a manifest (MANIFEST.md): names, then names-delta,
                              with one document of names deleted; names-delta
                              states a region, Japan, and names states none
@@ -36,22 +36,22 @@ cases.toml                   query, expected result, expected read count; [[case
 specification by hand — and so that two writers can be compared byte for byte,
 which compression makes impossible (`SPEC.md` §3.4). `dict-deflate` exists so
 that decompression is exercised on the read side, where interoperability
-actually matters; it is written by `mokuji-write` and kept current by a test.
+actually matters; it is written by the Rust writer (`mokuji::write`) and kept current by a test.
 
 ## Who answers to these cases
 
 | implementation | how |
 |---|---|
-| `mokuji-read` | `cargo test -p mokuji-read --test conformance` |
-| `mokuji-manifest` | `cargo test -p mokuji-manifest --test conformance` — the collection cases |
-| `mokuji` (the crate people search with) | `cargo test -p mokuji` — the same questions as the TypeScript reader's tests |
+| `mokuji::read` | `cargo test --test read_conformance` |
+| `mokuji::manifest` | `cargo test --test manifest_conformance` — the collection cases |
+| `mokuji` (`MokujiIndex`) | `cargo test --test search` — the same questions as the TypeScript reader's tests |
 | `build_fixtures.py` | checks every case before writing a fixture |
 | `js/` (`@reearth/mokuji`) | `cd js && npm test` |
 | `python/` (`mokuji`) | `python3 -m unittest discover -s python/tests` — every case, read counts included, and a comparison with the TypeScript reader |
 
 ## Why the fixtures are not built by the writer
 
-If `mokuji-write` emitted them, a mistake in the writer would be mirrored by the
+If the Rust writer emitted them, a mistake in the writer would be mirrored by the
 reader developed against it, and the two would agree with each other rather than
 with the specification. `build_fixtures.py` is a second implementation, in
 another language, written from the prose alone. Where the two disagree, one of

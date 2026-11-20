@@ -266,7 +266,7 @@ Mokuji file with nothing a reader of `SPEC.md` alone would miss.
 **Collection order is concatenation.**
 It is the one order that needs no score, and the one that compaction can
 reproduce exactly. That makes "the compacted file answers as the collection
-did" a property that can be tested, and it is: `mokuji-cli`'s tests fold
+did" a property that can be tested, and it is: the CLI's tests fold
 generated collections with random deletes and compare every prefix. Ranking
 across segments is still possible (§3.3). It is left to a reader with a score,
 which is where `SPEC.md` leaves ranking.

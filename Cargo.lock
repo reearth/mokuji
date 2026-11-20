@@ -213,87 +213,14 @@ dependencies = [
 name = "mokuji"
 version = "0.0.0"
 dependencies = [
- "mokuji-format",
- "mokuji-meta",
- "mokuji-read",
- "mokuji-tokenize",
- "mokuji-write",
-]
-
-[[package]]
-name = "mokuji-cli"
-version = "0.0.0"
-dependencies = [
- "mokuji",
- "mokuji-format",
- "mokuji-manifest",
- "mokuji-meta",
- "mokuji-read",
- "mokuji-tokenize",
- "mokuji-write",
- "proptest",
- "sha2",
- "tempfile",
- "unicode-normalization",
-]
-
-[[package]]
-name = "mokuji-codec"
-version = "0.0.0"
-dependencies = [
  "flate2",
- "mokuji-format",
-]
-
-[[package]]
-name = "mokuji-format"
-version = "0.0.0"
-
-[[package]]
-name = "mokuji-manifest"
-version = "0.0.0"
-dependencies = [
- "mokuji-format",
- "mokuji-meta",
- "mokuji-read",
+ "proptest",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "toml",
-]
-
-[[package]]
-name = "mokuji-meta"
-version = "0.0.0"
-dependencies = [
- "mokuji-format",
-]
-
-[[package]]
-name = "mokuji-read"
-version = "0.0.0"
-dependencies = [
- "mokuji-codec",
- "mokuji-format",
- "mokuji-meta",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "mokuji-tokenize"
-version = "0.0.0"
-dependencies = [
  "unicode-normalization",
-]
-
-[[package]]
-name = "mokuji-write"
-version = "0.0.0"
-dependencies = [
- "mokuji-codec",
- "mokuji-format",
- "mokuji-read",
- "proptest",
 ]
 
 [[package]]

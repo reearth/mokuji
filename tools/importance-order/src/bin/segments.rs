@@ -17,9 +17,9 @@
 //!     segments base.mokuji deltas/ typed.txt [--deltas 4] [--delete-rate 0.001] [--important]
 
 use importance_order::FileReader;
-use mokuji_manifest::{Collection, Manifest, Segment, VERSION};
-use mokuji_read::block_on::block_on;
-use mokuji_read::{CountingReader, RangeReader};
+use mokuji::manifest::{Collection, Manifest, Segment, VERSION};
+use mokuji::read::block_on::block_on;
+use mokuji::read::{CountingReader, RangeReader};
 
 type Counted = CountingReader<FileReader>;
 
@@ -92,7 +92,7 @@ fn main() {
     // Deletes by a fixed-seed generator, so that a rerun deletes the same.
     let num_docs = {
         let r = FileReader::open(base);
-        block_on(mokuji_read::Index::open(&r))
+        block_on(mokuji::read::Index::open(&r))
             .unwrap()
             .header()
             .num_docs
@@ -172,7 +172,7 @@ fn main() {
         .collect();
     let (mut complete, mut candidates) = (Tally::default(), Tally::default());
     for query in &queries {
-        let key = mokuji_cli::corpus::name(query).into_bytes();
+        let key = mokuji::cli::corpus::name(query).into_bytes();
 
         readers.iter().for_each(CountingReader::reset);
         let found = block_on(collection.complete(&key, 10)).unwrap();

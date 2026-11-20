@@ -1,18 +1,6 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/mokuji-format",
-    "crates/mokuji-meta",
-    "crates/mokuji-codec",
-    "crates/mokuji-read",
-    "crates/mokuji-tokenize",
-    "crates/mokuji",
-    "crates/mokuji-write",
-    "crates/mokuji-cli",
-    "crates/mokuji-manifest",
-]
-
-[workspace.package]
+[package]
+name = "mokuji"
+description = "A cloud-optimized concordance format: build, read and search a Mokuji file, reading only what a query needs"
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.85"
@@ -20,19 +8,47 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/reearth/mokuji"
 authors = ["Re:Earth and contributors"]
 
-[workspace.dependencies]
-mokuji-format = { path = "crates/mokuji-format", version = "0.0.0" }
-mokuji-meta = { path = "crates/mokuji-meta", version = "0.0.0" }
-mokuji-codec = { path = "crates/mokuji-codec", version = "0.0.0" }
-mokuji-read = { path = "crates/mokuji-read", version = "0.0.0" }
-mokuji-tokenize = { path = "crates/mokuji-tokenize", version = "0.0.0" }
-mokuji = { path = "crates/mokuji", version = "0.0.0" }
-mokuji-write = { path = "crates/mokuji-write", version = "0.0.0" }
-mokuji-manifest = { path = "crates/mokuji-manifest", version = "0.0.0" }
+[features]
+# The `mokuji` command and what it alone depends on. Off by default, so that a
+# program using the library does not build the command:
+#   cargo install --git https://github.com/reearth/mokuji mokuji --features cli
+cli = ["dep:sha2"]
 
-[workspace.lints.rust]
+# The command line tool, built from the same crate as the library.
+[[bin]]
+name = "mokuji"
+path = "src/main.rs"
+doc = false
+required-features = ["cli"]
+
+# The tests that drive the command.
+[[test]]
+name = "cli_build_verify"
+required-features = ["cli"]
+
+[[test]]
+name = "cli_collection"
+required-features = ["cli"]
+
+[[test]]
+name = "cli_fixture"
+required-features = ["cli"]
+
+[dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", optional = true }
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+toml = "0.9"
+
+[lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
 
-[workspace.lints.clippy]
+[lints.clippy]
 all = { level = "warn", priority = -1 }

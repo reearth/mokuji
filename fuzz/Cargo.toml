@@ -9,8 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-mokuji-meta = { path = "../crates/mokuji-meta" }
-mokuji-read = { path = "../crates/mokuji-read" }
+mokuji = { path = ".." }
 
 [[bin]]
 name = "read"

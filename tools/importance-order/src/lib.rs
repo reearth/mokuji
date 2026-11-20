@@ -4,9 +4,9 @@
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 
-use mokuji_codec::{bitpack, varint};
-use mokuji_format::{Error, Result};
-use mokuji_read::RangeReader;
+use mokuji::codec::{bitpack, varint};
+use mokuji::format::{Error, Result};
+use mokuji::read::RangeReader;
 
 /// A local file, read one range at a time.
 pub struct FileReader {

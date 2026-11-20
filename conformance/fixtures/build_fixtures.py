@@ -2,7 +2,7 @@
 """Build the `tiny` conformance fixture directly from SPEC.md.
 
 This is deliberately an independent implementation. If the fixture were emitted
-by `mokuji-write`, a mistake in the writer would simply be mirrored by the
+by the Rust writer, a mistake in the writer would simply be mirrored by the
 reader that was developed against it, and the pair would agree with each other
 rather than with the specification. Written twice, in two languages, from the
 prose alone, a disagreement is visible.

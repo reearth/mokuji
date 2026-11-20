@@ -18,10 +18,10 @@
 use std::collections::BTreeMap;
 
 use importance_order::{decode_head, FileReader};
-use mokuji_cli::corpus::Tokenizer;
-use mokuji_format::{Flags, Result};
-use mokuji_read::block_on::block_on;
-use mokuji_read::{postings, CountingReader, Index, RangeReader, TermEntry, TermIndex};
+use mokuji::cli::corpus::Tokenizer;
+use mokuji::format::{Flags, Result};
+use mokuji::read::block_on::block_on;
+use mokuji::read::{postings, CountingReader, Index, RangeReader, TermEntry, TermIndex};
 
 type Reader = CountingReader<FileReader>;
 
@@ -335,7 +335,7 @@ fn main() {
         costs[2].fallbacks += fallbacks;
 
         // Both files should name the same places, in the same rank order.
-        let names = |p: &[mokuji_read::Payload]| {
+        let names = |p: &[mokuji::read::Payload]| {
             let mut v: Vec<String> = p.iter().map(|x| x.to_string()).collect();
             v.sort();
             v

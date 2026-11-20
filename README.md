@@ -56,23 +56,25 @@ from files that do not.
 
 ## This repository
 
-The reference implementation, in Rust.
+The reference implementation is one Rust crate, `mokuji`: the library, and
+the `mokuji` command built from it with the `cli` feature. `js/` and `python/` are readers in other
+languages, with the same API.
 
-| Crate | Contents |
+| | Contents |
 |---|---|
-| `mokuji-format` | Byte layout: header, section table, codec identifiers. No I/O, no dependencies |
-| `mokuji-codec` | Integer and string codecs used inside blocks |
-| `mokuji` | Search a file in what a person types: `lookup`, `complete`, `search`, the same API as the TypeScript and Python readers |
-| `mokuji-read` | `RangeReader`, a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
-| `mokuji-tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
-| `mokuji-write` | Deterministic writer |
-| `mokuji-meta` | The metadata section, and the canonical CBOR it is written in |
-| `mokuji-cli` | The `mokuji` command |
-| `mokuji-manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
+| `mokuji` (`src/lib.rs`) | Search a file in what a person types: `lookup`, `complete`, `search` |
+| `mokuji::format` | Byte layout: header, section table, codec identifiers. No I/O |
+| `mokuji::codec` | Integer and string codecs used inside blocks |
+| `mokuji::read` | `RangeReader`, a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
+| `mokuji::write` | Deterministic writer |
+| `mokuji::meta` | The metadata section, and the canonical CBOR it is written in |
+| `mokuji::tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
+| `mokuji::manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
+| `mokuji::cli`, `src/main.rs` | The `mokuji` command, with the `cli` feature |
 | `js/` (`@reearth/mokuji`) | The reader in TypeScript, for browsers, workers and Node |
 | `python/` (`mokuji`) | The reader in Python, with no dependencies |
 
-The crate boundaries follow the section boundaries in the specification,
+The module boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
 about each other is a requirement of the format and not only good practice.
 
@@ -81,7 +83,7 @@ about each other is a requirement of the format and not only good practice.
 The command line tool needs a Rust toolchain:
 
 ```sh
-cargo install --git https://github.com/reearth/mokuji mokuji-cli
+cargo install --git https://github.com/reearth/mokuji mokuji --features cli
 ```
 
 Its input is one document per line, its text and its payload separated by a
@@ -255,12 +257,14 @@ that it derives from the source it says it does.
 ## Developing
 
 ```sh
-cargo test                                            # the Rust crates
+cargo test --all-features                             # the Rust crate, the command included
 python3 conformance/fixtures/build_fixtures.py --check  # the fixtures match the spec
 (cd js && npm ci && npm test)                         # the TypeScript reader
+python3 -m unittest discover -s python/tests          # the Python reader
 ```
 
-CI runs these, with `cargo fmt --check` and `cargo clippy`.
+CI runs these, with `cargo fmt --check` and `cargo clippy`, and the library
+again without the `cli` feature.
 
 ## License
 

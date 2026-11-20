@@ -313,7 +313,7 @@
               <span lang="en">Download one, such as the files this page searches (<a href="https://places.reearth.land/v1/datasets">listed here</a>, each with its licence), or build your own: one document per line, its text and its payload.</span>
               <span lang="ja">このページが検索しているファイル（<a href="https://places.reearth.land/v1/datasets">一覧</a>。ライセンスも書いてあります）のようにダウンロードするか、自分で作ります。1行に1件、テキストとペイロード。</span>
             </p>
-            <pre class="code"><code>cargo install --git https://github.com/reearth/mokuji mokuji-cli
+            <pre class="code"><code>cargo install --git https://github.com/reearth/mokuji mokuji --features cli
 mokuji build places.tsv places.mokuji</code></pre>
           </li>
           <li class="step">
@@ -373,7 +373,7 @@ bytes:    1474 of 2206580</code></pre>
           </div>
           <div class="way">
             <p class="step-label"><span lang="en">From the library, in the same few lines in each language</span><span lang="ja">ライブラリで（どの言語でも同じ数行）</span></p>
-            <!-- One API in three languages: js/, crates/mokuji, python/. If a
+            <!-- One API in three languages: js/, src/lib.rs, python/. If a
                  name changes in one, change it here and in the others. -->
             <div class="langs" role="tablist" aria-label="Language">
               <button type="button" role="tab" aria-selected="true" data-code="js">JavaScript</button>
@@ -430,7 +430,7 @@ found = index.lookup("1000005", 10)</code></pre>
           </li>
           <li>
             <span class="install-label">CLI</span>
-            <code>cargo install --git https://github.com/reearth/mokuji mokuji-cli</code>
+            <code>cargo install --git https://github.com/reearth/mokuji mokuji --features cli</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
         </ul>

@@ -5,7 +5,7 @@
 
 #![no_main]
 
-use mokuji_read::{block_on::block_on, Index, OpenOptions, SliceReader};
+use mokuji::read::{block_on::block_on, Index, OpenOptions, SliceReader};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

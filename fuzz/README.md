@@ -11,7 +11,7 @@ cargo +nightly fuzz run meta
 ```
 
 Nightly is required by `cargo-fuzz`, so these do not run in CI.
-`crates/mokuji-read/tests/hostile.rs` does, and covers the same ground
+`tests/read_hostile.rs` does, and covers the same ground
 exhaustively but shallowly: every byte of a fixture flipped, zeroed, maxed, and
 truncated at every length.
 

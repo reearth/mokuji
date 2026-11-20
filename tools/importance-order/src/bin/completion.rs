@@ -24,9 +24,9 @@
 use std::collections::HashMap;
 
 use importance_order::{decode_head, FileReader};
-use mokuji_codec::{block, front_coded, varint};
-use mokuji_read::block_on::block_on;
-use mokuji_read::{term, Index, RangeReader};
+use mokuji::codec::{block, front_coded, varint};
+use mokuji::read::block_on::block_on;
+use mokuji::read::{term, Index, RangeReader};
 
 /// Keeps the `k` smallest document IDs offered to it.
 fn offer(best: &mut Vec<u64>, docs: &[u64], k: usize) {

@@ -22,10 +22,10 @@
 use std::collections::BTreeMap;
 
 use importance_order::FileReader;
-use mokuji_cli::corpus::Tokenizer;
-use mokuji_format::Result;
-use mokuji_read::block_on::block_on;
-use mokuji_read::{CountingReader, Index, TermEntry};
+use mokuji::cli::corpus::Tokenizer;
+use mokuji::format::Result;
+use mokuji::read::block_on::block_on;
+use mokuji::read::{CountingReader, Index, TermEntry};
 
 type Counted = CountingReader<FileReader>;
 
@@ -70,7 +70,7 @@ fn intersect(mut lists: Vec<Vec<u64>>) -> Vec<u64> {
 }
 
 /// A prefix's documents, and whether the table would hold it.
-fn prefix_docs<R: mokuji_read::RangeReader>(
+fn prefix_docs<R: mokuji::read::RangeReader>(
     index: &Index<R>,
     prefix: &[u8],
     min_terms: u64,
@@ -95,7 +95,7 @@ fn prefix_docs<R: mokuji_read::RangeReader>(
 }
 
 /// The top `k` for what has been typed, and whether the table answered it.
-fn complete<R: mokuji_read::RangeReader>(
+fn complete<R: mokuji::read::RangeReader>(
     index: &Index<R>,
     exact: &[Vec<u8>],
     prefix: Option<&[u8]>,
@@ -213,7 +213,7 @@ fn main() {
         tokens.dedup();
 
         // Names: the whole of what was typed, normalized as a name.
-        let key = mokuji_cli::corpus::name(query).into_bytes();
+        let key = mokuji::cli::corpus::name(query).into_bytes();
 
         let word_expensive = partial.as_ref().is_some_and(|p| {
             prefix_docs(&words.oracle, p, min_terms, max_span)
