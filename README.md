@@ -263,8 +263,8 @@ python3 conformance/fixtures/build_fixtures.py --check  # the fixtures match the
 python3 -m unittest discover -s python/tests          # the Python reader
 ```
 
-CI runs these, with `cargo fmt --check` and `cargo clippy`, and the library
-again without the `cli` feature.
+CI runs these, with `cargo fmt --check` and `cargo clippy`, the library
+again without the `cli` feature, and a build of `tools/`.
 
 ## License
 

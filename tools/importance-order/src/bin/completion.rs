@@ -74,7 +74,7 @@ fn main() {
     let mut terms = 0u64;
     for ordinal in 0..blocks {
         let bytes = block_on(index.read_term_block(ordinal)).unwrap();
-        for (key, entry) in term::decode_block(&bytes, index.has_positions()).unwrap() {
+        for (key, entry) in term::decode_block(&bytes, index.block_shape()).unwrap() {
             terms += 1;
             let Ok(text) = std::str::from_utf8(&key) else {
                 continue;
