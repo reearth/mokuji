@@ -48,6 +48,7 @@ actually matters; it is written by the Rust writer (`mokuji::write`) and kept cu
 | `build_fixtures.py` | checks every case before writing a fixture |
 | `js/` (`mokuji` on npm) | `cd js && npm test` |
 | `python/` (`mokuji`) | `python3 -m unittest discover -s python/tests` — every case, read counts included, and a comparison with the TypeScript reader |
+| `go/` (`github.com/reearth/mokuji/go`) | `cd go && go test ./...` — every case, read counts included, and a comparison with the Python reader |
 
 ## Why the fixtures are not built by the writer
 

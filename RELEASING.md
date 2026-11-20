@@ -16,6 +16,14 @@ the Python package (`.github/workflows/publish.yml`).
    git tag v0.1.0 && git push origin v0.1.0
    ```
 
+4. Tag the same commit `go/v0.1.0` and push that too. The Go module lives in
+   `go/`, so the Go toolchain takes its version from a tag with that prefix;
+   no registry is involved, and nothing else needs configuring.
+
+   ```sh
+   git tag go/v0.1.0 && git push origin go/v0.1.0
+   ```
+
 ## Before the first
 
 Each registry is told once, by someone who owns the name there, to trust

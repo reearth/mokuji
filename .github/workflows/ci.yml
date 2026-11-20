@@ -74,6 +74,30 @@ jobs:
       # against the TypeScript reader runs on its Node and js/dist.
       - run: python3 -m unittest discover -s python/tests
 
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest Go go/go.mod accepts, and the newest.
+        go: ["1.23", stable]
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      - run: go vet ./...
+      # The Go reader against the same cases, read counts included, and
+      # against the Python reader's answers on the runner's own Python 3.
+      - run: go test -race ./...
+
   msrv:
     runs-on: ubuntu-latest
     steps:

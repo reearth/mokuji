@@ -57,7 +57,7 @@ from files that do not.
 ## This repository
 
 The reference implementation is one Rust crate, `mokuji`: the library, and
-the `mokuji` command built from it with the `cli` feature. `js/` and `python/` are readers in other
+the `mokuji` command built from it with the `cli` feature. `js/`, `python/` and `go/` are readers in other
 languages, with the same API.
 
 | | Contents |
@@ -73,6 +73,7 @@ languages, with the same API.
 | `mokuji::cli`, `src/main.rs` | The `mokuji` command, with the `cli` feature |
 | `js/` (`mokuji` on npm) | The reader in TypeScript, for browsers, workers and Node |
 | `python/` (`mokuji` on PyPI) | The reader in Python, with no dependencies |
+| `go/` (`github.com/reearth/mokuji/go`) | The reader in Go |
 
 The module boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
@@ -93,6 +94,7 @@ and the library for your language:
 npm install mokuji     # JavaScript: browsers, workers and Node
 cargo add mokuji       # Rust
 pip install mokuji     # Python
+go get github.com/reearth/mokuji/go  # Go
 ```
 
 Its input is one document per line, its text and its payload separated by a
@@ -134,7 +136,7 @@ example of one kind of index.
 reading this code. [conformance](conformance) holds the fixtures and cases an
 implementation answers to — results and the number of range reads — and a
 Python builder that produces the fixtures from the specification alone,
-independently of the Rust writer. The Rust crates, the TypeScript and Python
+independently of the Rust writer. The Rust crates, the TypeScript, Python and Go
 readers, and that builder all pass the same cases.
 
 ## Three shapes on one layout
@@ -270,6 +272,7 @@ cargo test --all-features                             # the Rust crate, the comm
 python3 conformance/fixtures/build_fixtures.py --check  # the fixtures match the spec
 (cd js && npm ci && npm test)                         # the TypeScript reader
 python3 -m unittest discover -s python/tests          # the Python reader
+(cd go && go test ./...)                              # the Go reader
 ```
 
 CI runs these, with `cargo fmt --check` and `cargo clippy`, the library
