@@ -301,24 +301,86 @@
         <div class="chapter-head">
           <p class="folio">04</p>
           <h2 id="start-title" class="title">
-            <span lang="en">Build a file.<br />Read it anywhere.</span>
-            <span lang="ja">ファイルを作って、<br />どこからでも読む。</span>
+            <span lang="en">Search,<br />in three steps.</span>
+            <span lang="ja">検索は、<br />3ステップで。</span>
           </h2>
         </div>
-        <div class="start">
-          <div class="step">
-            <p class="step-label"><span lang="en">Build, with the command line tool</span><span lang="ja">作る（コマンドラインツール）</span></p>
+        <ol class="steps">
+          <li class="step">
+            <p class="step-n">1</p>
+            <h3><span lang="en">Get a file</span><span lang="ja">ファイルを用意する</span></h3>
+            <p>
+              <span lang="en">Download one, such as the files this page searches (<a href="https://places.reearth.land/v1/datasets">listed here</a>, each with its licence), or build your own: one document per line, its text and its payload.</span>
+              <span lang="ja">このページが検索しているファイル（<a href="https://places.reearth.land/v1/datasets">一覧</a>。ライセンスも書いてあります）のようにダウンロードするか、自分で作ります。1行に1件、テキストとペイロード。</span>
+            </p>
             <pre class="code"><code>cargo install --git https://github.com/reearth/mokuji mokuji-cli
-mokuji build places.tsv places.mokuji
-mokuji search places.mokuji tokyo chuo</code></pre>
-          </div>
-          <div class="step">
-            <p class="step-label"><span lang="en">Read, in a browser, a Worker or Node</span><span lang="ja">読む（ブラウザ・Worker・Node）</span></p>
+mokuji build places.tsv places.mokuji</code></pre>
+          </li>
+          <li class="step">
+            <p class="step-n">2</p>
+            <h3><span lang="en">Put it up</span><span lang="ja">置いて公開する</span></h3>
+            <p>
+              <span lang="en">On any storage that answers <code>Range</code> requests: S3, R2, a CDN. For a page on another origin, allow CORS and expose <code>Content-Range</code>.</span>
+              <span lang="ja"><code>Range</code> リクエストに応えるストレージならどこでも。S3、R2、CDN。別オリジンのページから読むなら、CORS を許可して <code>Content-Range</code> を公開します。</span>
+            </p>
+            <pre class="code"><code>aws s3 cp postal.mokuji s3://my-bucket/
+
+npx wrangler r2 object put my-bucket/postal.mokuji \
+  --file postal.mokuji --remote</code></pre>
+          </li>
+          <li class="step">
+            <p class="step-n">3</p>
+            <h3><span lang="en">Read it</span><span lang="ja">JS で読む</span></h3>
+            <p>
+              <span lang="en">In a browser, a Worker or Node, with a reader of 13 KB and no dependencies.</span>
+              <span lang="ja">ブラウザでも Worker でも Node でも。13 KB の reader で、依存はありません。</span>
+            </p>
             <pre class="code"><code>pnpm add "git+https://github.com/reearth/mokuji.git#&lt;commit&gt;&amp;path:/js"</code></pre>
             <pre class="code"><code>import { MokujiIndex } from "@reearth/mokuji";
 
-const index = await MokujiIndex.open("https://example.com/places.mokuji");
-const { payloads } = await index.complete("東京タ", 10);</code></pre>
+const index = await MokujiIndex.open("https://example.com/postal.mokuji");
+const { results } = await index.lookup("1000005");</code></pre>
+          </li>
+        </ol>
+        <p class="done"><span lang="en">That is all.</span><span lang="ja">以上。</span></p>
+
+      </section>
+
+      <section class="chapter" id="offline" aria-labelledby="offline-title">
+        <div class="chapter-head">
+          <p class="folio">05</p>
+          <h2 id="offline-title" class="title">
+            <span lang="en">Offline,<br />just keep the file.</span>
+            <span lang="ja">オフラインなら、<br />ファイルを置いて終わり。</span>
+          </h2>
+        </div>
+        <div class="chapter-body">
+          <p>
+            <span lang="en">No storage and no network. Keep the file on disk, in your app or on the device, and ask it from the command line or from the library. The search makes no request, and reads only the parts it needs, not the whole file.</span>
+            <span lang="ja">ストレージも通信もいりません。ファイルを手元に、アプリの中や端末に置いて、コマンドラインかライブラリで引くだけ。検索は通信をせず、ファイル全体ではなく必要な部分だけを読みます。</span>
+          </p>
+        </div>
+        <div class="ways">
+          <div class="way">
+            <p class="step-label"><span lang="en">From the command line</span><span lang="ja">コマンドラインで</span></p>
+            <!-- The output is mokuji search against postal.mokuji as Re:Earth
+                 Places publishes it, cut to the lines that matter. -->
+            <pre class="code"><code><span class="prompt">$</span> mokuji search postal.mokuji 1000005
+14942	1000005|東京都千代田区丸の内（次のビルを除く）
+
+query:    2 read(s) - 1 dictionary and postings, 1 payload
+bytes:    1474 of 2206580</code></pre>
+          </div>
+          <div class="way">
+            <p class="step-label"><span lang="en">From the library: a file on disk, or one the user picked</span><span lang="ja">ライブラリで（ディスク上のファイル、または利用者が選んだファイル）</span></p>
+            <pre class="code"><code>import { openAsBlob } from "node:fs";
+import { MokujiIndex } from "@reearth/mokuji";
+
+const index = await MokujiIndex.open(await openAsBlob("./postal.mokuji"));
+const { results } = await index.lookup("1000005");</code></pre>
+            <pre class="code"><code>import { MokujiIndex } from "@reearth/mokuji";
+
+const index = await MokujiIndex.open(input.files[0]);</code></pre>
           </div>
         </div>
         <p class="links">
