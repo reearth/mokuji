@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mokuji — search, without a server</title>
+    <meta
+      name="description"
+      content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans+JP:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+JP:wght@400;500&display=swap"
+    />
+    <link rel="preconnect" href="https://places.reearth.land" crossorigin />
+    <link rel="stylesheet" href="./style.css" />
+    <script>
+      // Before first paint, so the page does not flash the other language.
+      (() => {
+        const asked = new URLSearchParams(location.search).get("lang");
+        let lang = asked === "ja" || asked === "en" ? asked : null;
+        try {
+          lang ??= localStorage.getItem("mokuji-lang");
+        } catch {}
+        lang ??= (navigator.language || "").startsWith("ja") ? "ja" : "en";
+        document.documentElement.lang = lang;
+        document.documentElement.dataset.lang = lang;
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="bar">
+      <a class="mark" href="./" aria-label="Mokuji">
+        <span class="mark-latin">Mokuji</span><span class="mark-ja" lang="ja">目次</span>
+      </a>
+      <nav class="nav">
+        <a href="#shapes"><span lang="en">Examples</span><span lang="ja">実例</span></a>
+        <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md"><span lang="en">Spec</span><span lang="ja">仕様</span></a>
+        <a href="https://github.com/reearth/mokuji">GitHub</a>
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-set-lang="en">EN</button>
+          <button type="button" data-set-lang="ja">日本語</button>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Hero: the search is real. Every keystroke below reads a real file on
+           object storage, by range requests, from this static page. -->
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+        <h1 id="hero-title" class="display">
+          <span lang="en">Search,<br />without a server.</span>
+          <span lang="ja"><span class="line">サーバーなし</span><span class="line">で、検索。</span></span>
+        </h1>
+        <p class="lede">
+          <span lang="en">Mokuji turns a search index into one file you upload. Each query reads only the few pieces of it that it needs, by HTTP range requests.</span>
+          <span lang="ja">Mokuji は、検索インデックスを置くだけのファイル1つにします。検索のたびに読むのは、そのうち必要な数か所だけ。HTTP の Range リクエストで読みます。</span>
+        </p>
+        </div>
+
+        <div class="instrument" id="hero-search">
+          <div class="modes" role="tablist" aria-label="Dataset">
+            <!-- Order is set per language in app.js: Japan first in Japanese. -->
+            <button type="button" role="tab" data-mode="jp">
+              <span lang="en">Japanese addresses &amp; postal codes</span><span lang="ja">住所・郵便番号</span>
+            </button>
+            <button type="button" role="tab" data-mode="world">
+              <span lang="en">Places worldwide</span><span lang="ja">世界の地名</span>
+            </button>
+          </div>
+
+          <label class="query">
+            <span class="visually-hidden"><span lang="en">Search</span><span lang="ja">検索</span></span>
+            <input id="q" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+          </label>
+          <div class="examples" id="examples"></div>
+
+          <ol class="results" id="results" aria-live="polite"></ol>
+          <p class="note" id="note"></p>
+
+          <div class="receipt" id="receipt" aria-live="polite"></div>
+          <div class="shelf" id="shelf" aria-hidden="true"></div>
+
+          <details class="requests" id="requests">
+            <summary>
+              <span lang="en">The requests this query made</span><span lang="ja">この検索が出したリクエスト</span>
+            </summary>
+            <div class="requests-body">
+              <ol class="log" id="log"></ol>
+              <div class="requests-actions">
+                <button type="button" id="copy-curl"><span lang="en">Copy as curl</span><span lang="ja">curl でコピー</span></button>
+              </div>
+              <pre class="code" id="code"><code></code></pre>
+            </div>
+          </details>
+          <p class="credit" id="credit"></p>
+        </div>
+      </section>
+
+      <section class="chapter" id="why" aria-labelledby="why-title">
+        <div class="chapter-head">
+          <p class="folio">01</p>
+          <h2 id="why-title" class="title">
+            <span lang="en">The index is a file.<br />Put it where your files go.</span>
+            <span lang="ja">インデックスは、ファイル。<br />ファイルを置ける場所に置く。</span>
+          </h2>
+        </div>
+        <div class="chapter-body">
+          <p>
+            <span lang="en">Search usually means a service: a cluster to run, scale and patch, or an API that bills by the request. Mokuji publishes the index instead, as one file that never changes once written, on any storage that honours <code>Range</code> — S3, R2, a CDN. A browser, a Worker or Node opens it with a reader of 13 KB and fetches only the parts a query touches.</span>
+            <span lang="ja">検索といえば、ふつうはサービスです。動かし、増やし、更新し続けるクラスタか、リクエストごとに課金される API。Mokuji はかわりにインデックスを公開します。書いたら変わらないファイル1つを、<code>Range</code> に応えるストレージ（S3、R2、CDN）に置くだけ。ブラウザ、Worker、Node が 13 KB の reader で開き、検索が触れる部分だけを取りに行きます。</span>
+          </p>
+          <dl class="ledger">
+            <div>
+              <dt><span lang="en">Goes away</span><span lang="ja">なくなるもの</span></dt>
+              <dd><span lang="en">A search server, and keeping it up</span><span lang="ja">検索サーバーと、その運用</span></dd>
+              <dd><span lang="en">Charges per request to a search API</span><span lang="ja">検索 API のリクエスト課金</span></dd>
+            </div>
+            <div>
+              <dt><span lang="en">Remains</span><span lang="ja">残るもの</span></dt>
+              <dd><span lang="en">A file, and somewhere static to put it</span><span lang="ja">ファイルと、それを置く静的な場所</span></dd>
+              <dd><span lang="en">A reader in your page</span><span lang="ja">ページの中の reader</span></dd>
+            </div>
+          </dl>
+          <p class="aside">
+            <span lang="en">This page works that way: it is static, and the files it searches sit on object storage behind a CDN.</span>
+            <span lang="ja">このページもそうです。ページ自体は静的で、検索しているファイルは CDN の裏のオブジェクトストレージに置いてあります。</span>
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="shapes" aria-labelledby="shapes-title">
+        <div class="chapter-head">
+          <p class="folio">02</p>
+          <h2 id="shapes-title" class="title">
+            <span lang="en">One layout,<br />many kinds of search.</span>
+            <span lang="ja">1つの形式で、<br />いろいろな検索。</span>
+          </h2>
+        </div>
+        <div class="chapter-body">
+          <p>
+            <span lang="en">The format does not decide what a term is or what a result carries. A geohash cell can be a term, and the polygon it falls in the result — which is reverse geocoding, with no spatial index. Click the map.</span>
+            <span lang="ja">形式は、何を語にするか、結果に何を載せるかを決めません。ジオハッシュのセルを語に、それが落ちるポリゴンを結果にすれば、空間インデックスなしの逆ジオコーディングになります。地図をクリックしてください。</span>
+          </p>
+        </div>
+
+        <div class="reverse instrument" id="reverse">
+          <div class="map" id="map"></div>
+          <div class="reverse-side">
+            <p class="reverse-answer" id="reverse-answer"></p>
+            <div class="receipt" id="reverse-receipt" aria-live="polite"></div>
+            <div class="shelf" id="reverse-shelf" aria-hidden="true"></div>
+            <p class="credit" id="reverse-credit"></p>
+          </div>
+        </div>
+
+        <!-- Costs here are the measured ones in the repository's READMEs;
+             change them there first. Figures are drawn by figures.js. -->
+        <ul class="cards">
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/addresses">
+              <div class="figure" data-figure="address"></div>
+              <div class="card-text">
+                <h3><span lang="en">Geocoding, by address prefix</span><span lang="ja">住所の前方一致（ジオコーディング）</span></h3>
+                <p><span lang="en">A term is a whole address, so a prefix is one contiguous range.</span><span lang="ja">語は住所まるごと。前方一致は、ひと続きの範囲になる。</span></p>
+                <p class="card-foot"><span class="who">GIS</span><span class="cost"><span lang="en">2 reads · 3 KB</span><span lang="ja">2 回 · 3 KB</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/postal">
+              <div class="figure" data-figure="postal"></div>
+              <div class="card-text">
+                <h3><span lang="en">Postal codes, both directions</span><span lang="ja">郵便番号 ⇄ 住所</span></h3>
+                <p><span lang="en">Codes sort among the digits, addresses among the kanji: one dictionary answers both ways.</span><span lang="ja">番号は数字の並びに、住所は漢字の並びに。1つの辞書で両方向に引ける。</span></p>
+                <p class="card-foot"><span class="who">GIS</span><span class="cost"><span lang="en">2 reads</span><span lang="ja">2 回</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/fuzzy">
+              <div class="figure" data-figure="fuzzy"></div>
+              <div class="card-text">
+                <h3><span lang="en">Addresses typed wrong</span><span lang="ja">打ち間違えた住所</span></h3>
+                <p><span lang="en">Terms are pairs of characters. A typo breaks two of them; the rest still match.</span><span lang="ja">語は2文字ずつの組。打ち間違いで崩れるのは2組だけで、残りは一致する。</span></p>
+                <p class="card-foot"><span class="who">GIS</span><span class="cost"><span lang="en">5–17 reads · 10–70 KB</span><span lang="ja">5–17 回 · 10–70 KB</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/reverse">
+              <div class="figure" data-figure="reverse"></div>
+              <div class="card-text">
+                <h3><span lang="en">Reverse geocoding</span><span lang="ja">逆ジオコーディング</span></h3>
+                <p><span lang="en">Terms are geohash cells, and a cell's prefixes are the cells that hold it. No spatial index.</span><span lang="ja">語はジオハッシュのセル。セルの前方部分が、それを含むセル。空間インデックスはいらない。</span></p>
+                <p class="card-foot"><span class="who">GIS</span><span class="cost"><span lang="en">2 requests · 20 KB</span><span lang="ja">2 リクエスト · 20 KB</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/documents">
+              <div class="figure" data-figure="bm25"></div>
+              <div class="card-text">
+                <h3><span lang="en">Full-text search, ranked</span><span lang="ja">順位付きの全文検索</span></h3>
+                <p><span lang="en">Postings of each bigram intersect; BM25 ranks what is left, from statistics in the file.</span><span lang="ja">バイグラムごとのポスティングを重ね、残りをファイル内の統計で BM25 順に並べる。</span></p>
+                <p class="card-foot"><span class="who">Search</span><span class="cost"><span lang="en">6 reads · 16 KB</span><span lang="ja">6 回 · 16 KB</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/vector">
+              <div class="figure" data-figure="vector"></div>
+              <div class="card-text">
+                <h3><span lang="en">Nearest-neighbour vectors</span><span lang="ja">ベクトルの近傍探索</span></h3>
+                <p><span lang="en">A cluster is a term and its vectors the postings, which is IVF, the structure vector databases run.</span><span lang="ja">クラスタが語、その中のベクトルがポスティング。ベクトル DB が使う IVF そのもの。</span></p>
+                <p class="card-foot"><span class="who">AI</span><span class="cost"><span lang="en">21 reads</span><span lang="ja">21 回</span></span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card">
+            <a href="https://github.com/reearth/mokuji/tree/main/demo/stac">
+              <div class="figure" data-figure="stac"></div>
+              <div class="card-text">
+                <h3><span lang="en">A static STAC catalog</span><span lang="ja">静的な STAC カタログ</span></h3>
+                <p><span lang="en">Dates are terms too, so a period is a range of them, and so is a place.</span><span lang="ja">日付も語なので、期間はその範囲になる。場所も同じ。</span></p>
+                <p class="card-foot"><span class="who">GIS</span></p>
+              </div>
+            </a>
+          </li>
+          <li class="card card-yours">
+            <a href="#start">
+              <div class="figure" data-figure="yours"></div>
+              <div class="card-text">
+                <h3><span lang="en">Your own data</span><span lang="ja">あなたのデータで</span></h3>
+                <p><span lang="en">One line per document, its text and its payload. Build it, upload it.</span><span lang="ja">1行に1件、テキストとペイロード。作って、置くだけ。</span></p>
+                <p class="card-foot"></p>
+              </div>
+            </a>
+          </li>
+        </ul>
+      </section>
+
+      <section class="chapter" id="bound" aria-labelledby="bound-title">
+        <div class="chapter-head">
+          <p class="folio">03</p>
+          <h2 id="bound-title" class="title">
+            <span lang="en">What a query costs<br />is written down.</span>
+            <span lang="ja">1回の検索のコストは、<br />仕様に書いてある。</span>
+          </h2>
+        </div>
+        <div class="formula" aria-label="2k plus m">2<i>k</i>&thinsp;+&thinsp;<i>m</i></div>
+        <div class="chapter-body">
+          <p>
+            <span lang="en">For a query of <i>k</i> terms returning <i>m</i> documents, a reader makes at most 2<i>k</i> + <i>m</i> range reads, plus one when it opens the file. The bound is in the specification, and the conformance suite checks the count as well as the answers, for every implementation: the Rust crates, the TypeScript reader, and a Python builder written from the specification alone.</span>
+            <span lang="ja"><i>k</i> 語で <i>m</i> 件を返す検索の読み出しは、多くて 2<i>k</i> + <i>m</i> 回。ファイルを開くときにもう1回。この上限は仕様に書いてあり、conformance スイートは答えだけでなく読み出しの回数も確かめます。Rust の実装、TypeScript の reader、仕様だけから書いた Python のビルダー、どれも同じケースに答えます。</span>
+          </p>
+          <p class="links">
+            <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md">SPEC.md</a>
+            <a href="https://github.com/reearth/mokuji/tree/main/conformance">conformance</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="chapter" id="start" aria-labelledby="start-title">
+        <div class="chapter-head">
+          <p class="folio">04</p>
+          <h2 id="start-title" class="title">
+            <span lang="en">Build a file.<br />Read it anywhere.</span>
+            <span lang="ja">ファイルを作って、<br />どこからでも読む。</span>
+          </h2>
+        </div>
+        <div class="start">
+          <div class="step">
+            <p class="step-label"><span lang="en">Build, with the command line tool</span><span lang="ja">作る（コマンドラインツール）</span></p>
+            <pre class="code"><code>cargo install --git https://github.com/reearth/mokuji mokuji-cli
+mokuji build places.tsv places.mokuji
+mokuji search places.mokuji tokyo chuo</code></pre>
+          </div>
+          <div class="step">
+            <p class="step-label"><span lang="en">Read, in a browser, a Worker or Node</span><span lang="ja">読む（ブラウザ・Worker・Node）</span></p>
+            <pre class="code"><code>pnpm add "git+https://github.com/reearth/mokuji.git#&lt;commit&gt;&amp;path:/js"</code></pre>
+            <pre class="code"><code>import { MokujiIndex } from "@reearth/mokuji";
+
+const index = await MokujiIndex.open("https://example.com/places.mokuji");
+const { payloads } = await index.complete("東京タ", 10);</code></pre>
+          </div>
+        </div>
+        <p class="links">
+          <a href="https://github.com/reearth/mokuji#readme">README</a>
+          <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md">SPEC.md</a>
+          <a href="https://github.com/reearth/mokuji/tree/main/js">@reearth/mokuji</a>
+          <a href="https://github.com/reearth/mokuji">GitHub</a>
+        </p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p class="status">
+        <span lang="en">Draft, version 0.1. The format may still change before 1.0; pin the commit you depend on.</span>
+        <span lang="ja">ドラフト版 0.1。1.0 までは形式が変わることがあります。使うときはコミットを固定してください。</span>
+      </p>
+      <p class="fine">
+        MIT OR Apache-2.0 · <a href="https://eukarya.io">Eukarya</a> ·
+        <a href="./" class="to-top"><span lang="en">Back to top</span><span lang="ja">トップへ</span></a>
+      </p>
+    </footer>
+
+    <script type="module" src="./figures.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

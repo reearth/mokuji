@@ -1,0 +1,1117 @@
+/* Mokuji landing page. The rules behind these choices are in DESIGN.md. */
+
+:root {
+  --paper: #f2eee4;
+  --paper-2: #e9e3d6;
+  --ink: #17150f;
+  --ink-2: #5e5849;
+  --ink-3: #8f8877;
+  --rule: #d3cbb9;
+  --edge: #c8bfab;
+  --shu: #d23f1c;
+  --shu-soft: rgba(210, 63, 28, 0.12);
+
+  --serif: "Instrument Serif", "Noto Serif JP", "Times New Roman", serif;
+  --serif-ja: "Noto Serif JP", "Instrument Serif", serif;
+  --sans: "IBM Plex Sans JP", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --gutter: clamp(16px, 4vw, 56px);
+  --measure: 1240px;
+  --ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  --t: 0.25s;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12110e;
+    --paper-2: #1b1a16;
+    --ink: #ece6d6;
+    --ink-2: #a39c8b;
+    --ink-3: #6f695c;
+    --rule: #2e2b25;
+    --edge: #3a362e;
+    --shu: #ff5b36;
+    --shu-soft: rgba(255, 91, 54, 0.16);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12110e;
+  --paper-2: #1b1a16;
+  --ink: #ece6d6;
+  --ink-2: #a39c8b;
+  --ink-3: #6f695c;
+  --rule: #2e2b25;
+  --edge: #3a362e;
+  --shu: #ff5b36;
+  --shu-soft: rgba(255, 91, 54, 0.16);
+  color-scheme: dark;
+}
+
+/* --- languages: both are in the page, one is shown --------------------- */
+
+html[data-lang="en"] [lang="ja"]:not(.mark-ja),
+html[data-lang="ja"] [lang="en"] {
+  display: none;
+}
+
+/* --- base ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.7 var(--sans);
+  font-feature-settings: "palt" 0;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a {
+  color: inherit;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--t), color var(--t);
+}
+a:hover {
+  text-decoration-color: var(--shu);
+}
+code,
+pre {
+  font-family: var(--mono);
+  font-size: 0.88em;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--shu);
+  outline-offset: 2px;
+}
+/* Japanese wraps at phrase boundaries, where the browser can tell them. */
+html[data-lang="ja"] :is(h1, h2, p, dd) {
+  word-break: auto-phrase;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- top bar --------------------------------------------------------------- */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px var(--gutter);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--t);
+}
+.bar.scrolled {
+  border-bottom-color: var(--rule);
+}
+.mark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45em;
+  text-decoration: none;
+}
+.mark-latin {
+  font: 400 26px/1 var(--serif);
+  letter-spacing: -0.01em;
+}
+.mark-ja {
+  font: 400 13px/1 var(--serif-ja);
+  color: var(--ink-2);
+  letter-spacing: 0.2em;
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2.4vw, 28px);
+  font-size: 14px;
+}
+.nav > a {
+  text-decoration: none;
+  color: var(--ink-2);
+}
+.nav > a:hover {
+  color: var(--ink);
+}
+.lang-switch {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 2px;
+}
+.lang-switch button {
+  border: 0;
+  background: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink-2);
+  transition: background var(--t), color var(--t);
+}
+html[data-lang="en"] [data-set-lang="en"],
+html[data-lang="ja"] [data-set-lang="ja"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+@media (max-width: 560px) {
+  .nav > a[href$="SPEC.md"] {
+    display: none;
+  }
+}
+
+/* --- layout ---------------------------------------------------------------- */
+
+main > section {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+}
+
+/* --- hero ------------------------------------------------------------------- */
+
+.hero {
+  padding-top: clamp(32px, 7vh, 88px);
+  padding-bottom: clamp(56px, 10vh, 120px);
+}
+/* On a wide screen the headline and the search sit side by side, so the
+   search is answered above the fold; what it cost runs the full width below. */
+@media (min-width: 1000px) {
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    column-gap: clamp(40px, 5vw, 88px);
+    align-items: start;
+  }
+  .hero-copy {
+    grid-column: 1;
+    grid-row: 1 / span 5;
+    padding-top: 6px;
+  }
+  .hero .instrument {
+    display: contents;
+  }
+  .hero .modes,
+  .hero .query,
+  .hero .examples,
+  .hero .results,
+  .hero .note {
+    grid-column: 2;
+  }
+  .hero .receipt,
+  .hero .shelf,
+  .hero .requests,
+  .hero .credit {
+    grid-column: 1 / -1;
+  }
+  .hero .receipt {
+    margin-top: clamp(36px, 5vw, 64px);
+  }
+  .hero .display {
+    font-size: clamp(56px, 6.4vw, 104px);
+  }
+  html[data-lang="ja"] .hero .display {
+    font-size: clamp(36px, 3.7vw, 64px);
+  }
+}
+
+.display {
+  margin: 0;
+  font: 400 clamp(52px, 10.5vw, 148px) / 0.92 var(--serif);
+  letter-spacing: -0.025em;
+}
+html[data-lang="ja"] .display {
+  font-family: var(--serif-ja);
+  font-weight: 500;
+  font-size: clamp(40px, 8vw, 112px);
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+/* The Japanese headline breaks where it is told to, and nowhere else. */
+.display .line {
+  display: block;
+  white-space: nowrap;
+}
+.lede {
+  max-width: 34em;
+  margin: clamp(20px, 3vw, 36px) 0 0;
+  font-size: clamp(16px, 1.6vw, 19px);
+  color: var(--ink-2);
+}
+
+/* --- the search instrument ---------------------------------------------- */
+
+.instrument {
+  margin-top: clamp(36px, 6vw, 72px);
+}
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  border-bottom: 1px solid var(--rule);
+}
+.modes button {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 10px 0 12px;
+  font-size: 14px;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color var(--t);
+}
+.modes button:hover {
+  color: var(--ink);
+}
+.modes button[aria-selected="true"] {
+  color: var(--ink);
+}
+.modes button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--shu);
+}
+.query {
+  display: block;
+}
+.query input {
+  width: 100%;
+  margin: 0;
+  padding: clamp(14px, 2vw, 22px) 0;
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 clamp(26px, 4vw, 48px) / 1.2 var(--sans);
+  letter-spacing: -0.01em;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.query input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+.query input::placeholder {
+  color: var(--ink-3);
+}
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  min-height: 30px;
+}
+.examples button {
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color var(--t), color var(--t);
+}
+.examples button:hover {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+
+/* Results read like the index at the back of a book: entry, leader, locator. */
+.results {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  min-height: calc(3 * 2.3em);
+}
+.results li,
+.index-list a {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0.42em 0;
+}
+.results li {
+  animation: rise var(--t) var(--ease) both;
+}
+.results .entry {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(16px, 1.7vw, 19px);
+}
+.results .entry small {
+  margin-left: 0.6em;
+  color: var(--ink-3);
+  font-size: 0.78em;
+}
+.leader {
+  flex: 1 1 40px;
+  min-width: 24px;
+  border-bottom: 1px dotted var(--ink-3);
+  transform: translateY(-0.3em);
+}
+.results .locator,
+.cost {
+  flex: 0 0 auto;
+  font: 400 13px/1 var(--mono);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.results .match {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shu);
+}
+.note {
+  min-height: 1.5em;
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+/* On a phone the whole name matters more than the leader: the locator goes
+   under it. */
+@media (max-width: 560px) {
+  .results li {
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+  .results .entry {
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  .results .leader {
+    display: none;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* --- the receipt: what the query cost, as figures ------------------------ */
+
+.receipt {
+  margin-top: 26px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.receipt .main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px clamp(28px, 5vw, 72px);
+}
+.stat {
+  display: grid;
+  gap: 6px;
+}
+.stat .figure {
+  font: 400 clamp(40px, 5.2vw, 76px) / 0.9 var(--serif);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.stat:nth-child(2) .figure {
+  color: var(--shu);
+}
+.stat .figure small {
+  margin-left: 0.12em;
+  font: 400 0.36em/1 var(--mono);
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+.stat:nth-child(2) .figure small {
+  color: var(--shu);
+}
+.stat .label {
+  font: 400 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.receipt .opened {
+  margin-top: 14px;
+  font: 400 12px/1.6 var(--mono);
+  color: var(--ink-3);
+}
+
+/* --- the shelf: each file as the fore-edge of a book ------------------------
+   A file is drawn as its edge, seen from the side: fine vertical lines, like
+   the pages of a thick dictionary, to scale by byte offset. The range a
+   request read is pulled up out of it in vermilion, with a tag saying what it
+   weighed; what opening read, the table of contents, stays in, in grey. */
+
+.shelf {
+  display: grid;
+  gap: 28px;
+  margin-top: 18px;
+}
+.hero .shelf {
+  /* Full bleed: the book is the picture, so it takes the page's width. */
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0 var(--gutter);
+  margin-top: clamp(28px, 4vw, 48px);
+}
+.book {
+  position: relative;
+}
+.book-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font: 400 12px/1.4 var(--mono);
+  color: var(--ink-2);
+}
+.book-title .size {
+  color: var(--ink-3);
+}
+.book-edge {
+  --h: clamp(56px, 7vw, 88px);
+  position: relative;
+  height: var(--h);
+  margin-top: 58px; /* room for pages pulled up, and their tags */
+  border-radius: 1px 1px 3px 3px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--paper) 50%, transparent), transparent 30%, transparent 70%, color-mix(in srgb, var(--ink) 10%, transparent)),
+    repeating-linear-gradient(90deg, var(--edge) 0 1px, transparent 1px 3px),
+    var(--paper-2);
+  box-shadow:
+    0 1px 0 var(--rule),
+    0 18px 30px -22px color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.hero .book-edge {
+  --h: clamp(120px, 17vw, 240px);
+  margin-top: 72px;
+}
+.hero .shelf[data-count="2"] .book-edge {
+  --h: clamp(72px, 9vw, 128px);
+}
+/* The top of the block, seen a little from above. */
+.book-edge::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 7px;
+  background: repeating-linear-gradient(90deg, var(--rule) 0 1px, var(--paper-2) 1px 3px);
+  opacity: 0.7;
+  transform: skewX(-38deg);
+  transform-origin: bottom;
+}
+.book-section {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--ink-3);
+  opacity: 0.6;
+}
+.book-edge .head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  min-width: 2px;
+  background: repeating-linear-gradient(90deg, var(--ink-3) 0 1px, transparent 1px 2px);
+  opacity: 0.55;
+}
+.slice {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: var(--shu);
+  transform-origin: bottom;
+  animation: pull 0.5s var(--ease) both;
+}
+.slice.query {
+  top: -22px; /* the page stands proud of the block */
+  box-shadow: 0 0 0 1px var(--paper);
+}
+.hero .slice.query {
+  top: -30px;
+}
+.slice.resident {
+  background: var(--ink-3);
+  opacity: 0.45;
+  animation: none;
+}
+.slice.old {
+  animation: none;
+  background: var(--ink-3);
+  opacity: 0.3;
+}
+@keyframes pull {
+  from {
+    transform: translateY(22px) scaleY(0.9);
+    opacity: 0;
+  }
+}
+.tag {
+  position: absolute;
+  bottom: calc(100% + 22px);
+  width: 0;
+  animation: tag 0.5s var(--ease) 0.15s both;
+}
+.hero .tag {
+  bottom: calc(100% + 30px);
+}
+.tag::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: var(--rise, 6px);
+  border-left: 1px solid var(--shu);
+}
+.tag span {
+  position: absolute;
+  left: 0;
+  bottom: var(--rise, 6px);
+  padding: 2px 6px;
+  border: 1px solid var(--shu);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--shu);
+  font: 500 11px/1.2 var(--mono);
+  white-space: nowrap;
+}
+.tag.flip span {
+  left: auto;
+  right: 0;
+}
+.tag.r1 {
+  --rise: 26px;
+}
+.tag.r2 {
+  --rise: 46px;
+}
+@keyframes tag {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.book-labels {
+  display: flex;
+  margin-top: 10px;
+  font: 400 11px/16px var(--mono);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.book-labels span {
+  flex: 0 1 0;
+  min-width: max-content;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+
+/* --- requests ------------------------------------------------------------ */
+
+.requests {
+  margin-top: 24px;
+  border-top: 1px solid var(--rule);
+}
+.requests summary {
+  padding: 14px 0;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink-2);
+  list-style: none;
+}
+.requests summary::-webkit-details-marker {
+  display: none;
+}
+.requests summary::before {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.7em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-0.15em) rotate(-45deg);
+  transition: transform var(--t);
+}
+.requests[open] summary::before {
+  transform: translateY(-0.25em) rotate(45deg);
+}
+.requests-body {
+  padding-bottom: 8px;
+}
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 400 12.5px/1.9 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.log li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.log .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log .what em {
+  font-style: normal;
+  color: var(--ink-3);
+}
+.log .n {
+  text-align: right;
+  color: var(--ink-2);
+}
+.requests-actions {
+  margin: 12px 0;
+}
+.requests-actions button,
+.copy {
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--t);
+}
+.requests-actions button:hover {
+  border-color: var(--ink-2);
+}
+.code {
+  margin: 0;
+  padding: 18px 20px;
+  overflow-x: auto;
+  background: var(--paper-2);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.credit {
+  margin: 16px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* --- chapters --------------------------------------------------------------- */
+
+.chapter {
+  padding-top: clamp(72px, 12vw, 160px);
+  padding-bottom: 8px;
+  border-top: 1px solid var(--rule);
+}
+.chapter-head {
+  display: grid;
+  grid-template-columns: minmax(48px, 1fr) 11fr;
+  gap: 0 24px;
+  align-items: baseline;
+}
+.folio {
+  margin: 0;
+  font: 400 13px/1 var(--mono);
+  color: var(--shu);
+}
+.title {
+  margin: 0;
+  font: 400 clamp(36px, 5.6vw, 80px) / 1 var(--serif);
+  letter-spacing: -0.02em;
+}
+html[data-lang="ja"] .title {
+  font-family: var(--serif-ja);
+  font-weight: 500;
+  font-size: clamp(28px, 4.2vw, 58px);
+  line-height: 1.25;
+}
+.chapter-body {
+  max-width: 40em;
+  margin: clamp(28px, 4vw, 48px) 0 0 calc((100% - 24px) / 12 + 24px);
+  font-size: 17px;
+}
+.chapter-body p {
+  margin: 0 0 1.2em;
+}
+.aside {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+@media (max-width: 720px) {
+  .chapter-head {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .chapter-body {
+    margin-left: 0;
+  }
+}
+
+.ledger {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin: 36px 0;
+}
+.ledger div {
+  border-top: 1px solid var(--ink);
+  padding-top: 12px;
+}
+.ledger dt {
+  font: 400 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 14px;
+}
+.ledger dd {
+  margin: 0 0 6px;
+}
+.ledger div:first-child dd {
+  color: var(--ink-3);
+}
+@media (max-width: 560px) {
+  .ledger {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- reverse geocoding ------------------------------------------------- */
+
+.reverse {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: clamp(20px, 3vw, 40px);
+  align-items: start;
+}
+.map {
+  aspect-ratio: 4 / 3;
+  border-radius: 4px;
+  background: var(--paper-2);
+  overflow: hidden;
+  cursor: crosshair;
+}
+.reverse-answer {
+  margin: 0;
+  min-height: 2.6em;
+  font: 400 clamp(22px, 2.6vw, 32px) / 1.3 var(--serif-ja);
+}
+.reverse-answer small {
+  display: block;
+  margin-top: 6px;
+  font: 400 12px/1.4 var(--mono);
+  color: var(--ink-3);
+}
+.reverse .receipt {
+  margin-top: 18px;
+}
+@media (max-width: 800px) {
+  .reverse {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- the kinds of search, as figures --------------------------------- */
+
+.cards {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: clamp(56px, 8vw, 96px) 0 0;
+  padding: 0;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+}
+.card {
+  background: var(--paper);
+}
+.card a {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  text-decoration: none;
+  transition: background var(--t);
+}
+.card a:hover {
+  background: var(--paper-2);
+}
+.card .figure {
+  aspect-ratio: 16 / 10;
+  padding: 14px 14px 0;
+}
+.card .figure svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.card-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 10px 20px 20px;
+}
+.card h3 {
+  margin: 0 0 8px;
+  font: 400 22px/1.15 var(--serif);
+  transition: color var(--t);
+}
+html[data-lang="ja"] .card h3 {
+  font: 500 17px/1.4 var(--serif-ja);
+}
+.card a:hover h3 {
+  color: var(--shu);
+}
+.card p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.card .card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 16px;
+}
+.who {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+.card .cost {
+  font-size: 11.5px;
+  line-height: 18px;
+}
+@media (max-width: 1100px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* What the figures are drawn with: the page's own tokens, so they follow
+   the theme. Vermilion is what a query reaches, as everywhere else. */
+.figure svg {
+  overflow: visible;
+}
+.figure .tx-ja,
+.figure .tx-m {
+  fill: var(--ink);
+  font-size: 11px;
+}
+.figure .tx-ja {
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.figure .tx-m {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.figure .dim {
+  fill: var(--ink-3);
+}
+.figure .on {
+  fill: var(--paper);
+}
+.figure .hi-t {
+  fill: var(--shu);
+}
+.figure .hi {
+  fill: var(--shu);
+}
+.figure .hi-band {
+  fill: var(--shu-soft);
+  stroke: var(--shu);
+  stroke-width: 1;
+}
+.figure .hi-s {
+  fill: none;
+  stroke: var(--shu);
+  stroke-width: 1.5;
+}
+.figure .thin {
+  stroke-width: 1;
+}
+.figure .dash {
+  stroke-dasharray: 3 3;
+}
+.figure .rule,
+.figure .grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.figure .grid.fine {
+  stroke: var(--shu);
+  stroke-opacity: 0.35;
+}
+.figure .axis,
+.figure .sep {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+}
+.figure .page {
+  stroke: var(--edge);
+  stroke-width: 1;
+}
+.figure .cell {
+  fill: var(--paper-2);
+  stroke: var(--ink-3);
+}
+.figure .chip {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-dasharray: 3 2;
+}
+.figure .mark,
+.figure .bar,
+.figure .dot {
+  fill: var(--ink-3);
+}
+.figure .dot {
+  opacity: 0.55;
+}
+.figure .bar {
+  opacity: 0.5;
+}
+.figure .cross {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.2;
+}
+.figure .pt {
+  fill: var(--ink);
+}
+.figure .ring {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.2;
+}
+
+/* --- the bound ---------------------------------------------------------- */
+
+.formula {
+  margin: clamp(32px, 5vw, 64px) 0 0;
+  font: 400 clamp(96px, 22vw, 300px) / 0.9 var(--serif);
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+.formula i {
+  color: var(--shu);
+}
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  font: 400 14px/1.6 var(--mono);
+}
+
+/* --- start --------------------------------------------------------------- */
+
+.start {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: clamp(32px, 5vw, 56px);
+}
+.step {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.step-label {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+#start .links {
+  margin-top: 36px;
+}
+@media (max-width: 800px) {
+  .start {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- footer -------------------------------------------------------------- */
+
+.foot {
+  max-width: var(--measure);
+  margin: clamp(96px, 14vw, 180px) auto 0;
+  padding: 28px var(--gutter) 48px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.foot p {
+  margin: 0 0 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Beside the map the figures have a column, not the page. */
+.reverse .stat .figure {
+  font-size: clamp(32px, 3.4vw, 52px);
+}
+.reverse .receipt .main {
+  gap: 16px 28px;
+}
