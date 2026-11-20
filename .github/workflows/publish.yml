@@ -36,8 +36,10 @@ jobs:
               "Cargo.toml": tomllib.load(open("Cargo.toml", "rb"))["package"]["version"],
               "js/package.json": json.load(open("js/package.json"))["version"],
               "python/pyproject.toml": tomllib.load(open("python/pyproject.toml", "rb"))["project"]["version"],
-              # What the Go writer records as generator.version.
+              # What the writers record as generator.version.
               "go/version.go": re.search(r'const Version = "([^"]+)"', open("go/version.go").read())[1],
+              "js/src/writer.ts": re.search(r'export const VERSION = "([^"]+)"', open("js/src/writer.ts").read())[1],
+              "python/mokuji/writer.py": re.search(r'^VERSION = "([^"]+)"', open("python/mokuji/writer.py").read(), re.M)[1],
           }
           wrong = {path: v for path, v in versions.items() if f"v{v}" != tag}
           for path, v in wrong.items():

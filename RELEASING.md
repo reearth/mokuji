@@ -7,7 +7,9 @@ the Python package (`.github/workflows/publish.yml`).
 ## A release
 
 1. Set one version in `Cargo.toml`, `js/package.json`,
-   `python/pyproject.toml` and `go/version.go`. Both workflows refuse a tag
+   `python/pyproject.toml`, and the versions the writers record as
+   `generator.version`: `go/version.go`, `js/src/writer.ts` (then
+   `npm run build`) and `python/mokuji/writer.py`. Both workflows refuse a tag
    that any of them disagrees with.
 2. Let CI pass on that commit.
 3. Tag it and push the tag:

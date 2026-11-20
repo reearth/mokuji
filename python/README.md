@@ -76,6 +76,41 @@ class Bucket:
 index = MokujiIndex.open(Bucket())
 ```
 
+## Write
+
+`Builder` is the Rust crate's `mokuji::write`. Documents are added first, in
+ID order; postings then, terms in byte order and each term's documents
+ascending. The writer checks the order and owns no sort. `split` turns a
+document's text into terms as a tokenizer from `TOKENIZERS.md` does.
+
+```python
+from mokuji import Builder, Metadata, Provenance, WriteOptions, split
+
+options = WriteOptions()
+builder = Builder(options)
+doc = builder.add_document("35.671,139.772")
+# ... every document, then every posting, in order
+builder.add_posting("chuo", doc)
+
+meta = Metadata(
+    sources=[Provenance("sha2-256:…", "places.tsv", None, None)],
+    generator_params=options.params(),
+    tokenizer_id="space-split",
+)
+data = builder.finish(meta.encode())
+```
+
+The metadata is the caller's to compose: it names the source the index was
+derived from, which the writer never sees (SPEC.md §6).
+
+Stored raw (`compress=False`), a file is the Rust writer's byte for byte, and
+the tests rebuild the conformance fixtures to show it. Compressed with zlib,
+it is not, since no specification of deflate fixes which of the valid
+encodings a compressor emits; it says the same thing, every reader reads it,
+and this writer reproduces it, which is what SPEC.md §3.4 asks. Its
+`generator.name` is `mokuji-python`, so that a rebuild is checked against the
+writer that made it.
+
 ## Install
 
 ```sh

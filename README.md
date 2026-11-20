@@ -71,8 +71,8 @@ languages, with the same API.
 | `mokuji::tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
 | `mokuji::manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
 | `mokuji::cli`, `src/main.rs` | The `mokuji` command, with the `cli` feature |
-| `js/` (`mokuji` on npm) | The reader in TypeScript, for browsers, workers and Node |
-| `python/` (`mokuji` on PyPI) | The reader in Python, with no dependencies |
+| `js/` (`mokuji` on npm) | The reader in TypeScript, for browsers, workers and Node, and a writer |
+| `python/` (`mokuji` on PyPI) | The reader in Python, with no dependencies, and a writer |
 | `go/` (`github.com/reearth/mokuji/go`) | The reader in Go, and a writer |
 
 The module boundaries follow the section boundaries in the specification,

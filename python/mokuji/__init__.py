@@ -1,6 +1,6 @@
 # mokuji — read Mokuji files a range at a time, from a path, a URL or any
-# source of bytes, with nothing but the standard library. See SPEC.md and
-# MANIFEST.md.
+# source of bytes, and write them, with nothing but the standard library. See
+# SPEC.md and MANIFEST.md.
 
 from .reader import (
     CollectionCompletion,
@@ -27,6 +27,18 @@ from .reader import (
     TermEntry,
 )
 from .tokenizers import SPLITTERS, TOKENIZERS, bigram, ja_address, name_list
+from .writer import (
+    GENERATOR_NAME,
+    SECTION_APPLICATION_MIN,
+    VERSION,
+    Builder,
+    BuildError,
+    CompletionOptions,
+    Metadata,
+    WriteOptions,
+    encode_cbor,
+    split,
+)
 
 __all__ = [
     "CollectionCompletion",
@@ -56,4 +68,14 @@ __all__ = [
     "bigram",
     "ja_address",
     "name_list",
+    "Builder",
+    "BuildError",
+    "CompletionOptions",
+    "GENERATOR_NAME",
+    "Metadata",
+    "SECTION_APPLICATION_MIN",
+    "VERSION",
+    "WriteOptions",
+    "encode_cbor",
+    "split",
 ]

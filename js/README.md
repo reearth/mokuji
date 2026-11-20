@@ -86,6 +86,43 @@ const source = {
 const index = await MokujiIndex.open(source);
 ```
 
+## Write
+
+`MokujiBuilder` is the Rust crate's `mokuji::write`. Documents are added
+first, in ID order; postings then, terms in UTF-8 byte order (which is not
+JavaScript's string order) and each term's documents ascending. The writer
+checks the order and owns no sort. `split` turns a document's text into terms
+as a tokenizer from `TOKENIZERS.md` does.
+
+```js
+import { MokujiBuilder, encodeMetadata, split, writeParams } from "mokuji";
+
+const options = {};
+const builder = new MokujiBuilder(options);
+const doc = builder.addDocument("35.671,139.772");
+// ... every document, then every posting, in order
+builder.addPosting("chuo", doc);
+
+const meta = encodeMetadata({
+  sources: [{ contentHash: "sha2-256:…", uri: "places.tsv" }],
+  generatorParams: writeParams(options),
+  tokenizerId: "space-split",
+});
+const file = await builder.finish(meta); // a Uint8Array
+```
+
+The metadata is the caller's to compose: it names the source the index was
+derived from, which the writer never sees (SPEC.md §6). Integers past 2^53,
+in a payload row or a column, are given as bigints.
+
+Stored raw (`compress: false`), a file is the Rust writer's byte for byte,
+and the tests rebuild the conformance fixtures to show it. Compressed, it is
+deflated by the runtime's own `CompressionStream("deflate-raw")`, so the
+bytes depend on the runtime: no specification of deflate fixes which of the
+valid encodings a compressor emits. Such a file says the same thing and every
+reader reads it; its `generator.name` is `mokuji-js`, and a rebuild is
+checked on the same runtime.
+
 ## Install
 
 ```sh
