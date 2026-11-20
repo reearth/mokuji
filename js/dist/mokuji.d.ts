@@ -76,6 +76,10 @@ export declare class MokujiIndex {
     readonly source: string | Source;
     /** Everything a query costs, so the page can show it rather than claim it. */
     stats: Stats;
+    /** Whether neighbouring blocks are read in one request (SPEC.md §4 allows
+     * it: the count can only fall). On by default; the conformance suite turns
+     * it off to check the count the cases state, block by block. */
+    coalesce: boolean;
     /** Called with every range request, so a page can show the requests
      * themselves rather than a count of them. */
     onRequest: ((request: RequestInfo) => void) | null;
@@ -115,7 +119,19 @@ export declare class MokujiIndex {
     private section;
     static open(source: string | Source): Promise<MokujiIndex>;
     private offsetPair;
+    /** Blocks of one section by ordinal, a request for each run of neighbours.
+     *
+     * Blocks are laid end to end, so ordinals that follow one another are one
+     * contiguous range of the file, and reading them as one costs a single round
+     * trip where reading them apart costs one each. The runs are independent of
+     * each other and fetched at once. Returns each block as stored, before its
+     * codec is undone.
+     */
+    private blockRuns;
+    /** Several dictionary blocks, decoded, a request for each run of neighbours. */
+    termBlocks(ordinals: Iterable<number>): Promise<Map<number, TermEntry[]>>;
     termBlock(ordinal: number): Promise<TermEntry[]>;
+    private decodeTermBlock;
     /** One named column of per-document numbers, or undefined.
      *
      * Resident, so this costs no read: the point of the section is that a scorer
@@ -147,6 +163,17 @@ export declare class MokujiIndex {
     exactMany(termTexts: string[]): Promise<(TermEntry | null)[]>;
     /** Terms beginning with `prefix`, at most `limit` of them. */
     prefix(prefixText: string, limit?: number): Promise<TermEntry[]>;
+    /** Terms beginning with each of several prefixes, every one of them.
+     *
+     * Which blocks each prefix spans is answerable from the resident index, so
+     * all of them are known before any is read, and they are fetched together:
+     * a request for each run of neighbouring blocks, however many prefixes fall
+     * in it. This is what a query over an area needs — the cells covering it
+     * are many short prefixes, mostly in blocks next to one another — and what
+     * `prefix`, which walks one prefix a block at a time, would make a request
+     * per block per prefix.
+     */
+    prefixMany(prefixTexts: string[]): Promise<TermEntry[][]>;
     /** Terms from `low` to `high`, both inclusive, at most `limit` of them.
      *
      * The same walk as `prefix`, with a different test for where it stops: the

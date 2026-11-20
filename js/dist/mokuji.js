@@ -270,6 +270,10 @@ export class MokujiIndex {
     source;
     /** Everything a query costs, so the page can show it rather than claim it. */
     stats = { requests: 0, bytes: 0 };
+    /** Whether neighbouring blocks are read in one request (SPEC.md §4 allows
+     * it: the count can only fall). On by default; the conformance suite turns
+     * it off to check the count the cases state, block by block. */
+    coalesce = true;
     /** Called with every range request, so a page can show the requests
      * themselves rather than a count of them. */
     onRequest = null;
@@ -468,9 +472,49 @@ export class MokujiIndex {
         const end = Number(view.getBigUint64(base + i * 8 + 8, true));
         return [start, end - start];
     }
+    /** Blocks of one section by ordinal, a request for each run of neighbours.
+     *
+     * Blocks are laid end to end, so ordinals that follow one another are one
+     * contiguous range of the file, and reading them as one costs a single round
+     * trip where reading them apart costs one each. The runs are independent of
+     * each other and fetched at once. Returns each block as stored, before its
+     * codec is undone.
+     */
+    async blockRuns(ordinals, locate) {
+        const sorted = [...new Set(ordinals)].sort((a, b) => a - b);
+        const runs = [];
+        for (const ordinal of sorted) {
+            const run = runs[runs.length - 1];
+            if (run && this.coalesce && run[run.length - 1] === ordinal - 1)
+                run.push(ordinal);
+            else
+                runs.push([ordinal]);
+        }
+        const out = new Map();
+        await Promise.all(runs.map(async (run) => {
+            const [start] = locate(run[0]);
+            const [lastOffset, lastLength] = locate(run[run.length - 1]);
+            const bytes = await this.read(start, lastOffset + lastLength - start);
+            for (const ordinal of run) {
+                const [offset, length] = locate(ordinal);
+                out.set(ordinal, bytes.subarray(offset - start, offset - start + length));
+            }
+        }));
+        return out;
+    }
+    /** Several dictionary blocks, decoded, a request for each run of neighbours. */
+    async termBlocks(ordinals) {
+        const raw = await this.blockRuns(ordinals, (i) => this.offsetPair(this.termBlockOffsets, 0, i));
+        const out = new Map();
+        for (const [ordinal, bytes] of raw)
+            out.set(ordinal, await this.decodeTermBlock(bytes));
+        return out;
+    }
     async termBlock(ordinal) {
         const [offset, length] = this.offsetPair(this.termBlockOffsets, 0, ordinal);
-        const raw = await this.read(offset, length);
+        return this.decodeTermBlock(await this.read(offset, length));
+    }
+    async decodeTermBlock(raw) {
         const block = await this.unit(raw, this.section(SECTION.TERM_BLOCKS).codec);
         const cursor = new Cursor(block);
         const entryCount = cursor.varint();
@@ -596,11 +640,7 @@ export class MokujiIndex {
             const term = encoder.encode(t);
             return { term, block: this.blockFor(term) };
         });
-        const blocks = new Map();
-        for (const { block } of wanted) {
-            if (!blocks.has(block))
-                blocks.set(block, await this.termBlock(block));
-        }
+        const blocks = await this.termBlocks(wanted.map((w) => w.block));
         return wanted.map(({ term, block }) => {
             for (const entry of blocks.get(block)) {
                 const order = compare(entry.term, term);
@@ -642,6 +682,41 @@ export class MokujiIndex {
                 break;
         }
         return found;
+    }
+    /** Terms beginning with each of several prefixes, every one of them.
+     *
+     * Which blocks each prefix spans is answerable from the resident index, so
+     * all of them are known before any is read, and they are fetched together:
+     * a request for each run of neighbouring blocks, however many prefixes fall
+     * in it. This is what a query over an area needs — the cells covering it
+     * are many short prefixes, mostly in blocks next to one another — and what
+     * `prefix`, which walks one prefix a block at a time, would make a request
+     * per block per prefix.
+     */
+    async prefixMany(prefixTexts) {
+        const prefixes = prefixTexts.map((t) => encoder.encode(t));
+        const spans = prefixes.map((prefix) => {
+            const start = this.blockFor(prefix);
+            let end = start;
+            while (end + 1 < this.blockCount && startsWith(this.boundaries[end + 1], prefix))
+                end++;
+            return [start, end];
+        });
+        const ordinals = [];
+        for (const [start, end] of spans)
+            for (let i = start; i <= end; i++)
+                ordinals.push(i);
+        const blocks = await this.termBlocks(ordinals);
+        return prefixes.map((prefix, at) => {
+            const [start, end] = spans[at];
+            const found = [];
+            for (let i = start; i <= end; i++) {
+                for (const entry of blocks.get(i))
+                    if (startsWith(entry.term, prefix))
+                        found.push(entry);
+            }
+            return found;
+        });
     }
     /** Terms from `low` to `high`, both inclusive, at most `limit` of them.
      *
@@ -732,12 +807,12 @@ export class MokujiIndex {
         // of each other, so reading them one after another would cost a round
         // trip each for nothing: measured over the network, ten results in eight
         // blocks took 273 ms in sequence against one round trip in parallel.
-        const ordinals = [...new Set(docs.map((doc) => Math.floor(doc / perBlock)))];
-        const blocks = new Map(await Promise.all(ordinals.map(async (ordinal) => {
-            const [offset, length] = this.offsetPair(header, 12, ordinal);
-            const raw = await this.read(offset, length);
-            return [ordinal, await this.unit(raw, this.section(SECTION.PAYLOAD).codec)];
-        })));
+        // Neighbouring blocks are one range of the file and read as one.
+        const raw = await this.blockRuns(docs.map((doc) => Math.floor(doc / perBlock)), (i) => this.offsetPair(header, 12, i));
+        const blocks = new Map();
+        for (const [ordinal, bytes] of raw) {
+            blocks.set(ordinal, await this.unit(bytes, this.section(SECTION.PAYLOAD).codec));
+        }
         const out = [];
         for (const doc of docs) {
             const ordinal = Math.floor(doc / perBlock);

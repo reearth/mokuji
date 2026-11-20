@@ -64,6 +64,8 @@ test("the conformance suite is not empty", () => {
 for (const testCase of cases) {
   test(`${testCase.name} (${testCase.fixture})`, async () => {
     const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+    // The cases count block by block; coalescing is checked against them below.
+    index.coalesce = false;
     index.resetStats();
 
     // The cases give one query per term; a single-term case is a prefix, and a
@@ -104,6 +106,7 @@ for (const testCase of cases) {
 for (const testCase of tables.completion ?? []) {
   test(`completion: ${testCase.name} (${testCase.fixture})`, async () => {
     const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+    index.coalesce = false;
     index.resetStats();
     const { docs, payloads, fromTable } = await index.complete(testCase.prefix, testCase.limit);
     assert.deepEqual(docs, testCase.docs);
@@ -123,6 +126,7 @@ for (const testCase of tables.collection ?? []) {
     const collection = await MokujiCollection.open(manifest, (path) => sources.get(path), {
       countries: testCase.countries ?? null,
     });
+    for (const segment of collection.segments) segment.coalesce = false;
     collection.resetStats();
     const { hits, payloads } = await collection.complete(testCase.prefix, testCase.limit);
     assert.deepEqual(hits.map((h) => h.segment), testCase.segments);
@@ -131,6 +135,32 @@ for (const testCase of tables.collection ?? []) {
     assert.equal(collection.stats.requests, testCase.reads);
   });
 }
+
+test("reading neighbouring blocks together never costs more than the cases say", async () => {
+  let fewer = 0;
+  for (const testCase of cases.filter((c) => c.query.length === 1)) {
+    const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+    index.resetStats();
+    const { results } = await index.lookup(testCase.query[0], 100);
+    const exact = results.filter((r) => r.term === index.normalize(testCase.query[0]));
+    assert.deepEqual(exact.map((r) => r.doc), testCase.docs, testCase.name);
+    assert.deepEqual(exact.map((r) => r.payload), testCase.payloads, testCase.name);
+    assert.ok(index.stats.requests <= testCase.reads, testCase.name);
+    if (index.stats.requests < testCase.reads) fewer += 1;
+  }
+  for (const testCase of tables.completion ?? []) {
+    const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+    index.resetStats();
+    const { docs, payloads } = await index.complete(testCase.prefix, testCase.limit);
+    assert.deepEqual(docs, testCase.docs, testCase.name);
+    assert.deepEqual(payloads, testCase.payloads, testCase.name);
+    assert.ok(index.stats.requests <= testCase.reads, testCase.name);
+    if (index.stats.requests < testCase.reads) fewer += 1;
+  }
+  // Payload blocks next to one another are common in the fixtures, so some
+  // case has to come out cheaper, or coalescing is not happening at all.
+  assert.ok(fewer > 0);
+});
 
 test("the completion cases were read", () => {
   assert.ok((tables.completion ?? []).length > 0);
@@ -175,6 +205,7 @@ test("reads a deflated file", async () => {
 
 test("a prefix range costs the reads the specification says", async () => {
   const index = await MokujiIndex.open(await fileSource("dict"));
+  index.coalesce = false;
   index.resetStats();
 
   const { results } = await index.lookup("東京都千代田区丸の内", 100);
@@ -182,6 +213,13 @@ test("a prefix range costs the reads the specification says", async () => {
   // Two term blocks of two terms hold the three matches, and their documents
   // span two payload blocks. No postings: they are implied.
   assert.equal(index.stats.requests, 4);
+
+  // The two payload blocks are neighbours, so a reader that coalesces reads
+  // them as one.
+  index.coalesce = true;
+  index.resetStats();
+  await index.lookup("東京都千代田区丸の内", 100);
+  assert.equal(index.stats.requests, 3);
 });
 
 test("range returns the terms between two keys, both inclusive", async () => {
