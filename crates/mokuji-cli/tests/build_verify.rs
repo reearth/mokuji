@@ -339,6 +339,93 @@ fn build_records_the_register_a_corpus_came_from() {
 }
 
 #[test]
+fn build_records_where_and_when_a_source_came_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let register = dir.path().join("register.csv.zip");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, CORPUS).unwrap();
+    std::fs::write(&register, "the archive as the publisher serves it\n").unwrap();
+
+    let output = mokuji(&[
+        "build",
+        corpus.to_str().unwrap(),
+        index.to_str().unwrap(),
+        "--source",
+        register.to_str().unwrap(),
+        "--source-uri",
+        "https://example.com/register.csv.zip",
+        "--source-modified",
+        "2026-11-15T15:41:42Z",
+        "--source-retrieved",
+        "2026-11-20",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = mokuji(&[
+        "verify",
+        index.to_str().unwrap(),
+        "--source",
+        register.to_str().unwrap(),
+    ]);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    // The URI replaces the builder's path, which is no use to anyone else.
+    assert!(
+        text.contains("https://example.com/register.csv.zip"),
+        "{text}"
+    );
+    // Once, where verify names the file it was handed; not in the record.
+    assert_eq!(
+        text.matches(register.to_str().unwrap()).count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains("modified 2026-11-15T15:41:42Z"), "{text}");
+    assert!(text.contains("retrieved 2026-11-20"), "{text}");
+    assert!(text.contains("matches the recorded provenance"), "{text}");
+}
+
+#[test]
+fn build_rejects_a_source_date_it_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("corpus.tsv");
+    let index = dir.path().join("index.mokuji");
+    std::fs::write(&corpus, CORPUS).unwrap();
+
+    for flags in [
+        // Describes no source.
+        &["--source-modified", "2026-11-15"][..],
+        // An HTTP date, not RFC 3339.
+        &[
+            "--source",
+            corpus.to_str().unwrap(),
+            "--source-modified",
+            "Sun, 15 Nov 2026 15:41:42 GMT",
+        ][..],
+        // Said twice.
+        &[
+            "--source",
+            corpus.to_str().unwrap(),
+            "--source-retrieved",
+            "2026-11-20",
+            "--source-retrieved",
+            "2026-11-21",
+        ][..],
+    ] {
+        let mut args = vec!["build", corpus.to_str().unwrap(), index.to_str().unwrap()];
+        args.extend_from_slice(flags);
+        let output = mokuji(&args);
+        assert!(!output.status.success(), "accepted {flags:?}");
+    }
+    assert!(!index.exists());
+}
+
+#[test]
 fn an_application_parameter_is_recorded_in_the_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let corpus = dir.path().join("corpus.tsv");

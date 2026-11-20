@@ -16,4 +16,4 @@ mod cbor;
 mod meta;
 
 pub use cbor::{decode, encode, map as cbor_map, Value};
-pub use meta::{ContentHash, Generator, Meta, Source, Tokenizer};
+pub use meta::{is_rfc3339, ContentHash, Generator, Meta, Source, Tokenizer};

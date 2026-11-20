@@ -152,6 +152,17 @@ test("carries the license and the credit a file states", async () => {
   assert.equal(tiny.attribution, null);
 });
 
+test("names what a file was derived from", async () => {
+  const tiny = await MokujiIndex.open(await fileSource("tiny"));
+  assert.equal(tiny.sources.length, 1);
+  const [source] = tiny.sources;
+  assert.match(source.contentHash, /^sha2-256:[0-9a-f]{64}$/);
+  assert.equal(source.uri, "conformance/fixtures/tiny.corpus.txt");
+  // Neither date is required, and a file that states none says nothing.
+  assert.equal(source.retrieved, null);
+  assert.equal(source.modified, null);
+});
+
 test("reads a deflated file", async () => {
   // The fixtures the other implementations reproduce byte for byte are stored
   // raw, so without this the browser's decompression is never exercised.

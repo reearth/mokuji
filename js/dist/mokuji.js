@@ -282,6 +282,8 @@ export class MokujiIndex {
     license;
     /** The credit its results carry, if it states one. */
     attribution;
+    /** What it was derived from, and when (SPEC.md §6). */
+    sources;
     /** What a query goes through before it is looked up. */
     normalize;
     docLengths;
@@ -413,6 +415,13 @@ export class MokujiIndex {
         // page that shows results owes the credit, so it is kept at hand.
         index.license = text(field(index.meta, "license"));
         index.attribution = text(field(index.meta, "attribution"));
+        const sources = field(index.meta, "source");
+        index.sources = (Array.isArray(sources) ? sources : []).map((entry) => ({
+            contentHash: text(field(entry, "content_hash")) ?? "",
+            uri: text(field(entry, "uri")),
+            retrieved: text(field(entry, "retrieved")),
+            modified: text(field(entry, "modified")),
+        }));
         const normalize = TOKENIZERS[index.tokenizerId];
         if (normalize) {
             index.normalize = normalize;

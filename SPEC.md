@@ -870,6 +870,8 @@ Canonical CBOR (RFC 8949 §4.2). A reader MUST tolerate unknown keys.
 | `source` | array | yes | One entry per artifact the index was derived from |
 | `source[].content_hash` | text | yes | `<algorithm>:<lowercase hex>`; `algorithm` is `sha2-256` in this version |
 | `source[].uri` | text | no | Where the source can be obtained |
+| `source[].modified` | text | no | When the source's publisher last changed it, in RFC 3339 |
+| `source[].retrieved` | text | no | When the builder obtained it, in RFC 3339 |
 | `generator.name` | text | yes | Writer implementation |
 | `generator.version` | text | yes | Writer version |
 | `generator.params` | map | yes | Full build parameters |
@@ -887,6 +889,20 @@ source of truth — a register, a corpus — but an index is often produced from
 one by a program, and a chain that names the register and the result while
 omitting the step between them is checkable only in parts. Recording the
 transform's own hash as a source closes it, and needs no other mechanism.
+
+A hash says which bytes a source was, and not when. `modified` and `retrieved`
+say that: `modified` is the time the publisher gives for its last change — an
+HTTP `Last-Modified`, a release date — and is how current the data is;
+`retrieved` is when the builder obtained it, and bounds how stale it can be when
+the publisher gives no time. A writer MUST write either as an RFC 3339
+`full-date` (`2026-11-15`) or `date-time` (`2026-11-15T15:41:42Z`). A reader
+MUST NOT reject a file because one does not parse as a date, which costs the
+record and not the index.
+
+`uri` SHOULD be where someone other than the builder can obtain the source, not
+a path on the builder's machine; and where it is, the content hash SHOULD be of
+the bytes served there — the archive as published, not a file unpacked from it
+— so that anyone can fetch the source and check it against the file.
 
 `license` is the license of **the index**, not of its sources. An index built
 from a database is usually a derivative of it, and where that database's license
@@ -1160,6 +1176,32 @@ that license differently in different files. A file that mixes an ODbL source
 with others can bring the others within the ODbL's reach, which is a reason to
 keep them apart that has nothing to do with this format, and once they are apart, a file
 has one credit to state.
+
+**A source records when, as well as which.**
+An index of an address register is a claim about the register on some day, and
+which day is the first thing someone relying on it asks. The content hash cannot
+answer that: it identifies the bytes, and the register's publisher replaces those
+bytes under the same name every month. Measured on the Address Base Registry,
+the three tables a town-level geocoder is built from were last changed in
+November 2026, October 2025 and March 2024; a file that records only their
+hashes leaves a reader to discover that by downloading each of them and finding
+a match, which stops working the day the publisher replaces one.
+
+Two times rather than one, because they answer different questions and either
+can be missing. `modified` is the data's own age, and only the publisher can
+state it. `retrieved` is the builder's, always known, and an upper bound on
+staleness when the publisher states nothing.
+
+They sit on each source rather than once on the file because the sources of one
+index are not of one age, as above, and the oldest is the one that matters. And
+they are in the metadata rather than in `attrs` for the reason the license is: a
+reader that knows nothing about the application that built a file is the one
+that needs to say how old its answers are.
+
+Neither is part of what makes a build reproducible, any more than `uri` is. They
+are recorded as given, so a rebuild with the same values produces the same
+bytes, and a rebuild with today's `retrieved` produces a file that truthfully
+differs.
 
 ## Appendix B. A worked example
 

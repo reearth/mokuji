@@ -19,36 +19,7 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
     let index = block_on(Index::open(&reader))?;
     let meta = Meta::parse(index.meta())?;
 
-    println!("generation      {}", meta.generation);
-    println!(
-        "generator       {} {}",
-        meta.generator.name, meta.generator.version
-    );
-    println!("tokenizer       {}", meta.tokenizer.id);
-    if let Some(license) = &meta.license {
-        println!("license         {license}");
-    }
-    if let Some(attribution) = &meta.attribution {
-        println!("attribution     {attribution}");
-    }
-    if let Some(mokuji_meta::Value::Map(entries)) = &meta.attrs {
-        for (key, value) in entries {
-            let key = match key {
-                mokuji_meta::Value::Text(text) => text.clone(),
-                other => format!("{other:?}"),
-            };
-            match value {
-                mokuji_meta::Value::Text(text) => println!("attr            {key} = {text}"),
-                other => println!("attr            {key} = {other:?}"),
-            }
-        }
-    }
-    for entry in &meta.sources {
-        println!("derived from    {}", entry.content_hash);
-        if let Some(uri) = &entry.uri {
-            println!("                {uri}");
-        }
-    }
+    print_meta(&meta);
 
     let stats = block_on(walk(&index))?;
     println!();
@@ -93,6 +64,49 @@ pub fn run(path: &Path, source: Option<&Path>) -> Result<(), Error> {
     println!();
     println!("ok");
     Ok(())
+}
+
+/// Prints what the metadata says about the file and where it came from.
+///
+/// Shared with `info`, which reads only the resident set, so that a reader
+/// can learn this about a file of any size without walking all of it.
+pub fn print_meta(meta: &Meta) {
+    println!("generation      {}", meta.generation);
+    println!(
+        "generator       {} {}",
+        meta.generator.name, meta.generator.version
+    );
+    println!("tokenizer       {}", meta.tokenizer.id);
+    if let Some(license) = &meta.license {
+        println!("license         {license}");
+    }
+    if let Some(attribution) = &meta.attribution {
+        println!("attribution     {attribution}");
+    }
+    if let Some(mokuji_meta::Value::Map(entries)) = &meta.attrs {
+        for (key, value) in entries {
+            let key = match key {
+                mokuji_meta::Value::Text(text) => text.clone(),
+                other => format!("{other:?}"),
+            };
+            match value {
+                mokuji_meta::Value::Text(text) => println!("attr            {key} = {text}"),
+                other => println!("attr            {key} = {other:?}"),
+            }
+        }
+    }
+    for entry in &meta.sources {
+        println!("derived from    {}", entry.content_hash);
+        if let Some(uri) = &entry.uri {
+            println!("                {uri}");
+        }
+        if let Some(modified) = &entry.modified {
+            println!("                modified {modified}");
+        }
+        if let Some(retrieved) = &entry.retrieved {
+            println!("                retrieved {retrieved}");
+        }
+    }
 }
 
 struct Stats {

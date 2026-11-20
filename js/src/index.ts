@@ -12,6 +12,7 @@ export type {
   Manifest,
   ManifestSegment,
   Postings,
+  Provenance,
   RequestInfo,
   Source,
   Stats,

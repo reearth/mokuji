@@ -82,6 +82,18 @@ export interface Postings {
   freqs: number[];
 }
 
+/** One artifact an index was derived from, as its metadata records it (SPEC.md §6). */
+export interface Provenance {
+  /** `<algorithm>:<lowercase hex>`. */
+  contentHash: string;
+  /** Where it can be obtained. */
+  uri: string | null;
+  /** When the builder obtained it, RFC 3339. */
+  retrieved: string | null;
+  /** When its publisher last changed it, RFC 3339 — how current the data is. */
+  modified: string | null;
+}
+
 /** One named column of per-document numbers (SPEC.md §5.8). */
 export interface Column {
   name: string;
@@ -359,6 +371,8 @@ export class MokujiIndex {
   license!: string | null;
   /** The credit its results carry, if it states one. */
   attribution!: string | null;
+  /** What it was derived from, and when (SPEC.md §6). */
+  sources!: Provenance[];
   /** What a query goes through before it is looked up. */
   normalize!: Normalize;
   docLengths!: number[] | null;
@@ -497,6 +511,13 @@ export class MokujiIndex {
     // page that shows results owes the credit, so it is kept at hand.
     index.license = text(field(index.meta, "license"));
     index.attribution = text(field(index.meta, "attribution"));
+    const sources = field(index.meta, "source");
+    index.sources = (Array.isArray(sources) ? sources : []).map((entry) => ({
+      contentHash: text(field(entry, "content_hash")) ?? "",
+      uri: text(field(entry, "uri")),
+      retrieved: text(field(entry, "retrieved")),
+      modified: text(field(entry, "modified")),
+    }));
     const normalize = TOKENIZERS[index.tokenizerId];
     if (normalize) {
       index.normalize = normalize;

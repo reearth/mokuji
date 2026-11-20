@@ -11,6 +11,32 @@ use sha2::{Digest, Sha256};
 use crate::corpus::{self, Tokenizer};
 use crate::info::Error;
 
+/// A further file to record as a source, and what is known about where and
+/// when it came from.
+#[derive(Debug)]
+pub struct Origin<'a> {
+    /// The file, which is hashed.
+    pub path: &'a Path,
+    /// Where it can be obtained; the path is recorded if this is absent.
+    pub uri: Option<&'a str>,
+    /// When it was obtained, in RFC 3339.
+    pub retrieved: Option<&'a str>,
+    /// When its publisher last changed it, in RFC 3339.
+    pub modified: Option<&'a str>,
+}
+
+impl<'a> Origin<'a> {
+    /// A file known only by its path.
+    pub fn new(path: &'a Path) -> Self {
+        Origin {
+            path,
+            uri: None,
+            retrieved: None,
+            modified: None,
+        }
+    }
+}
+
 /// Everything a build records about itself, as opposed to what it encodes.
 #[derive(Default)]
 pub struct Recipe<'a> {
@@ -18,7 +44,7 @@ pub struct Recipe<'a> {
     /// something the builder never sees — here, a corpus converted from a
     /// published register — and recording only the file it read would make the
     /// provenance true but useless: it would name an intermediate nobody keeps.
-    pub origins: &'a [&'a Path],
+    pub origins: &'a [Origin<'a>],
     /// Attribute columns to read from the corpus, as (name, decimals).
     pub columns: &'a [(String, u8)],
     /// Application-defined metadata entries.
@@ -188,11 +214,18 @@ pub fn run(
     let mut sources = vec![Source {
         content_hash: ContentHash::sha2_256(&digest),
         uri: Some(input.display().to_string()),
+        ..Source::default()
     }];
     for origin in origins {
         sources.push(Source {
-            content_hash: ContentHash::sha2_256(&hash_file(origin)?),
-            uri: Some(origin.display().to_string()),
+            content_hash: ContentHash::sha2_256(&hash_file(origin.path)?),
+            uri: Some(
+                origin
+                    .uri
+                    .map_or_else(|| origin.path.display().to_string(), str::to_string),
+            ),
+            retrieved: origin.retrieved.map(str::to_string),
+            modified: origin.modified.map(str::to_string),
         });
     }
 
@@ -300,6 +333,12 @@ pub fn run(
         println!("derived from {}", source.content_hash);
         if let Some(uri) = &source.uri {
             println!("             {uri}");
+        }
+        if let Some(modified) = &source.modified {
+            println!("             modified {modified}");
+        }
+        if let Some(retrieved) = &source.retrieved {
+            println!("             retrieved {retrieved}");
         }
     }
     Ok(())

@@ -38,6 +38,17 @@ export interface Postings {
     docs: number[];
     freqs: number[];
 }
+/** One artifact an index was derived from, as its metadata records it (SPEC.md §6). */
+export interface Provenance {
+    /** `<algorithm>:<lowercase hex>`. */
+    contentHash: string;
+    /** Where it can be obtained. */
+    uri: string | null;
+    /** When the builder obtained it, RFC 3339. */
+    retrieved: string | null;
+    /** When its publisher last changed it, RFC 3339 — how current the data is. */
+    modified: string | null;
+}
 /** One named column of per-document numbers (SPEC.md §5.8). */
 export interface Column {
     name: string;
@@ -77,6 +88,8 @@ export declare class MokujiIndex {
     license: string | null;
     /** The credit its results carry, if it states one. */
     attribution: string | null;
+    /** What it was derived from, and when (SPEC.md §6). */
+    sources: Provenance[];
     /** What a query goes through before it is looked up. */
     normalize: Normalize;
     docLengths: number[] | null;

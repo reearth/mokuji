@@ -119,11 +119,13 @@ pub fn run(manifest_path: &Path, output: &Path) -> Result<(), Error> {
     let mut sources = vec![Source {
         content_hash: ContentHash::sha2_256(&crate::build::hash_file(manifest_path)?),
         uri: Some(manifest_path.display().to_string()),
+        ..Source::default()
     }];
     for segment in &manifest.segments {
         sources.push(Source {
             content_hash: ContentHash::parse(&segment.content_hash)?,
             uri: Some(segment.path.clone()),
+            ..Source::default()
         });
     }
     let mut params: Vec<(String, Value)> = match &base_meta.generator.params {

@@ -51,6 +51,11 @@ usage:
         --source <path>                record this file's hash as a source too;
                                        repeatable, for the register a corpus
                                        was converted from
+        --source-uri <uri>             where the --source before it can be
+                                       obtained, recorded instead of its path
+        --source-modified <date>       when its publisher last changed it
+        --source-retrieved <date>      when it was obtained; both RFC 3339,
+                                       2026-11-15 or 2026-11-15T15:41:42Z
         --generation <n>               generation number (default 1)
         --license <spdx>               the license the index is published
                                        under, e.g. ODbL-1.0 for one derived
@@ -163,7 +168,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
     let mut options = Options::default();
     let mut tokenizer = Tokenizer::default();
     let mut generation = 1u64;
-    let mut origins: Vec<&str> = Vec::new();
+    let mut origins: Vec<build::Origin<'_>> = Vec::new();
     options.doc_lengths = true;
     let mut attributes: Vec<(String, u8)> = Vec::new();
     let mut attrs: Vec<(String, String)> = Vec::new();
@@ -231,7 +236,32 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
                     .split_first()
                     .ok_or_else(|| Error::Usage("--source needs a path".into()))?;
                 rest = tail;
-                origins.push(path);
+                origins.push(build::Origin::new(Path::new(*path)));
+            }
+            "--source-uri" | "--source-retrieved" | "--source-modified" => {
+                let (value, tail) = rest
+                    .split_first()
+                    .ok_or_else(|| Error::Usage(format!("{flag} needs a value")))?;
+                rest = tail;
+                let origin = origins.last_mut().ok_or_else(|| {
+                    Error::Usage(format!(
+                        "{flag} describes a --source, and none comes before it"
+                    ))
+                })?;
+                let slot = match *flag {
+                    "--source-uri" => &mut origin.uri,
+                    "--source-retrieved" => &mut origin.retrieved,
+                    _ => &mut origin.modified,
+                };
+                if slot.is_some() {
+                    return Err(Error::Usage(format!("{flag} given twice for one --source")));
+                }
+                if *flag != "--source-uri" && !mokuji_meta::is_rfc3339(value) {
+                    return Err(Error::Usage(format!(
+                        "{flag} '{value}' is not an RFC 3339 date or date-time, such as 2026-11-15 or 2026-11-15T15:41:42Z"
+                    )));
+                }
+                *slot = Some(value);
             }
             "--attribute" => {
                 let (spec, tail) = rest
@@ -319,7 +349,6 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             other => return Err(Error::Usage(format!("unknown option '{other}'"))),
         }
     }
-    let origins: Vec<&Path> = origins.iter().map(|p| Path::new(*p)).collect();
     build::run(
         input.as_ref(),
         output.as_ref(),

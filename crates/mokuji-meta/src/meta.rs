@@ -8,7 +8,7 @@ use crate::cbor::{self, Value};
 ///
 /// The algorithm is named rather than assumed so that a file states what it was
 /// hashed with, instead of relying on whatever the reader happens to implement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContentHash {
     /// Hash algorithm; `sha2-256` in this version of the specification.
     pub algorithm: String,
@@ -60,12 +60,22 @@ impl std::fmt::Display for ContentHash {
 }
 
 /// One source of truth the index was derived from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Source {
     /// Hash of the source content.
     pub content_hash: ContentHash,
     /// Where the source can be obtained, if it is public.
     pub uri: Option<String>,
+    /// When the builder obtained it, as an RFC 3339 date or date-time.
+    ///
+    /// The hash says *which* bytes; this says when they were the ones on
+    /// offer. A register republished under the same name is a different
+    /// source, and the date is what tells a reader how stale the index might
+    /// be without fetching anything.
+    pub retrieved: Option<String>,
+    /// When the publisher last changed it, as the publisher states it — an
+    /// HTTP `Last-Modified`, a release date — in RFC 3339.
+    pub modified: Option<String>,
 }
 
 /// What produced the file.
@@ -135,6 +145,12 @@ impl Meta {
                     if let Some(uri) = &source.uri {
                         entries.push(("uri", Value::Text(uri.clone())));
                     }
+                    if let Some(retrieved) = &source.retrieved {
+                        entries.push(("retrieved", Value::Text(retrieved.clone())));
+                    }
+                    if let Some(modified) = &source.modified {
+                        entries.push(("modified", Value::Text(modified.clone())));
+                    }
                     cbor::map(entries)
                 })
                 .collect(),
@@ -201,6 +217,18 @@ impl Meta {
                         .get("uri")
                         .and_then(Value::as_text)
                         .map(str::to_string),
+                    // Text when present, but not parsed as a date: a reader
+                    // that cannot read a timestamp can still use the index.
+                    retrieved: optional_text(
+                        source,
+                        "retrieved",
+                        "a metadata source's retrieval time is not text",
+                    )?,
+                    modified: optional_text(
+                        source,
+                        "modified",
+                        "a metadata source's modification time is not text",
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -241,6 +269,68 @@ impl Meta {
     }
 }
 
+/// Whether `text` is an RFC 3339 `full-date` (`2026-11-15`) or `date-time`
+/// (`2026-11-15T15:41:42Z`, `2026-11-15T15:41:42.5+09:00`).
+///
+/// What a writer checks before recording `retrieved` or `modified`. A reader
+/// does not: a malformed date is a poor record, not an unreadable index.
+pub fn is_rfc3339(text: &str) -> bool {
+    fn digits(s: &str, n: usize) -> Option<u32> {
+        (s.len() == n && s.bytes().all(|b| b.is_ascii_digit())).then(|| s.parse().ok())?
+    }
+    fn date(s: &str) -> bool {
+        let mut parts = s.split('-');
+        let (Some(y), Some(m), Some(d), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let (Some(y), Some(m), Some(d)) = (digits(y, 4), digits(m, 2), digits(d, 2)) else {
+            return false;
+        };
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let days = match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if leap => 29,
+            2 => 28,
+            _ => return false,
+        };
+        (1..=days).contains(&d)
+    }
+    fn hms(s: &str) -> bool {
+        let mut parts = s.split(':');
+        let (Some(h), Some(m), Some(sec), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let (whole, fraction) = sec.split_once('.').unwrap_or((sec, "0"));
+        // 60 for a leap second, which RFC 3339 allows.
+        matches!((digits(h, 2), digits(m, 2), digits(whole, 2)), (Some(h), Some(m), Some(s)) if h < 24 && m < 60 && s <= 60)
+            && !fraction.is_empty()
+            && fraction.bytes().all(|b| b.is_ascii_digit())
+    }
+    fn offset(s: &str) -> bool {
+        if s == "Z" || s == "z" {
+            return true;
+        }
+        let Some(rest) = s.strip_prefix('+').or_else(|| s.strip_prefix('-')) else {
+            return false;
+        };
+        matches!(rest.split_once(':'), Some((h, m)) if matches!((digits(h, 2), digits(m, 2)), (Some(h), Some(m)) if h < 24 && m < 60))
+    }
+
+    let Some((day, time)) = text.split_once(['T', 't']) else {
+        return date(text);
+    };
+    let split = time.find(['Z', 'z', '+', '-']);
+    let Some(split) = split else {
+        return false;
+    };
+    date(day) && hms(&time[..split]) && offset(&time[split..])
+}
+
 /// A key that may be absent, but is text when present. A license that is a
 /// number is a malformed file, not an unlicensed one.
 fn optional_text(value: &Value, key: &str, detail: &'static str) -> Result<Option<String>> {
@@ -263,6 +353,7 @@ mod tests {
             sources: vec![Source {
                 content_hash: ContentHash::sha2_256(&[0xab; 32]),
                 uri: Some("s3://bucket/addresses.tsv".into()),
+                ..Source::default()
             }],
             generator: Generator {
                 name: "mokuji".into(),
@@ -290,6 +381,75 @@ mod tests {
         let mut meta = sample();
         meta.sources[0].uri = None;
         assert_eq!(Meta::parse(&meta.encode()).unwrap(), meta);
+    }
+
+    #[test]
+    fn round_trips_when_a_source_was_retrieved_and_modified() {
+        let mut meta = sample();
+        meta.sources[0].retrieved = Some("2026-11-20T03:12:00Z".into());
+        meta.sources[0].modified = Some("2026-11-15".into());
+        assert_eq!(Meta::parse(&meta.encode()).unwrap(), meta);
+    }
+
+    #[test]
+    fn a_source_date_that_is_not_text_is_malformed() {
+        let source = cbor::map([
+            (
+                "content_hash",
+                Value::Text(ContentHash::sha2_256(&[0; 32]).to_string()),
+            ),
+            ("modified", Value::Uint(20261115)),
+        ]);
+        let mut keyed: Vec<(String, Value)> = match cbor::decode(&sample().encode()).unwrap() {
+            Value::Map(entries) => entries
+                .into_iter()
+                .map(|(k, v)| (k.as_text().unwrap().to_string(), v))
+                .collect(),
+            _ => unreachable!(),
+        };
+        for (key, value) in &mut keyed {
+            if key == "source" {
+                *value = Value::Array(vec![source.clone()]);
+            }
+        }
+        assert!(Meta::parse(&cbor::encode(&cbor::map(keyed))).is_err());
+    }
+
+    #[test]
+    fn a_source_date_that_is_not_rfc3339_still_parses() {
+        let mut meta = sample();
+        meta.sources[0].modified = Some("15 Nov 2026".into());
+        assert_eq!(Meta::parse(&meta.encode()).unwrap(), meta);
+    }
+
+    #[test]
+    fn recognizes_rfc3339() {
+        for good in [
+            "2026-11-15",
+            "2024-02-29",
+            "2026-11-15T15:41:42Z",
+            "2026-11-15t15:41:42z",
+            "2026-11-15T15:41:42.123+09:00",
+            "2026-12-31T23:59:60-05:30",
+        ] {
+            assert!(is_rfc3339(good), "{good}");
+        }
+        for bad in [
+            "",
+            "2026-11",
+            "2026-1-15",
+            "2026-13-01",
+            "2025-02-29",
+            "2026-11-31",
+            "2026-11-15T15:41:42",
+            "2026-11-15T25:00:00Z",
+            "2026-11-15T15:41:42.Z",
+            "2026-11-15 15:41:42Z",
+            "2026-11-15T15:41:42+0900",
+            "Sun, 15 Nov 2026 15:41:42 GMT",
+        ] {
+            assert!(!is_rfc3339(bad), "{bad}");
+        }
     }
 
     #[test]

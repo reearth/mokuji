@@ -71,6 +71,13 @@ pub fn run(path: &Path) -> Result<(), Error> {
     print_sections(&sections, reader.file_len());
     println!();
     println!("reads to load the resident set: {}", reader.reads());
+
+    // After the count, which is about the header and section table. The
+    // metadata is resident too, so this costs nothing a reader opening the
+    // file would not already pay.
+    let index = block_on(mokuji_read::Index::open(&reader))?;
+    println!();
+    crate::verify::print_meta(&mokuji_meta::Meta::parse(index.meta())?);
     Ok(())
 }
 
