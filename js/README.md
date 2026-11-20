@@ -46,9 +46,26 @@ await fuzzy.search("千代田区丸乃内", { any: true, probe: 6, lengthNorm: 0
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
 
-### Reading from something other than a URL
+### Reading a file on hand
 
-Give `open` a `Source` instead of a URL: anything with
+Give `open` a `Blob`, and it reads a slice at a time: a file on disk is
+searched without being loaded into memory, and without a network. In Node,
+`openAsBlob` from `node:fs`; in a page, a `File` the user picked, or one from
+the origin private file system.
+
+```ts
+import { openAsBlob } from "node:fs";
+
+const index = await MokujiIndex.open(await openAsBlob("./postal.mokuji"));
+```
+
+```ts
+const index = await MokujiIndex.open(input.files[0]);
+```
+
+### Reading from something else
+
+Give `open` a `Source` instead: anything with
 `read(offset, length)` returning the bytes. That is how a Worker reads from an
 R2 binding through its own cache, and how the tests read a file on disk.
 

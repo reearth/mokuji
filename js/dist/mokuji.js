@@ -34,6 +34,10 @@ const CODEC_RAW = 0;
 const CODEC_DEFLATE = 1;
 const PAYLOAD_OPAQUE = 0;
 const PAYLOAD_DELTA_INTS = 1;
+/** Whether `source` is a Blob, in a runtime that has them (every current one). */
+function isBlob(source) {
+    return typeof Blob !== "undefined" && source instanceof Blob;
+}
 // --- primitives -----------------------------------------------------------
 function unzigzag(v) {
     return v % 2 === 0 ? v / 2 : -(v + 1) / 2;
@@ -267,7 +271,6 @@ const field = (value, key) => value !== null && typeof value === "object" && !Ar
 // --- a file ---------------------------------------------------------------
 /** One open Mokuji file: its resident set held, everything else read on demand. */
 export class MokujiIndex {
-    source;
     /** Everything a query costs, so the page can show it rather than claim it. */
     stats = { requests: 0, bytes: 0 };
     /** Whether neighbouring blocks are read in one request (SPEC.md §4 allows
@@ -302,12 +305,24 @@ export class MokujiIndex {
     payloadOffsets;
     blockCount;
     boundaries;
+    /** A URL, or what the bytes are read from; a `Blob` is read as a `Source`. */
+    source;
     /**
-     * @param source a URL, or a `Source` returning bytes — which is what lets
-     * the same reader be tested against a file on disk.
+     * @param source a URL, a `Blob`, or a `Source` returning bytes — which is
+     * what lets the same reader be tested against a file on disk.
      */
     constructor(source) {
-        this.source = source;
+        if (isBlob(source)) {
+            // A slice of a file-backed Blob reads that range and no more, so a
+            // file of gigabytes costs what a query touches, as over HTTP.
+            this.source = {
+                read: async (offset, length) => new Uint8Array(await source.slice(offset, offset + length).arrayBuffer()),
+            };
+            this.fileLength = source.size;
+        }
+        else {
+            this.source = source;
+        }
     }
     resetStats() {
         this.stats = { requests: 0, bytes: 0 };

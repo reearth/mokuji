@@ -2,9 +2,11 @@ import { type Normalize } from "./tokenizers.js";
 /**
  * Where a file's bytes come from: anything that returns a range of them.
  *
- * A URL string makes the reader fetch ranges itself. An object lets the caller
- * decide — a file on disk in a test, an R2 binding and an edge cache in a
- * worker — while the reader counts what was asked for either way.
+ * A URL string makes the reader fetch ranges itself. A `Blob` (a `File` from a
+ * page, `openAsBlob(path)` in Node) is read a slice at a time, so a file on
+ * disk is searched without being loaded and without a network. An object lets
+ * the caller decide — an R2 binding and an edge cache in a worker — while the
+ * reader counts what was asked for either way.
  */
 export interface Source {
     read(offset: number, length: number): Promise<Uint8Array> | Uint8Array;
@@ -109,7 +111,6 @@ interface Section {
 }
 /** One open Mokuji file: its resident set held, everything else read on demand. */
 export declare class MokujiIndex {
-    readonly source: string | Source;
     /** Everything a query costs, so the page can show it rather than claim it. */
     stats: Stats;
     /** Whether neighbouring blocks are read in one request (SPEC.md §4 allows
@@ -144,16 +145,18 @@ export declare class MokujiIndex {
     payloadOffsets: Uint8Array | undefined;
     blockCount: number;
     boundaries: Uint8Array[];
+    /** A URL, or what the bytes are read from; a `Blob` is read as a `Source`. */
+    readonly source: string | Source;
     /**
-     * @param source a URL, or a `Source` returning bytes — which is what lets
-     * the same reader be tested against a file on disk.
+     * @param source a URL, a `Blob`, or a `Source` returning bytes — which is
+     * what lets the same reader be tested against a file on disk.
      */
-    constructor(source: string | Source);
+    constructor(source: string | Source | Blob);
     resetStats(): void;
     read(offset: number, length: number): Promise<Uint8Array>;
     unit(bytes: Uint8Array, codec: number): Promise<Uint8Array>;
     private section;
-    static open(source: string | Source): Promise<MokujiIndex>;
+    static open(source: string | Source | Blob): Promise<MokujiIndex>;
     private offsetPair;
     /** Blocks of one section by ordinal, a request for each run of neighbours.
      *
@@ -320,7 +323,7 @@ export declare class MokujiCollection {
      * independent, so opening them costs one round trip however many there are.
      * `sourceFor(url)` may supply a byte source instead of fetching.
      */
-    static open(url: string | Manifest, sourceFor?: (url: string) => string | Source, { countries }?: {
+    static open(url: string | Manifest, sourceFor?: (url: string) => string | Source | Blob, { countries }?: {
         countries?: string[] | null;
     }): Promise<MokujiCollection>;
     resetStats(): void;

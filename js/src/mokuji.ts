@@ -47,12 +47,19 @@ const PAYLOAD_DELTA_INTS = 1;
 /**
  * Where a file's bytes come from: anything that returns a range of them.
  *
- * A URL string makes the reader fetch ranges itself. An object lets the caller
- * decide — a file on disk in a test, an R2 binding and an edge cache in a
- * worker — while the reader counts what was asked for either way.
+ * A URL string makes the reader fetch ranges itself. A `Blob` (a `File` from a
+ * page, `openAsBlob(path)` in Node) is read a slice at a time, so a file on
+ * disk is searched without being loaded and without a network. An object lets
+ * the caller decide — an R2 binding and an edge cache in a worker — while the
+ * reader counts what was asked for either way.
  */
 export interface Source {
   read(offset: number, length: number): Promise<Uint8Array> | Uint8Array;
+}
+
+/** Whether `source` is a Blob, in a runtime that has them (every current one). */
+function isBlob(source: unknown): source is Blob {
+  return typeof Blob !== "undefined" && source instanceof Blob;
 }
 
 /** What a query cost, so a page can show it rather than claim it. */
@@ -428,11 +435,26 @@ export class MokujiIndex {
   blockCount!: number;
   boundaries!: Uint8Array[];
 
+  /** A URL, or what the bytes are read from; a `Blob` is read as a `Source`. */
+  readonly source: string | Source;
+
   /**
-   * @param source a URL, or a `Source` returning bytes — which is what lets
-   * the same reader be tested against a file on disk.
+   * @param source a URL, a `Blob`, or a `Source` returning bytes — which is
+   * what lets the same reader be tested against a file on disk.
    */
-  constructor(readonly source: string | Source) {}
+  constructor(source: string | Source | Blob) {
+    if (isBlob(source)) {
+      // A slice of a file-backed Blob reads that range and no more, so a
+      // file of gigabytes costs what a query touches, as over HTTP.
+      this.source = {
+        read: async (offset, length) =>
+          new Uint8Array(await source.slice(offset, offset + length).arrayBuffer()),
+      };
+      this.fileLength = source.size;
+    } else {
+      this.source = source;
+    }
+  }
 
   resetStats(): void {
     this.stats = { requests: 0, bytes: 0 };
@@ -480,7 +502,7 @@ export class MokujiIndex {
     return section;
   }
 
-  static async open(source: string | Source): Promise<MokujiIndex> {
+  static async open(source: string | Source | Blob): Promise<MokujiIndex> {
     const index = new MokujiIndex(source);
     // One request for the resident set, optimistically. SPEC.md §5 recommends
     // a layout that puts all of it at the head of the file for exactly this.
@@ -1207,7 +1229,7 @@ export class MokujiCollection {
    */
   static async open(
     url: string | Manifest,
-    sourceFor: (url: string) => string | Source = (u) => u,
+    sourceFor: (url: string) => string | Source | Blob = (u) => u,
     { countries = null }: { countries?: string[] | null } = {},
   ): Promise<MokujiCollection> {
     let manifest: Manifest =

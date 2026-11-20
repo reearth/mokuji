@@ -6,6 +6,7 @@
 // dist/, which is what everyone else imports.
 
 import assert from "node:assert/strict";
+import { openAsBlob } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -201,6 +202,24 @@ test("reads a deflated file", async () => {
 
   assert.equal(results.length, 1);
   assert.equal(results[0].payload, "139.767201,35.681560");
+});
+
+test("reads a Blob as it reads any other source", async () => {
+  // A Blob in memory, and one backed by the file on disk: both are read a
+  // slice at a time, and answer and cost what a Source over the same bytes
+  // does.
+  const path = `${CONFORMANCE}fixtures/dict.mokuji`;
+  const expected = await MokujiIndex.open(await fileSource("dict"));
+  expected.resetStats();
+  const want = await expected.lookup("東京都千代田区丸の内", 100);
+
+  for (const blob of [new Blob([await readFile(path)]), await openAsBlob(path)]) {
+    const index = await MokujiIndex.open(blob);
+    assert.equal(index.fileLength, blob.size);
+    index.resetStats();
+    assert.deepEqual(await index.lookup("東京都千代田区丸の内", 100), want);
+    assert.deepEqual(index.stats, expected.stats);
+  }
 });
 
 test("a prefix range costs the reads the specification says", async () => {
