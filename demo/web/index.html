@@ -69,17 +69,19 @@
       .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
       .error { color: #b42318; }
+      .credit { color: var(--muted); font-size: .8rem; margin: .4rem 0 0; }
+      .credit:empty { display: none; }
+      td.level { color: var(--muted); font-size: .8rem; white-space: nowrap; }
     </style>
   </head>
   <body>
     <main>
       <h1>Mokuji address lookup</h1>
       <p class="lede">
-        1,744,962 Tokyo addresses &mdash; every door in the prefecture, from
-        Japan&rsquo;s Address Base Registry &mdash; in one static file. No
-        server, no API, no database: the page fetches byte ranges out of
-        <code>index.mokuji</code> and reads the index itself. Watch the request
-        count while you type.
+        Addresses from Japan&rsquo;s Address Base Registry in one static file.
+        No server, no API, no database: the page fetches byte ranges out of
+        <code id="source">index.mokuji</code> and reads the index itself. Watch
+        the request count while you type.
       </p>
 
       <input
@@ -91,12 +93,13 @@
         spellcheck="false"
       />
       <div class="hints" id="hints"></div>
+      <p class="credit" id="credit"></p>
 
       <div class="layout">
         <div>
           <table>
             <thead>
-              <tr><th>Address</th><th>Coordinates</th></tr>
+              <tr><th>Address</th><th>Coordinates</th><th id="level-head" hidden>Placed at</th></tr>
             </thead>
             <tbody id="results"></tbody>
           </table>
@@ -143,6 +146,18 @@
         "東京都台東区",
       ];
 
+      // `?url=` reads an index from anywhere that serves byte ranges, such as
+      // a bucket on another origin; without it, the one serve.py serves.
+      const url = new URLSearchParams(location.search).get("url") || "./index.mokuji";
+
+      // What the `pos_level` column says, if the index has one: the level of
+      // the registry its point was taken from. See ../addresses/abr.py.
+      const LEVELS = ["its own point", "its 大字・町", "its municipality"];
+      let levels = null;
+
+      const escape = (text) =>
+        String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
       let index;
       let generation = 0;
 
@@ -170,7 +185,7 @@
         try {
           ({ normalized, results } = await index.lookup(query, 20));
         } catch (err) {
-          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
         if (mine !== generation) return; // a later keystroke won
@@ -178,7 +193,9 @@
         $("results").innerHTML = results
           .map(
             (r) =>
-              `<tr><td>${r.term.replace(/</g, "&lt;")}</td><td class="coords">${r.payload}</td></tr>`
+              `<tr><td>${escape(r.term)}</td><td class="coords">${escape(r.payload)}</td>` +
+              (levels ? `<td class="level">${escape(LEVELS[levels.values[r.doc]] ?? "")}</td>` : "") +
+              `</tr>`
           )
           .join("");
         $("requests").textContent = index.stats.requests;
@@ -197,13 +214,29 @@
 
       (async () => {
         try {
-          index = await MokujiIndex.open("./index.mokuji");
+          $("source").textContent = url.split("/").pop() || url;
+          index = await MokujiIndex.open(url);
         } catch (err) {
-          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
+        levels = index.column("pos_level") ?? null;
+        $("level-head").hidden = !levels;
+        // The credit the results carry is the one the file states (SPEC.md §6).
+        // And how old it is: the dates its sources' publishers gave, oldest to
+        // newest, since a register built from several tables is several ages.
+        const dates = index.sources.map((s) => s.modified?.slice(0, 10)).filter(Boolean).sort();
+        const age = dates.length
+          ? ` · sources dated ${dates[0]}${dates.at(-1) !== dates[0] ? ` to ${dates.at(-1)}` : ""}`
+          : "";
+        if (index.attribution || age) {
+          $("credit").textContent =
+            (index.attribution ? `Addresses: ${index.attribution}` : "Addresses") +
+            (index.license ? ` · the index is ${index.license}` : "") +
+            age;
+        }
         $("filesize").textContent = bytes(index.fileLength ?? 0);
-        $("opencost").textContent = `${index.stats.requests} request, ${bytes(index.stats.bytes)}`;
+        $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
         $("status").textContent =
           `${index.numDocs.toLocaleString()} addresses, tokenized with ` +
           `${index.tokenizerId}. Type a prefix.`;

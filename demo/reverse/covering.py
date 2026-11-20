@@ -39,10 +39,34 @@ import sys
 
 BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
 
-# Coordinates are stored as integers this many per degree. Roughly 0.1 m, which
-# is finer than any boundary layer is actually surveyed to, but it is what the
-# source is published at and rounding is the publisher's call, not this tool's.
+# Coordinates are stored as integers this many per degree by default. Roughly
+# 0.1 m, which is finer than any boundary layer is actually surveyed to, but it
+# is what the source is published at. `--decimals 5` rounds to about a metre;
+# that is the publisher's call, so it is an option rather than the default.
 SCALE = 1_000_000
+
+
+def snap(rings, scale):
+    """The rings rounded to the grid the geometry will be stored on.
+
+    The covering is computed from these, not from the source, so that it covers
+    exactly the polygon a reader decodes: a point inside what the file stores is
+    always reached by the lookup. Rounding can make neighbouring vertices
+    coincide, and a ring left with fewer than three distinct vertices encloses
+    nothing and is dropped.
+    """
+    out = []
+    for ring in rings:
+        snapped = []
+        for x, y in ring:
+            point = (round(x * scale) / scale, round(y * scale) / scale)
+            if not snapped or snapped[-1] != point:
+                snapped.append(point)
+        if len(snapped) > 1 and snapped[-1] == snapped[0]:
+            snapped.pop()
+        if len(snapped) >= 3:
+            out.append(snapped + [snapped[0]])
+    return out
 
 
 def ring_edges(rings):
@@ -168,7 +192,7 @@ def centroid(rings):
     return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
 
 
-def encode(rings):
+def encode(rings, scale=SCALE):
     """The geometry, as delta-coded fixed-point integers in decimal.
 
     Rings separated by `;`, coordinates by `,`, each one the difference from the
@@ -182,8 +206,8 @@ def encode(rings):
         px = py = 0
         values = []
         for x, y in ring[:-1]:
-            ix = round(x * SCALE)
-            iy = round(y * SCALE)
+            ix = round(x * scale)
+            iy = round(y * scale)
             values.append(str(ix - px))
             values.append(str(iy - py))
             px, py = ix, iy
@@ -252,6 +276,22 @@ def main():
         action="store_true",
         help="index the label as a term too, so one file answers both directions",
     )
+    parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        metavar="PROPERTY=VALUE",
+        help="leave out features whose property has this value; repeatable. "
+        "HCODE=8154 drops the census's water areas, which would otherwise answer "
+        "a point in a bay with a prefecture and nothing else",
+    )
+    parser.add_argument(
+        "--decimals",
+        type=int,
+        default=6,
+        help="decimal places of a degree to store coordinates at: 6 is about "
+        "10 cm, 5 about a metre. Record it with --meta geometry=delta-int-1e<N>",
+    )
     parser.add_argument("--stats", action="store_true")
     args = parser.parse_args()
 
@@ -262,7 +302,23 @@ def main():
     # The candidates a query has to fetch are always polygons near each other,
     # and a block holds several documents: ordering them this way turns a
     # handful of scattered payload reads into one or two.
-    features = [f for f in data["features"] if rings_of(f.get("geometry") or {})]
+    skips = []
+    for spec in args.skip:
+        name, sep, value = spec.partition("=")
+        if not sep or not name:
+            parser.error(f"--skip takes PROPERTY=VALUE, not {spec!r}")
+        skips.append((name, value))
+
+    def wanted(feature):
+        properties = feature.get("properties") or {}
+        # Compared as text, so that HCODE=8154 matches a number as well as a
+        # string; GeoJSON from a shapefile carries either.
+        if any(str(properties.get(name)) == value for name, value in skips):
+            return False
+        return bool(rings_of(feature.get("geometry") or {}))
+
+    scale = 10**args.decimals
+    features = [f for f in data["features"] if wanted(f)]
     skipped = len(data["features"]) - len(features)
     features.sort(key=lambda f: geohash(*centroid(rings_of(f["geometry"])), 12))
 
@@ -272,10 +328,10 @@ def main():
     by_precision = {}
     vertices = 0
     for feature in features:
-        rings = rings_of(feature["geometry"])
+        rings = snap(rings_of(feature["geometry"]), scale)
         properties = feature.get("properties", {})
         label = "".join(str(properties.get(f) or "") for f in fields)
-        covering = cover(rings, args.max_precision)
+        covering = cover(rings, args.max_precision) if rings else []
         if not covering:
             skipped += 1
             continue
@@ -289,7 +345,7 @@ def main():
         # dictionary — CJK and base32 do not share prefixes — so a document can
         # carry both keys and the file answers in either direction.
         text = f"{label} {cells_text}" if args.key and label else cells_text
-        lines.append(f"{text}\t{label}|{encode(rings)}")
+        lines.append(f"{text}\t{label}|{encode(rings, scale)}")
 
     pathlib.Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
 

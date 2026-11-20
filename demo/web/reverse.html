@@ -75,14 +75,16 @@
       .log div { padding: .1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .note { color: var(--muted); font-size: .85rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
       .error { color: #b42318; }
+      .credit { color: var(--muted); font-size: .8rem; margin: .4rem 0 0; }
+      .credit:empty { display: none; }
     </style>
   </head>
   <body>
     <main>
       <h1>Mokuji reverse geocoding</h1>
       <p class="lede">
-        Click anywhere in Tokyo. 6,021 町丁目 boundaries live in one static
-        <code>reverse.mokuji</code>, and the page finds the one under your
+        Click the map. <span id="extent">The 町丁目 boundaries</span> live in one
+        static <code id="source">reverse.mokuji</code>, and the page finds the one under your
         cursor with a couple of range requests &mdash; no spatial index, no
         server, no API. A geohash cell is a string whose prefixes are the cells
         containing it, so containment is a term lookup.
@@ -92,6 +94,7 @@
         <div>
           <div class="map" id="map"></div>
           <div class="hints" id="hints"></div>
+          <p class="credit" id="credit"></p>
           <p class="note" id="status">Loading the index&hellip;</p>
         </div>
 
@@ -217,7 +220,16 @@
         ["Skytree", 35.710063, 139.8107],
         ["Shibuya crossing", 35.659489, 139.700553],
         ["Chichijima, 1,000 km south", 27.0942, 142.1919],
+        ["Sapporo Station", 43.068661, 141.350755],
+        ["Osaka Station", 34.702485, 135.495951],
+        ["Naha", 26.212401, 127.680932],
       ];
+
+      // `?url=` reads an index from anywhere that serves byte ranges; without
+      // it, the one serve.py serves.
+      const url = new URLSearchParams(location.search).get("url") || "./reverse.mokuji";
+      const escape = (text) =>
+        String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
       let index;
 
@@ -230,7 +242,7 @@
         try {
           result = await locate(index, lat, lon);
         } catch (err) {
-          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
 
@@ -250,21 +262,35 @@
         $("status").textContent = first
           ? `${result.candidates.length} candidate${result.candidates.length === 1 ? "" : "s"} came back; ` +
             `${result.answers.length} contained the point.`
-          : "No polygon in this index holds that point. Tokyo only.";
+          : "No polygon in this index holds that point.";
       }
 
       map.on("click", (e) => query(e.latlng.lat, e.latlng.lng));
 
       (async () => {
         try {
-          index = await MokujiIndex.open("./reverse.mokuji");
+          $("source").textContent = url.split("/").pop() || url;
+          index = await MokujiIndex.open(url);
         } catch (err) {
-          $("status").innerHTML = `<span class="error">${err.message}</span>`;
+          $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
         }
         $("polygons").textContent = index.numDocs.toLocaleString();
+        $("extent").textContent = `${index.numDocs.toLocaleString()} 町丁目 boundaries`;
+        // The credit, and the age of the sources, as the file states them
+        // (SPEC.md §6).
+        const dates = index.sources.map((s) => s.modified?.slice(0, 10)).filter(Boolean).sort();
+        const age = dates.length
+          ? ` · sources dated ${dates[0]}${dates.at(-1) !== dates[0] ? ` to ${dates.at(-1)}` : ""}`
+          : "";
+        if (index.attribution || age) {
+          $("credit").textContent =
+            (index.attribution ? `Boundaries: ${index.attribution}` : "Boundaries") +
+            (index.license ? ` · the index is ${index.license}` : "") +
+            age;
+        }
         $("filesize").textContent = bytes(index.fileLength ?? 0);
-        $("opencost").textContent = `${index.stats.requests} request, ${bytes(index.stats.bytes)}`;
+        $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
         $("status").textContent = "Click the map.";
 
         $("hints").innerHTML = EXAMPLES.map(

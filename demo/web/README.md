@@ -43,7 +43,7 @@ application's.
 string whose prefixes are the cells containing it, so the polygon under a point
 is found by looking up two terms — the cell and its parent — and the page
 finishes the job with a point-in-polygon test against the geometry that came
-back. **3 to 5 range requests over 6,021 boundaries in 2.6 MB.**
+back. **2 to 4 range requests over 6,021 boundaries in 2.0 MB.**
 
 The map draws both halves of that: orange for what the index returned, blue for
 what survived the test. A cell straddling a boundary names every polygon it
@@ -96,6 +96,23 @@ partly served from cache.
 
 ## Publishing this to object storage
 
+`index.html?url=<url>` reads the index from that URL instead of the one
+`serve.py` serves, so the page and the file can live in different places: the
+page on any static host, the file in a bucket. `reverse.html?url=<url>` does the
+same for a reverse index, such as the national one in [../reverse](../reverse).
+Both pages show the credit the file states and the dates its sources were
+published (`SPEC.md` §6).
+
+```
+https://example.com/index.html?url=https://data.example.com/abr-town.mokuji
+```
+
+The town-level index in [../addresses](../addresses) is the one to publish for
+the whole country: 4.7 MB, every address with a point, and a `pos_level`
+column that the page shows as *Placed at* beside each result, so a 小字 placed
+at its municipality's centre says so. The credit under the search box is the
+one the file states.
+
 Two things have to hold, and both fail at the transport rather than in the
 format:
 
@@ -105,6 +122,26 @@ format:
 - If the page is on a different origin from the object, CORS must allow the
   `Range` request header and expose `Content-Range`, which a reader needs to
   learn the file's length.
+
+On Cloudflare R2 that is the bucket's CORS policy; R2 itself answers `Range`
+requests:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://example.com"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["Range"],
+    "ExposeHeaders": ["Content-Range", "Content-Length", "ETag"],
+    "MaxAgeSeconds": 86400
+  }
+]
+```
+
+Name the object by what it was built from, such as
+`abr-town-2026-08.mokuji`, and never overwrite it: a reader that opened the old
+file and reads a range of the new one gets bytes from a different layout. A new
+registry release is a new object, and the page's `?url=` moves to it.
 
 ## Completing a name as it is typed
 

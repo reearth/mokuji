@@ -99,6 +99,17 @@ export function precisionsOf(index, fallback = [1, 2, 3, 4, 5, 6, 7]) {
   return parsed.length > 0 ? parsed : fallback;
 }
 
+/** Integers per degree the geometry is stored at, as the file records it.
+ *
+ * `--meta geometry=delta-int-1e6` from the build; an index built with
+ * `covering.py --decimals 5` says `1e5`. Absent, the encoder's default.
+ */
+export function scaleOf(index, fallback = 1e6) {
+  const declared = index.meta?.attrs?.geometry;
+  const match = typeof declared === "string" && /^delta-int-1e(\d{1,2})$/.exec(declared);
+  return match ? 10 ** Number(match[1]) : fallback;
+}
+
 /** The polygons holding a point, and everything the lookup touched.
  *
  * Every prefix is looked up, not just the finest that matches: a point can be
@@ -108,6 +119,7 @@ export function precisionsOf(index, fallback = [1, 2, 3, 4, 5, 6, 7]) {
  */
 export async function locate(index, lat, lon) {
   const precisions = precisionsOf(index);
+  const scale = scaleOf(index);
   const cell = geohash(lon, lat, Math.max(...precisions));
 
   const found = await index.exactMany(precisions.map((p) => cell.slice(0, p)));
@@ -126,7 +138,7 @@ export async function locate(index, lat, lon) {
     return {
       doc,
       label: payload.slice(0, cut),
-      rings: decodeRings(payload.slice(cut + 1)),
+      rings: decodeRings(payload.slice(cut + 1), scale),
     };
   });
 

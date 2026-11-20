@@ -24,9 +24,14 @@ from covering import SCALE, contains, geohash
 
 
 def attrs(mokuji, path):
-    """The application-defined metadata the file carries."""
+    """The application-defined metadata the file carries.
+
+    From `info`, which reads the resident set, and not `verify`, which walks the
+    whole file: on a national index that is the difference between a
+    millisecond and a minute, for every point.
+    """
     out = subprocess.run(
-        [mokuji, "verify", str(path)], capture_output=True, text=True, check=True
+        [mokuji, "info", str(path)], capture_output=True, text=True, check=True
     ).stdout
     found = {}
     for line in out.splitlines():
@@ -56,7 +61,19 @@ def lookup(mokuji, path, term):
     return documents, reads
 
 
-def decode(text):
+def scale_of(meta):
+    """Integers per degree the geometry is stored at, as the file records it.
+
+    `--meta geometry=delta-int-1e6` from the build; a file built with
+    `covering.py --decimals 5` says `1e5`. Absent, the encoder's default.
+    """
+    declared = meta.get("geometry", "")
+    if declared.startswith("delta-int-1e"):
+        return 10 ** int(declared[len("delta-int-1e") :])
+    return SCALE
+
+
+def decode(text, scale=SCALE):
     """The rings encoded by covering.py, back into coordinates."""
     rings = []
     for part in text.split(";"):
@@ -66,7 +83,7 @@ def decode(text):
         for i in range(0, len(values), 2):
             x += values[i]
             y += values[i + 1]
-            ring.append((x / SCALE, y / SCALE))
+            ring.append((x / scale, y / scale))
         # covering.py drops the repeated closing vertex; the tests below walk
         # the ring as a closed loop, so put it back.
         ring.append(ring[0])
@@ -83,6 +100,7 @@ def main():
     args = parser.parse_args()
 
     meta = attrs(args.mokuji, args.index)
+    scale = scale_of(meta)
     precisions = [int(p) for p in meta.get("geohash-precisions", "1,2,3,4,5,6,7").split(",")]
 
     cell = geohash(args.lon, args.lat, max(precisions))
@@ -96,7 +114,7 @@ def main():
     answers = []
     for payload in candidates:
         label, _, geometry = payload.partition("|")
-        if contains(decode(geometry), args.lon, args.lat):
+        if contains(decode(geometry, scale), args.lon, args.lat):
             answers.append(label)
 
     print(f"cell      {cell}")

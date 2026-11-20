@@ -10,48 +10,102 @@ written at — for one prefecture.
 
 ```sh
 ./fetch-abr.sh abr
-python3 abr.py --fullset abr/mt_town_fullset_all.csv --pos abr/pos --out abr.tsv
-mokuji build abr.tsv abr.mokuji --tokenizer ja-address \
-  --source abr/mt_town_fullset_all.csv --source abr.py
+python3 abr.py town --fullset abr/mt_town_fullset_all.csv --pos abr/pos \
+  --city-pos abr/mt_city_pos_all.csv --pos-level --out abr.tsv
+mokuji build abr.tsv abr.mokuji --tokenizer ja-address --payload ints:6 \
+  --attribute pos_level \
+  $(python3 ../provenance.py args abr/mt_town_fullset_all.csv.zip \
+      abr/mt_city_pos_all.csv.zip abr/pos/*.zip) \
+  --source abr.py \
+  --license CC-BY-4.0 \
+  --attribution "アドレス・ベース・レジストリ（デジタル庁）, CC BY 4.0"
 mokuji prefix abr.mokuji "東京都千代田区丸の内"
 ```
 
 ```
-東京都千代田区丸の内1丁目	139.767201,35.68156
+東京都千代田区丸の内1丁目	139.767201,35.681560
 東京都千代田区丸の内2丁目	139.763447,35.680022
 東京都千代田区丸の内3丁目	139.763476,35.676952
 
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    1088 of 5685043
+bytes:    3116 of 4680899
 ```
 
-**725,814 addresses nationwide, in 5.7 MB. Two range reads and 1.1 KB to answer.**
+**725,546 addresses nationwide, every one with coordinates, in 4.7 MB. Two
+range reads and 3.1 KB to answer.** Built from the registry as published on
+2026-11-15.
 
 | | |
 |---|---|
-| Source | 159 MB of CSV, from two registry tables |
-| Corpus | 35 MB, one address and its coordinates per line |
-| Index | 5.7 MB |
-| Build | 2.4 s, including hashing the 159 MB register |
-| Full verification | 4.8 s, reading and decoding every block, and re-hashing the register |
+| Source | 159 MB of CSV, from three registry tables |
+| Corpus | 47 MB, one address, its coordinates and their level per line |
+| Index | 4.7 MB |
+| Build | 2.3 s |
+| Full verification | 4.5 s, reading and decoding every block, and re-hashing the register |
+
+### Where the coordinates come from
+
+The town table has a representative point for most 大字・町 and 丁目 and for
+almost no 小字, and 小字 are most of the rows. Joined on its own key, an address
+has a point 27% of the time. So `abr.py` takes the point from the nearest level
+above that has one:
+
+| Placed at | addresses | `pos_level` |
+|---|---|---|
+| Its own point | 196,011 | 0 |
+| Its 大字・町's — the same `machiaza_id` with the last three digits zeroed | 473,161 | 1 |
+| Its municipality's, from `mt_city_pos_all` | 56,798 | 2 |
+
+A 小字 placed at its 大字's point is placed by kilometres rather than metres, and
+one placed at its municipality's by more. The index says which, as the
+`pos_level` attribute column (`SPEC.md` §5.8), rather than handing back a
+municipality's centre as if it were the koaza's. The column costs 221 KB, held
+in memory once the file is open; `../web` shows it beside each result.
+
+Without `--pos-level` the column is left out and the file is 4.5 MB. Without
+`--city-pos` the 56,798 addresses with no point at either town level are
+indexed with an empty payload, which `--payload ints:6` refuses, since every
+document has to carry the same count of numbers; pass `--require-position` to
+drop them instead.
 
 ### Provenance
 
 `--source` records the register's own content hash alongside the corpus's, so
 the index names what it was actually derived from rather than an intermediate
-nobody keeps:
+nobody keeps. `fetch-abr.sh` keeps each archive as the registry served it, with
+a record of its URL, the registry's `Last-Modified` and when it was fetched
+(`../provenance.py`), and `provenance.py args` passes all three to the build. So
+the index says not only which bytes it came from but where anyone can get them
+and how old they were:
 
 ```
-$ mokuji verify abr.mokuji --source abr/mt_town_fullset_all.csv
+$ mokuji verify abr.mokuji --source abr/mt_town_fullset_all.csv.zip
 tokenizer       ja-address
-derived from    sha2-256:93581da1…   abr.tsv
-derived from    sha2-256:8f9b02e4…   abr/mt_town_fullset_all.csv
-derived from    sha2-256:12cfe1f9…   abr.py
-source          abr/mt_town_fullset_all.csv
-hashes to       sha2-256:8f9b02e4…
+license         CC-BY-4.0
+attribution     アドレス・ベース・レジストリ（デジタル庁）, CC BY 4.0
+derived from    sha2-256:0431a430…   abr.tsv
+derived from    sha2-256:acb18e19…
+                https://data.address-br.digital.go.jp/mt_town_fullset/mt_town_fullset_all.csv.zip
+                modified 2026-11-15T15:41:42Z
+                retrieved 2026-11-20T03:52:51Z
+derived from    sha2-256:bf4e2662…
+                https://data.address-br.digital.go.jp/mt_city_pos/mt_city_pos_all.csv.zip
+                modified 2024-03-14T08:09:16Z
+                retrieved 2026-11-20T03:53:02Z
+...             and 47 mt_town_pos archives, modified 2025-10-27
+derived from    sha2-256:5d2ebf1e…   abr.py
+...
+source          abr/mt_town_fullset_all.csv.zip
+hashes to       sha2-256:acb18e19…
                 matches the recorded provenance
+
 ok
 ```
+
+The three tables are of three ages: the addresses were published on
+2026-11-15, the town coordinates on 2025-10-27, and the municipalities' points
+on 2024-03-14. An index that
+records only hashes would leave that to be found out by downloading each one.
 
 Every link is named. The register, the program that read it, the corpus that
 came out, and the normalization applied on the way in — that last one because
@@ -66,8 +120,10 @@ only assembles fields from the register.
 
 The Address Base Registry is published by the Digital Agency of Japan under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Anything derived
-from it must carry that attribution. No registry data is committed here; the
-scripts fetch it.
+from it must carry that attribution. The town-level build above writes it into
+the index's metadata with `--license` and `--attribution` (`SPEC.md` §6), so the
+credit travels with the file, and `../web` shows the one the file states. No
+registry data is committed here; the scripts fetch it.
 
 ## Residence level: Tokyo
 
@@ -249,10 +305,10 @@ is a guess, and the way to settle it is to index them.
 
 Two further things the real data shows:
 
-- **Coordinates are sparse at town level.** 324,471 of 725,823 addresses have a
-  representative point, because `mt_town_pos` covers less than the town master
-  does. The rest are indexed with an empty payload, which the format allows and
-  a product would have to decide about.
+- **Coordinates are sparse at town level.** `mt_town_pos` has 324,471 points,
+  and only 196,162 of them name a row of the town master, because the master's
+  rows are mostly 小字 and the points are mostly for 大字・町 and 丁目. How the
+  rest are placed is above, under *Where the coordinates come from*.
 - **The registry spells chome two ways.** `一丁目` in one municipality and
   `１丁目` in the next. Indexed as written, the same concept sorts in two
   different places and neither is where someone typing would look, which is

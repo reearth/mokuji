@@ -8,11 +8,18 @@ Agency as CSV under CC BY 4.0.
 
 Two levels are supported.
 
-`town` builds the nationwide town-level dictionary from two tables joined on
-`(lg_code, machiaza_id)`:
+`town` builds the nationwide town-level dictionary from three tables:
 
     mt_town_fullset_all.csv        the address text, nationwide
-    mt_town_pos/mt_town_pos_pref*  representative coordinates, per prefecture
+    mt_town_pos/mt_town_pos_pref*  representative coordinates, per prefecture,
+                                   joined on `(lg_code, machiaza_id)`
+    mt_city_pos_all.csv            municipalities' representative coordinates,
+                                   joined on `lg_code`
+
+The town table has a point for most 大字・町 and 丁目 and almost no 小字, so an
+address without one is placed at its 大字・町's, and failing that at its
+municipality's. `--pos-level` records which, so the index does not claim a
+precision it does not have.
 
 `rsdt` builds a prefecture's residence-level dictionary — the level a street
 address is actually written at — from two tables joined on the five identifiers
@@ -31,7 +38,8 @@ The payload is the coordinates, which is the division a geocoder wants: the key
 is what a person types, and the value is what they were asking for.
 
 Usage:
-    python3 abr.py town --fullset mt_town_fullset_all.csv --pos pos/ --out town.tsv
+    python3 abr.py town --fullset mt_town_fullset_all.csv --pos pos/ \
+                        --city-pos mt_city_pos_all.csv --pos-level --out town.tsv
     python3 abr.py rsdt --rsdt mt_rsdtdsp_rsdt_pref13.csv \
                         --pos mt_rsdtdsp_rsdt_pos_pref13.csv \
                         --pref 東京都 --out tokyo.tsv
@@ -53,25 +61,43 @@ RSDT_LEVELS = ["city", "ward", "oaza_cho", "chome", "koaza"]
 RSDT_KEY = ["lg_code", "machiaza_id", "blk_id", "rsdt_id", "rsdt2_id"]
 
 
-def write(addresses, out, echo=False):
+def write(addresses, out, echo=False, columns=None):
     """Writes the corpus, sorted, one address and its payload per line.
 
     `echo` puts the address into the payload as well as the text. A geocoder
     does not need it — the caller typed the address and wants coordinates back
     — but a search that only approximates the address does: it has to show
     which one it found. See ../fuzzy.
+
+    `columns`, if given, is one more field per line, read by `mokuji build
+    --attribute`.
     """
     path = pathlib.Path(out)
     with path.open("w", encoding="utf-8") as handle:
         for term in sorted(addresses):
             payload = f"{term}|{addresses[term]}" if echo else addresses[term]
-            handle.write(f"{term}\t{payload}\n")
+            extra = f"\t{columns[term]}" if columns is not None else ""
+            handle.write(f"{term}\t{payload}{extra}\n")
     print(f"wrote {path} ({path.stat().st_size:,} bytes)", file=sys.stderr)
 
 
 def rows(path):
     with open(path, encoding="utf-8") as handle:
         yield from csv.DictReader(handle)
+
+
+# How precisely a town-level address is placed, written to the corpus as an
+# attribute column. The registry publishes representative points for most
+# 大字・町 and 丁目 but almost no 小字, so a point is taken from the nearest level
+# above that has one, and the index says which level that was rather than
+# passing a municipality's centre off as a koaza's.
+OWN, OAZA, CITY = 0, 1, 2
+
+
+def oaza_id(machiaza_id):
+    """The 大字・町 a 丁目 or 小字 belongs to: the same ID with its last three
+    digits zeroed, which is how the registry numbers them."""
+    return machiaza_id[:4] + "000"
 
 
 def town(args):
@@ -86,17 +112,36 @@ def town(args):
                     row["rep_lon"],
                     row["rep_lat"],
                 )
-    print(f"{len(positions):,} positions", file=sys.stderr)
+    print(f"{len(positions):,} town positions", file=sys.stderr)
+
+    cities = {}
+    if args.city_pos:
+        for row in rows(args.city_pos):
+            if row.get("rep_lon") and row.get("rep_lat"):
+                cities[row["lg_code"]] = (row["rep_lon"], row["rep_lat"])
+        print(f"{len(cities):,} municipality positions", file=sys.stderr)
+
+    def locate(row):
+        lg_code, machiaza_id = row["lg_code"], row["machiaza_id"]
+        if (position := positions.get((lg_code, machiaza_id))) is not None:
+            return position, OWN
+        if (position := positions.get((lg_code, oaza_id(machiaza_id)))) is not None:
+            return position, OAZA
+        if (position := cities.get(lg_code)) is not None:
+            return position, CITY
+        return None, None
 
     addresses = {}
+    levels = {}
     total = duplicates = missing = 0
+    placed = [0, 0, 0]
     for row in rows(args.fullset):
         total += 1
         term = "".join(row[level] for level in TOWN_LEVELS).strip()
         if not term:
             continue
 
-        position = positions.get((row["lg_code"], row["machiaza_id"]))
+        position, level = locate(row)
         if position is None:
             missing += 1
             if args.require_position:
@@ -106,14 +151,31 @@ def town(args):
         if term in addresses:
             duplicates += 1
             # The registry carries alias rows, so the same text can appear
-            # twice. Keep the first, and prefer any payload over none.
-            if not addresses[term] and payload:
-                addresses[term] = payload
+            # twice. Keep the first, unless a later one is placed more
+            # precisely.
+            if position is not None and (
+                levels[term] is None or level < levels[term]
+            ):
+                addresses[term], levels[term] = payload, level
             continue
-        addresses[term] = payload
+        addresses[term], levels[term] = payload, level
 
+    for level in levels.values():
+        if level is not None:
+            placed[level] += 1
     report(total, addresses, duplicates, missing)
-    write(addresses, args.out, args.echo_address)
+    print(
+        f"placed by its own point {placed[OWN]:,}, by its 大字・町 {placed[OAZA]:,}, "
+        f"by its municipality {placed[CITY]:,}",
+        file=sys.stderr,
+    )
+    if args.pos_level:
+        if missing and not args.require_position:
+            sys.exit("--pos-level needs every address placed: pass --city-pos or --require-position")
+        columns = {term: str(levels[term]) for term in addresses}
+        write(addresses, args.out, args.echo_address, columns)
+    else:
+        write(addresses, args.out, args.echo_address)
 
 
 def rsdt(args):
@@ -188,6 +250,17 @@ def main():
     t = sub.add_parser("town", parents=[common], help="nationwide, town level")
     t.add_argument("--fullset", default="mt_town_fullset_all.csv")
     t.add_argument("--pos", default="pos")
+    t.add_argument(
+        "--city-pos",
+        help="mt_city_pos_all.csv: place an address the registry has no town point "
+        "for at its municipality's",
+    )
+    t.add_argument(
+        "--pos-level",
+        action="store_true",
+        help="write which level each point came from (0 its own, 1 its 大字・町, "
+        "2 its municipality) as a column for --attribute pos_level",
+    )
     t.set_defaults(run=town)
 
     r = sub.add_parser("rsdt", parents=[common], help="one prefecture, residence level")

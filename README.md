@@ -138,8 +138,10 @@ runs. SIFT1M in **21.8 MB** against 512 MB raw, and a nearest-neighbour query in
 [demo/reverse](demo/reverse) takes that further and goes the other way round the
 map. A geohash cell is a string whose prefixes are the cells containing it, so
 *which polygon holds this point* is a term lookup: 6,021 Tokyo 町丁目 boundaries
-in 2.6 MB, a point answered in 4–5 reads, and the address key alongside the
-cells for 44 KB more — one file, both directions.
+in 2.0 MB, a point answered in 3–4 reads, and the address key alongside the
+cells for 27 KB more — one file, both directions. The whole country is 231,668
+boundaries in 123 MB, or 88.5 MB with coordinates rounded to a metre, a point
+answered in 4–6 reads.
 
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are
