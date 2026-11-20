@@ -13,6 +13,7 @@
 pub mod block_on;
 mod completions;
 mod counting;
+mod file;
 mod index;
 pub mod postings;
 mod reader;
@@ -21,6 +22,7 @@ pub mod term;
 
 pub use completions::Completions;
 pub use counting::{CountingReader, ReadStats};
+pub use file::FileReader;
 pub use index::{Column, Index, Match, OpenOptions, Payload};
 pub use postings::Postings;
 pub use reader::RangeReader;

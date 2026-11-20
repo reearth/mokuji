@@ -8,7 +8,7 @@ use std::path::Path;
 
 use mokuji_meta::Meta;
 use mokuji_read::{
-    block_on::block_on, CountingReader, Index, OpenOptions, RangeReader, SliceReader,
+    block_on::block_on, CountingReader, FileReader, Index, OpenOptions, RangeReader,
 };
 
 use crate::corpus::Tokenizer;
@@ -16,7 +16,7 @@ use crate::info::Error;
 
 /// Completes `query` against the index at `path`, reporting what it cost.
 pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(), Error> {
-    let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
+    let reader = CountingReader::new(FileReader::open(path)?);
     let index = block_on(Index::open_with(
         &reader,
         OpenOptions {

@@ -46,6 +46,23 @@ pub enum Error {
         /// Total size of the file.
         file_len: u64,
     },
+    /// The bytes could not be read from where they are kept: a file that
+    /// went away, a disk that failed. Not a fault of the file's contents.
+    Read {
+        /// What the source reported, as `std::io::ErrorKind` names it.
+        kind: std::io::ErrorKind,
+        /// Its message.
+        detail: String,
+    },
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Read {
+            kind: e.kind(),
+            detail: e.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for Error {
@@ -69,6 +86,7 @@ impl fmt::Display for Error {
                 f,
                 "range {offset}..+{len} lies outside a file of {file_len} bytes"
             ),
+            Error::Read { detail, .. } => write!(f, "could not read: {detail}"),
         }
     }
 }

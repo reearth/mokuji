@@ -408,6 +408,12 @@ impl<R: RangeReader> Index<R> {
         })
     }
 
+    /// What the file is read through, so a caller can ask a `CountingReader`
+    /// what was read.
+    pub fn reader(&self) -> &R {
+        &self.reader
+    }
+
     /// The fixed header, including the global statistics BM25 needs.
     pub fn header(&self) -> &Header {
         &self.header

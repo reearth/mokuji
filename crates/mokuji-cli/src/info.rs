@@ -23,6 +23,15 @@ pub enum Error {
     Usage(String),
 }
 
+impl From<mokuji::Error> for Error {
+    fn from(e: mokuji::Error) -> Self {
+        match e {
+            mokuji::Error::File(e) => Error::Format(e),
+            other => Error::Invalid(other.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

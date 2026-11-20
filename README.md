@@ -62,7 +62,9 @@ The reference implementation, in Rust.
 |---|---|
 | `mokuji-format` | Byte layout: header, section table, codec identifiers. No I/O, no dependencies |
 | `mokuji-codec` | Integer and string codecs used inside blocks |
-| `mokuji-read` | `RangeReader`, and the reader for each section |
+| `mokuji` | Search a file in what a person types: `lookup`, `complete`, `search`, the same API as the TypeScript reader |
+| `mokuji-read` | `RangeReader`, a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
+| `mokuji-tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
 | `mokuji-write` | Deterministic writer |
 | `mokuji-meta` | The metadata section, and the canonical CBOR it is written in |
 | `mokuji-cli` | The `mokuji` command |

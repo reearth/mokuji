@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use mokuji_manifest::{Collection, Manifest, Region, Segment, VERSION};
 use mokuji_meta::{ContentHash, Meta};
-use mokuji_read::{block_on::block_on, CountingReader, RangeReader, SliceReader};
+use mokuji_read::{block_on::block_on, CountingReader, FileReader, RangeReader};
 
 use crate::corpus::Tokenizer;
 use crate::info::Error;
@@ -41,14 +41,14 @@ pub fn locate(manifest: &Path, segment: &Segment) -> PathBuf {
 }
 
 /// Opens every segment, each through its own counting reader.
-pub fn open(path: &Path, manifest: &Manifest) -> Result<Vec<CountingReader<SliceReader>>, Error> {
+pub fn open(path: &Path, manifest: &Manifest) -> Result<Vec<CountingReader<FileReader>>, Error> {
     manifest
         .segments
         .iter()
         .map(|segment| {
-            Ok(CountingReader::new(SliceReader::new(std::fs::read(
-                locate(path, segment),
-            )?)))
+            Ok(CountingReader::new(FileReader::open(locate(
+                path, segment,
+            ))?))
         })
         .collect()
 }
@@ -163,9 +163,10 @@ pub fn delete(path: &Path, segment_path: &str, docs: &[u64]) -> Result<(), Error
         .iter()
         .position(|s| s.path == segment_path)
         .ok_or_else(|| Error::Usage(format!("no segment '{segment_path}' in the manifest")))?;
-    let index = block_on(mokuji_read::Index::open(SliceReader::new(std::fs::read(
-        locate(path, &manifest.segments[at]),
-    )?)))?;
+    let index = block_on(mokuji_read::Index::open(FileReader::open(locate(
+        path,
+        &manifest.segments[at],
+    ))?))?;
     if let Some(&bad) = docs.iter().find(|&&d| d >= index.header().num_docs) {
         return Err(Error::Usage(format!(
             "document {bad} is not in '{segment_path}', which has {}",
@@ -290,7 +291,7 @@ fn tokenizer_of<R: RangeReader>(collection: &Collection<R>) -> Result<Option<Tok
     Ok(Tokenizer::parse(&meta.tokenizer.id))
 }
 
-fn report(readers: &[CountingReader<SliceReader>]) {
+fn report(readers: &[CountingReader<FileReader>]) {
     eprintln!("opened:   {} segment(s)", readers.len());
     let per: Vec<u32> = readers.iter().map(|r| r.reads()).collect();
     let bytes: u64 = readers.iter().map(|r| r.stats().bytes).sum();

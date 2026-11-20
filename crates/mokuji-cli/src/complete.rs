@@ -9,14 +9,14 @@
 use std::path::Path;
 
 use mokuji_meta::Meta;
-use mokuji_read::{block_on::block_on, CountingReader, Index, RangeReader, SliceReader};
+use mokuji_read::{block_on::block_on, CountingReader, FileReader, Index, RangeReader};
 
 use crate::corpus::Tokenizer;
 use crate::info::Error;
 
 /// Completes `typed` against the index at `path`, reporting what it cost.
 pub fn run(path: &Path, typed: &str, limit: usize) -> Result<(), Error> {
-    let reader = CountingReader::new(SliceReader::new(std::fs::read(path)?));
+    let reader = CountingReader::new(FileReader::open(path)?);
     let index = block_on(Index::open(&reader))?;
     let open_reads = reader.reads();
 

@@ -1,0 +1,21 @@
+[package]
+name = "mokuji"
+description = "Search a Mokuji file: look up, complete and rank what was typed, reading only what a query needs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+mokuji-format.workspace = true
+mokuji-meta.workspace = true
+mokuji-read.workspace = true
+mokuji-tokenize.workspace = true
+
+[dev-dependencies]
+mokuji-write.workspace = true
+
+[lints]
+workspace = true

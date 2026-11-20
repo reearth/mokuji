@@ -210,13 +210,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mokuji"
+version = "0.0.0"
+dependencies = [
+ "mokuji-format",
+ "mokuji-meta",
+ "mokuji-read",
+ "mokuji-tokenize",
+ "mokuji-write",
+]
+
+[[package]]
 name = "mokuji-cli"
 version = "0.0.0"
 dependencies = [
+ "mokuji",
  "mokuji-format",
  "mokuji-manifest",
  "mokuji-meta",
  "mokuji-read",
+ "mokuji-tokenize",
  "mokuji-write",
  "proptest",
  "sha2",
@@ -264,6 +277,13 @@ dependencies = [
  "mokuji-meta",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "mokuji-tokenize"
+version = "0.0.0"
+dependencies = [
+ "unicode-normalization",
 ]
 
 [[package]]
