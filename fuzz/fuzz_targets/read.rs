@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = block_on(index.search(&[b"a", b"b"]));
 
     if let Ok(matches) = block_on(index.prefix(b"", 256)) {
-        let entries: Vec<_> = matches.iter().map(|(_, entry)| *entry).collect();
+        let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();
         let _ = block_on(index.postings_span(&entries));
     }
     for doc in 0..index.header().num_docs.min(256) {

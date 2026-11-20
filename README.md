@@ -104,12 +104,12 @@ writer and read by the same reader:
 | Records | 1,744,962 | 2,523 |
 | Terms | 1,744,962 | 77,240 |
 | Tokenizer | `ja-address` | `bigram` |
-| Dictionary | 863 KB (12%) | 1.08 MB (35%) |
-| **Postings** | **0 bytes** — implied | **1.96 MB (63%)** |
-| **Payload** | **5.99 MB (84%)** — coordinates | **43 KB (1.4%)** — paths |
+| Dictionary | 863 KB (12%) | 1.10 MB (40%) |
+| **Postings** | **0 bytes** — implied | **1.58 MB (58%)** |
+| **Payload** | **5.99 MB (84%)** — coordinates | **43 KB (1.6%)** — paths |
 | Document lengths | absent | 4.3 KB |
-| Index | 7.1 MB | 3.1 MB |
-| A query | prefix, **3 reads**, 1.1 KB | two terms ranked, **21 reads**, 57 KB |
+| Index | 7.1 MB | 2.7 MB |
+| A query | prefix, **3 reads**, 1.1 KB | `建築物` ranked, **6 reads**, 16 KB |
 
 A gazetteer is the third: [demo/poi](demo/poi) indexes 98,187 Japanese places
 under all their names at once, with coordinates in attribute columns rather than

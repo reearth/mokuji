@@ -17,6 +17,11 @@ const FLAG_HAS_PAYLOAD = 1 << 1;
 const FLAG_HAS_FREQS = 1 << 2;
 const FLAG_HAS_POSITIONS = 1 << 3;
 
+// A dictionary entry's `postings_len` when it states its postings itself
+// (SPEC.md §5.3.4). No run is this short.
+const IMPLIED = 0;
+const INLINE = 1;
+
 const SECTION = {
   META: 0x0001,
   TERM_INDEX: 0x0010,
@@ -71,7 +76,11 @@ export interface TermEntry {
   termId: number;
   docFreq: number;
   postingsOffset: number;
+  /** Bytes of the postings section the term's run occupies: zero when the
+   * entry states its postings itself, implied or inline. */
   postingsLength: number;
+  /** The postings, when the entry carries them inline. */
+  inline?: Postings;
   positionsOffset?: number;
   positionsLength?: number;
 }
@@ -574,22 +583,41 @@ export class MokujiIndex {
     const entryCount = cursor.varint();
     const firstTermId = cursor.varint();
     const hasPositions = Boolean(this.flags & FLAG_HAS_POSITIONS);
+    const hasFreqs = Boolean(this.flags & FLAG_HAS_FREQS);
     const entries: TermEntry[] = [];
     let key: Uint8Array = new Uint8Array(0);
     let postingsOffset: number | null = null;
     let positionsOffset: number | null = null;
+    // One more than the last document an implied or inline entry named: what
+    // an inline entry's first document is written against (SPEC.md §5.3.4).
+    let expected = firstTermId;
     for (let i = 0; i < entryCount; i++) {
       key = cursor.key(key);
+      const termId = firstTermId + i;
       const docFreq = cursor.varint();
       const delta = cursor.varint();
       postingsOffset = postingsOffset === null ? delta : postingsOffset + delta;
+      const stored = cursor.varint();
       const entry: TermEntry = {
         term: key,
-        termId: firstTermId + i,
+        termId,
         docFreq,
         postingsOffset,
-        postingsLength: cursor.varint(),
+        postingsLength: stored === INLINE ? 0 : stored,
       };
+      if (stored === IMPLIED) {
+        expected = termId + 1;
+      } else if (stored === INLINE) {
+        if (docFreq === 0) throw new Error("inline postings name no document");
+        const docs = [expected + unzigzag(cursor.varint())];
+        for (let j = 1; j < docFreq; j++) docs.push(docs[j - 1]! + cursor.varint() + 1);
+        if (docs[0]! < 0 || docs[docs.length - 1]! >= this.numDocs) {
+          throw new Error("inline postings name a missing document");
+        }
+        const freqs = docs.map(() => (hasFreqs ? cursor.varint() + 1 : 1));
+        entry.inline = { docs, freqs };
+        expected = docs[docs.length - 1]! + 1;
+      }
       if (hasPositions) {
         // Two further varints an entry carries only when the file has
         // positions, which is why the flag is read before any entry is.
@@ -743,9 +771,10 @@ export class MokujiIndex {
     return found;
   }
 
-  // The postings a dictionary entry implies by carrying no run (SPEC.md
-  // §5.3.4): the term names one document, whose ID is the term's own, once.
+  // The postings a dictionary entry states itself (SPEC.md §5.3.4): inline,
+  // or implied — the term names one document, whose ID is the term's own, once.
   implied(entry: TermEntry): Postings {
+    if (entry.inline) return entry.inline;
     if (entry.docFreq !== 1) throw new Error("implied postings need a doc_freq of 1");
     if (entry.termId >= this.numDocs) throw new Error("implied postings name a missing document");
     return { docs: [entry.termId], freqs: [1] };
@@ -754,8 +783,8 @@ export class MokujiIndex {
   /** Postings for a contiguous range of entries, in one request — or none. */
   async postingsSpan(entries: TermEntry[]): Promise<Postings[]> {
     if (entries.length === 0) return [];
-    // Entries with implied postings contribute no bytes, so an index of a
-    // dictionary spends no request here at all.
+    // Entries whose postings are implied or inline contribute no bytes, so an
+    // index of a dictionary spends no request here at all.
     const stored = entries.filter((e) => e.postingsLength > 0);
     let start = 0;
     let span: Uint8Array | null = null;

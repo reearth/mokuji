@@ -176,8 +176,8 @@ async fn gather<R: RangeReader>(
 ) -> Result<(), Error> {
     for ordinal in 0..index.term_index()?.block_count() {
         let block = index.read_term_block(ordinal).await?;
-        let entries = term::decode_block(&block, index.has_positions())?;
-        let located: Vec<_> = entries.iter().map(|(_, e)| *e).collect();
+        let entries = term::decode_block(&block, index.block_shape())?;
+        let located: Vec<_> = entries.iter().map(|(_, e)| e.clone()).collect();
         for ((term, _), run) in entries.iter().zip(index.postings_span(&located).await?) {
             let live: Vec<(u64, u64)> = run
                 .docs
@@ -229,6 +229,9 @@ fn options_of<R: RangeReader>(base: &Index<R>, meta: &Meta) -> Result<Options, E
             max_span: c.max_span,
             docs_per_entry: c.docs_per_entry as u32,
         }),
+        // A base written before inline postings records no bound, and wrote
+        // every term a run.
+        inline_postings: param("inline_postings").unwrap_or(0) as usize,
     })
 }
 

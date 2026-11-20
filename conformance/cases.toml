@@ -17,12 +17,14 @@
 # sections but does not query them.
 #
 # `tiny` is a small document collection: several terms per document, postings
-# stored, payload opaque, every section raw so the file can be read by hand.
+# stored as runs, inline in their entries, and implied, payload opaque, every
+# section raw so the file can be read by hand.
 # `dict` is a dictionary: one term per record, postings implied throughout, and
 # payload stored as delta-coded integers.
 # `tiny-extra` is `tiny` with two sections this version does not define, one in
 # the specification's range and one in the application's.
-# `names` is a gazetteer for completion: `name-list`, and a completions section.
+# `names` is a gazetteer for completion: `name-list`, and a completions section,
+# with every postings run stored rather than inline.
 
 [[case]]
 name = "single term"
@@ -38,7 +40,10 @@ fixture = "tiny"
 query = ["tokyo", "chuo"]
 docs = [1]
 payloads = ["35.671,139.772"]
-reads = 5 # 2 term blocks, 2 postings, 1 payload
+# 2 term blocks, 1 postings, 1 payload. `chuo`'s two documents are written
+# inline in its dictionary entry (SPEC.md §5.3.4); `tokyo`'s run is shorter than
+# inline would be, so it is read.
+reads = 4
 
 [[case]]
 name = "implied postings"
@@ -57,7 +62,17 @@ fixture = "tiny"
 query = ["osaka", "tokyo"]
 docs = []
 payloads = []
-reads = 4 # both terms resolve; no payload is fetched
+reads = 3 # 2 term blocks, `tokyo`'s postings; `osaka`'s are inline, and no payload is fetched
+
+[[case]]
+name = "inline postings"
+fixture = "tiny"
+query = ["osaka"]
+docs = [3]
+payloads = ["34.681,135.513"]
+# `osaka` is term 2 and names document 3, so its postings cannot be implied, but
+# they are written in its dictionary entry: the term block and the payload.
+reads = 2
 
 [[case]]
 name = "absent term"
@@ -103,7 +118,9 @@ payloads = ["35.671,139.772", "34.681,135.513"]
 # one section a reader pays for only when it asks: everything above answers
 # without reading the run at all.
 positions = [[1], [1]]
-reads = 4 # 1 term block, 1 postings, 2 payload blocks — and one more to ask
+# 1 term block and 2 payload blocks, with `chuo`'s postings inline in its entry
+# — and one more read to ask for the positions, which are never inline.
+reads = 3
 
 [[case]]
 name = "attribute column"

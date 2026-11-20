@@ -32,17 +32,24 @@ fn options_strategy() -> impl Strategy<Value = Options> {
         any::<bool>(),
         any::<bool>(),
         any::<bool>(),
+        // Zero writes every term a run; small bounds inline some and not
+        // others, which is where an entry's prediction depends on its
+        // neighbours.
+        prop_oneof![Just(0usize), 1..6usize, Just(64usize)],
     )
-        .prop_map(|(terms, docs, has_freqs, doc_lengths, compress)| Options {
-            terms_per_block: terms,
-            docs_per_payload_block: docs,
-            has_freqs,
-            payload: mokuji_write::PayloadEncoding::Opaque,
-            positions: false,
-            doc_lengths,
-            compress,
-            completions: None,
-        })
+        .prop_map(
+            |(terms, docs, has_freqs, doc_lengths, compress, inline_postings)| Options {
+                terms_per_block: terms,
+                docs_per_payload_block: docs,
+                has_freqs,
+                payload: mokuji_write::PayloadEncoding::Opaque,
+                positions: false,
+                doc_lengths,
+                compress,
+                completions: None,
+                inline_postings,
+            },
+        )
 }
 
 /// Builds the index and the answer it is supposed to give.
@@ -390,7 +397,7 @@ proptest! {
         let mut expensive = 0;
         for prefix in &prefixes {
             let entries = block_on(index.prefix(prefix, usize::MAX)).unwrap();
-            let span: u64 = entries.iter().map(|(_, e)| e.postings_len).sum();
+            let span: u64 = entries.iter().map(|(_, e)| e.run_len()).sum();
             let costly = (min_terms != 0 && entries.len() as u64 >= min_terms)
                 || (max_span != 0 && span >= max_span);
             let mut docs: Vec<u64> = expected

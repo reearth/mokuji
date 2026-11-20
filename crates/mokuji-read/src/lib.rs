@@ -25,4 +25,4 @@ pub use index::{Column, Index, Match, OpenOptions, Payload};
 pub use postings::Postings;
 pub use reader::RangeReader;
 pub use slice::SliceReader;
-pub use term::{TermEntry, TermIndex};
+pub use term::{BlockShape, TermEntry, TermIndex};

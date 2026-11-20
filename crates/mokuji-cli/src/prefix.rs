@@ -53,7 +53,7 @@ pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(),
     let matches = block_on(index.prefix(prefix, limit))?;
     let dictionary = reader.reads();
 
-    let entries: Vec<_> = matches.iter().map(|(_, entry)| *entry).collect();
+    let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();
     let postings = block_on(index.postings_span(&entries))?;
     let postings_reads = reader.reads() - dictionary;
 

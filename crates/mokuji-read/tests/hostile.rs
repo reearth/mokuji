@@ -41,7 +41,7 @@ fn exercise(bytes: Vec<u8>) {
     let _ = block_on(index.search(&[b""]));
 
     if let Ok(matches) = block_on(index.prefix(b"", 1000)) {
-        let entries: Vec<_> = matches.iter().map(|(_, entry)| *entry).collect();
+        let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();
         let _ = block_on(index.postings_span(&entries));
         for (_, entry) in &matches {
             let _ = block_on(index.postings(entry));

@@ -244,6 +244,10 @@ pub fn run(
         ("payload", Value::Text(describe(options.payload))),
         ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
         ("positions", Value::Uint(u64::from(options.positions))),
+        (
+            "inline_postings",
+            Value::Uint(options.inline_postings as u64),
+        ),
     ];
     if !declared.is_empty() {
         params.push((

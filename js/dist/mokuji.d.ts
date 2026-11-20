@@ -29,7 +29,11 @@ export interface TermEntry {
     termId: number;
     docFreq: number;
     postingsOffset: number;
+    /** Bytes of the postings section the term's run occupies: zero when the
+     * entry states its postings itself, implied or inline. */
     postingsLength: number;
+    /** The postings, when the entry carries them inline. */
+    inline?: Postings;
     positionsOffset?: number;
     positionsLength?: number;
 }

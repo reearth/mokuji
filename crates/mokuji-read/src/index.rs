@@ -434,6 +434,15 @@ impl<R: RangeReader> Index<R> {
             .and_then(|lengths| lengths.get(doc as usize).copied())
     }
 
+    /// What decoding a term block needs to know about the file.
+    pub fn block_shape(&self) -> term::BlockShape {
+        term::BlockShape {
+            positions: self.has_positions(),
+            freqs: self.header.flags.contains(Flags::HAS_FREQS),
+            num_docs: self.header.num_docs,
+        }
+    }
+
     /// Whether the file carries positions (`SPEC.md` §5.6a).
     pub fn has_positions(&self) -> bool {
         self.header.flags.contains(Flags::HAS_POSITIONS)
@@ -556,7 +565,7 @@ impl<R: RangeReader> Index<R> {
             return Ok(None);
         };
         let block = self.read_term_block(ordinal).await?;
-        find_in_block(&block, term, self.has_positions())
+        find_in_block(&block, term, self.block_shape())
     }
 
     /// Looks several terms up, at one range read per dictionary block they
@@ -584,7 +593,7 @@ impl<R: RangeReader> Index<R> {
         let mut found = Vec::with_capacity(terms.len());
         for (term, ordinal) in terms.iter().zip(&ordinals) {
             found.push(match ordinal {
-                Some(ordinal) => find_in_block(&blocks[ordinal], term, self.has_positions())?,
+                Some(ordinal) => find_in_block(&blocks[ordinal], term, self.block_shape())?,
                 // The term sorts before every block, so no block was read.
                 None => None,
             });
@@ -613,11 +622,31 @@ impl<R: RangeReader> Index<R> {
         })
     }
 
+    /// The postings the dictionary entry states itself, implied or inline,
+    /// or `None` if they are in a run.
+    fn stated(&self, entry: &TermEntry) -> Result<Option<postings::Postings>> {
+        match entry.postings_len {
+            term::IMPLIED => self.implied(entry).map(Some),
+            term::INLINE => {
+                let inline = entry.inline.clone().ok_or(Error::Malformed {
+                    detail: "an inline entry carries no postings",
+                })?;
+                if inline.len() as u64 != entry.doc_freq {
+                    return Err(Error::Malformed {
+                        detail: "inline postings disagree with the dictionary's doc_freq",
+                    });
+                }
+                Ok(Some(inline))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Reads and decodes one term's postings, or no read at all when the
     /// dictionary entry already said everything (`SPEC.md` §5.3.4).
     pub async fn postings(&self, entry: &TermEntry) -> Result<postings::Postings> {
-        if entry.postings_len == 0 {
-            return self.implied(entry);
+        if let Some(stated) = self.stated(entry)? {
+            return Ok(stated);
         }
         let len = u32::try_from(entry.postings_len).map_err(|_| Error::Malformed {
             detail: "postings run is implausibly long",
@@ -663,7 +692,7 @@ impl<R: RangeReader> Index<R> {
             }
 
             let block = self.read_term_block(ordinal).await?;
-            for (key, entry) in term::decode_block(&block, self.has_positions())? {
+            for (key, entry) in term::decode_block(&block, self.block_shape())? {
                 if key.starts_with(prefix) {
                     out.push((key, entry));
                     if out.len() == limit {
@@ -732,10 +761,10 @@ impl<R: RangeReader> Index<R> {
     /// which is why completing a prefix costs a constant number of reads rather
     /// than one per match.
     pub async fn postings_span(&self, entries: &[TermEntry]) -> Result<Vec<postings::Postings>> {
-        // Entries whose postings are implied contribute no bytes, so an index
-        // of a dictionary — where every entry is implied — spends no read here
-        // at all.
-        let stored: Vec<&TermEntry> = entries.iter().filter(|e| e.postings_len > 0).collect();
+        // Entries that state their own postings, implied or inline, contribute
+        // no bytes, so an index of a dictionary — where every entry is
+        // implied — spends no read here at all.
+        let stored: Vec<&TermEntry> = entries.iter().filter(|e| e.run_len() > 0).collect();
         for pair in stored.windows(2) {
             if pair[1].postings_offset < pair[0].postings_offset {
                 return Err(Error::Malformed {
@@ -759,8 +788,8 @@ impl<R: RangeReader> Index<R> {
         entries
             .iter()
             .map(|entry| {
-                if entry.postings_len == 0 {
-                    return self.implied(entry);
+                if let Some(stated) = self.stated(entry)? {
+                    return Ok(stated);
                 }
                 let (start, bytes) = span.as_ref().expect("a stored entry implies a span");
                 let at = (entry.postings_offset - start) as usize;

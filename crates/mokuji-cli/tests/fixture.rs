@@ -177,6 +177,7 @@ mod dictionary {
             doc_lengths: false,
             compress,
             completions: None,
+            inline_postings: 8,
         })
         .unwrap();
 
@@ -314,6 +315,8 @@ mod names {
                 max_span: 0,
                 docs_per_entry: 2,
             }),
+            // As the fixture builder writes `names`: every run stored.
+            inline_postings: 0,
         })
         .unwrap();
         for payload in &corpus.payloads {

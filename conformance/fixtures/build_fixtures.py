@@ -51,6 +51,12 @@ SEC_POSITIONS = 0x0060
 # exercise a gap.
 TERMS_PER_BLOCK = 2
 DOCS_PER_PAYLOAD_BLOCK = 2
+# The most bytes a term's postings may take written in its dictionary entry
+# (SPEC.md 5.3.4), the same bound the reference writer uses by default, so that
+# both write the same bytes. A term is inlined only when that is also no longer
+# than its run.
+INLINE_POSTINGS = 8
+INLINE = 1  # the postings_len that means "inline"
 
 PAYLOAD_OPAQUE = 0
 PAYLOAD_DELTA_INTS = 1
@@ -311,16 +317,47 @@ def encode_postings(docs, term_id):
     return bytes([0]) + varint(len(doc_ids)) + pack_values(values) + pack_values(freqs)
 
 
+def inline_postings(index, terms, runs, bound):
+    """Moves short postings into their entries (SPEC.md 5.3.4).
+
+    Per block, since each entry's first document is predicted from the last
+    document an earlier implied or inline entry in the same block named.
+    Returns the inline bytes by term, and empties the runs of the terms moved.
+    """
+    inline = {}
+    for start in range(0, len(terms), TERMS_PER_BLOCK):
+        expected = start
+        for term_id in range(start, min(start + TERMS_PER_BLOCK, len(terms))):
+            term = terms[term_id]
+            if not runs[term]:  # implied: the document is the term's own ID
+                expected = term_id + 1
+                continue
+            docs = sorted(index[term])
+            out = bytearray(varint(zigzag(docs[0] - expected)))
+            for a, b in zip(docs, docs[1:]):
+                out += varint(b - a - 1)
+            for d in docs:
+                out += varint(len(index[term][d]) - 1)
+            if len(out) <= bound and len(out) <= len(runs[term]):
+                inline[term] = bytes(out)
+                runs[term] = b""
+                expected = docs[-1] + 1
+    return inline
+
+
 def encode_term_block(entries, first_term_id, postings_offsets, positions_offsets=None):
     out = bytearray(varint(len(entries)) + varint(first_term_id))
     previous_key = b""
     previous_offset = None
     previous_positions = None
-    for i, ((term, doc_freq, length), offset) in enumerate(zip(entries, postings_offsets)):
+    for i, ((term, doc_freq, length, inline), offset) in enumerate(zip(entries, postings_offsets)):
         out += front_coded(term.encode(), previous_key)
         out += varint(doc_freq)
         out += varint(offset if previous_offset is None else offset - previous_offset)
-        out += varint(length)
+        if inline is not None:
+            out += varint(INLINE) + inline
+        else:
+            out += varint(length)
         if positions_offsets is not None:
             at, plen = positions_offsets[i]
             out += varint(at if previous_positions is None else at - previous_positions)
@@ -391,11 +428,14 @@ def chunk(items, size):
 
 def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
           tokenizer_id="space-split", doc_lengths=False, columns=None,
-          positions=False, extra=None, completions=None, license=None):
+          positions=False, extra=None, completions=None, license=None,
+          inline=INLINE_POSTINGS):
     documents = DOCUMENTS if documents is None else documents
     index = build_index(documents, tokenizer_id)
     terms = list(index)
     runs = {term: encode_postings(index[term], i) for i, term in enumerate(terms)}
+    bound = inline
+    inline = inline_postings(index, terms, runs, bound)
     places = {term: encode_positions(index[term]) for term in terms} if positions else None
     term_chunks = chunk(terms, TERMS_PER_BLOCK)
 
@@ -451,6 +491,7 @@ def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
                     "payload": "opaque" if decimals is None else f"ints:{decimals}",
                     "doc_lengths": 1 if doc_lengths else 0,
                     "positions": 1 if positions else 0,
+                    "inline_postings": bound,
                     **(
                         {"completions": "{},{},{} by document order".format(*completions)}
                         if completions
@@ -520,7 +561,7 @@ def build(documents=None, decimals=None, corpus_name="tiny.corpus.txt",
 
     blocks, term_id = [], 0
     for group in term_chunks:
-        entries = [(t, len(index[t]), len(runs[t])) for t in group]
+        entries = [(t, len(index[t]), len(runs[t]), inline.get(t)) for t in group]
         blocks.append(
             encode_term_block(
                 entries,
@@ -704,22 +745,48 @@ def find_block(term_index, term):
     return found
 
 
-def lookup(f, resident, ordinal, term, has_positions=False):
-    offsets = resident[SEC_TERM_BLOCK_OFFSETS]
-    start = int.from_bytes(offsets[ordinal * 8 : ordinal * 8 + 8], "little")
-    end = int.from_bytes(offsets[ordinal * 8 + 8 : ordinal * 8 + 16], "little")
-    block = f.read(start, end - start)
+def term_entries(block, has_positions, has_freqs, num_docs):
+    """Every entry of a term block, in order.
 
+    Yields (key, term_id, doc_freq, offset, length, places, stated): `length`
+    is the bytes of the postings section the term occupies, and `stated` the
+    postings the entry gives itself, implied or inline, or None for a run.
+    """
     count, pos = read_varint(block, 0)
     first_term_id, pos = read_varint(block, pos)
     key, offset = b"", None
     positions_at = None
+    expected = first_term_id
     for i in range(count):
+        term_id = first_term_id + i
         key, pos = read_front_coded(block, pos, key)
         doc_freq, pos = read_varint(block, pos)
         delta, pos = read_varint(block, pos)
         offset = delta if offset is None else offset + delta
         length, pos = read_varint(block, pos)
+        stated = None
+        if length == 0:
+            assert doc_freq == 1, "implied postings must have a doc_freq of 1"
+            assert term_id < num_docs, "implied postings name a document outside the index"
+            stated = {term_id: 1}
+            expected = term_id + 1
+        elif length == INLINE:
+            # The first document predicted from the entry before, the rest as
+            # gaps less one, then frequencies less one (SPEC.md 5.3.4).
+            assert doc_freq > 0, "inline postings must name a document"
+            raw, pos = read_varint(block, pos)
+            docs = [expected + unzigzag(raw)]
+            for _ in range(doc_freq - 1):
+                gap, pos = read_varint(block, pos)
+                docs.append(docs[-1] + gap + 1)
+            assert 0 <= docs[0] and docs[-1] < num_docs, "inline postings outside the index"
+            freqs = [1] * doc_freq
+            if has_freqs:
+                for j in range(doc_freq):
+                    raw, pos = read_varint(block, pos)
+                    freqs[j] = raw + 1
+            stated = dict(zip(docs, freqs))
+            expected = docs[-1] + 1
         places = None
         if has_positions:
             # Two more varints an entry carries only when the file has
@@ -728,16 +795,25 @@ def lookup(f, resident, ordinal, term, has_positions=False):
             positions_at = pdelta if positions_at is None else positions_at + pdelta
             plen, pos = read_varint(block, pos)
             places = (positions_at, plen)
+        stored = 0 if stated is not None else length
+        yield key, term_id, doc_freq, offset, stored, places, stated
+    assert pos == len(block), "trailing bytes in term block"
+
+
+def lookup(f, resident, ordinal, term, has_positions, has_freqs, num_docs):
+    offsets = resident[SEC_TERM_BLOCK_OFFSETS]
+    start = int.from_bytes(offsets[ordinal * 8 : ordinal * 8 + 8], "little")
+    end = int.from_bytes(offsets[ordinal * 8 + 8 : ordinal * 8 + 16], "little")
+    block = f.read(start, end - start)
+    for key, term_id, doc_freq, offset, length, places, stated in term_entries(
+        block, has_positions, has_freqs, num_docs
+    ):
         if key == term:
-            return first_term_id + i, doc_freq, offset, length, places
+            return term_id, doc_freq, offset, length, places, stated
     return None
 
 
-def decode_postings(run, has_freqs, term_id, doc_freq, num_docs):
-    if not run:
-        assert doc_freq == 1, "implied postings must have a doc_freq of 1"
-        assert term_id < num_docs, "implied postings name a document outside the index"
-        return {term_id: 1}
+def decode_postings(run, has_freqs):
     assert run[0] == 0, "unexpected postings codec"
     count, pos = read_varint(run, 1)
     values, pos = unpack_values(run, pos, count)
@@ -823,14 +899,12 @@ def search(data, query):
         ordinal = find_block(resident[SEC_TERM_INDEX], term.encode())
         if ordinal is None:
             return {}, f.reads
-        entry = lookup(f, resident, ordinal, term.encode(), has_positions)
+        num_docs = int.from_bytes(header[16:24], "little")
+        entry = lookup(f, resident, ordinal, term.encode(), has_positions, has_freqs, num_docs)
         if entry is None:
             return {}, f.reads
-        term_id, doc_freq, offset, length, _places = entry
-        num_docs = int.from_bytes(header[16:24], "little")
-        docs = decode_postings(
-            f.read(offset, length) if length else b"", has_freqs, term_id, doc_freq, num_docs
-        )
+        term_id, doc_freq, offset, length, _places, stated = entry
+        docs = stated if stated is not None else decode_postings(f.read(offset, length), has_freqs)
         assert len(docs) == doc_freq, "doc_freq disagrees with the postings run"
         results = docs.keys() if results is None else results & docs.keys()
 
@@ -904,26 +978,22 @@ def complete(data, prefix, limit, payload=True):
             lo = int.from_bytes(offsets[ordinal * 8 : ordinal * 8 + 8], "little")
             hi = int.from_bytes(offsets[ordinal * 8 + 8 : ordinal * 8 + 16], "little")
             block = f.read(lo, hi - lo)
-            n, pos = read_varint(block, 0)
-            first, pos = read_varint(block, pos)
-            key, offset = b"", None
-            for i in range(n):
-                key, pos = read_front_coded(block, pos, key)
-                doc_freq, pos = read_varint(block, pos)
-                delta, pos = read_varint(block, pos)
-                offset = delta if offset is None else offset + delta
-                length, pos = read_varint(block, pos)
+            for key, term_id, doc_freq, offset, length, _, stated in term_entries(
+                block, False, has_freqs, num_docs
+            ):
                 if key.startswith(prefix):
-                    matched.append((first + i, doc_freq, offset, length))
+                    matched.append((term_id, doc_freq, offset, length, stated))
         stored = [m for m in matched if m[3]]
         span = b""
         if stored:
             lo = stored[0][2]
             span = f.read(lo, stored[-1][2] + stored[-1][3] - lo)
         found = set()
-        for term_id, doc_freq, offset, length in matched:
-            run = span[offset - stored[0][2] : offset - stored[0][2] + length] if length else b""
-            found |= decode_postings(run, has_freqs, term_id, doc_freq, num_docs).keys()
+        for term_id, doc_freq, offset, length, stated in matched:
+            if stated is None:
+                run = span[offset - stored[0][2] : offset - stored[0][2] + length]
+                stated = decode_postings(run, has_freqs)
+            found |= stated.keys()
         docs = sorted(found)[:limit]
 
     if not payload:
@@ -1007,12 +1077,18 @@ FIXTURES = [
         # query, expected result, expected reads
         "cases": [
             (["tokyo"], {0: "35.694,139.754", 1: "35.671,139.772", 2: "35.664,139.698"}, 4),
-            (["tokyo", "chuo"], {1: "35.671,139.772"}, 5),
+            # `chuo`'s two documents are inline in its entry (SPEC.md 5.3.4);
+            # `tokyo`'s run is shorter than inline would be, so it stays a
+            # run.
+            (["tokyo", "chuo"], {1: "35.671,139.772"}, 4),
             # `chiyoda` names document 0 and is term 0, so its postings are
             # implied and cost no read: the term block and the payload, nothing
             # else.
             (["chiyoda"], {0: "35.694,139.754"}, 2),
-            (["osaka", "tokyo"], {}, 4),
+            (["osaka", "tokyo"], {}, 3),
+            # `osaka` is term 2 and names document 3, so it cannot be implied,
+            # but its postings are inline: the term block and the payload.
+            (["osaka"], {3: "34.681,135.513"}, 2),
             # An absent term still costs the block read that proves it absent.
             (["kyoto"], {}, 1),
         ],
@@ -1061,6 +1137,10 @@ FIXTURES = [
         "tokenizer_id": "name-list",
         "completions": (2, 0, 2),
         "license": ("CC0-1.0", "Mokuji conformance fixtures"),
+        # Every postings run stored, so that a prefix whose terms have several
+        # is read in one span (SPEC.md 4.1); `tiny` is where inline postings
+        # are exercised.
+        "inline_postings": 0,
         "cases": [
             (["tokyo"], {4: "Tokyo"}, 3),
             (["東京"], {4: "Tokyo"}, 3),
@@ -1089,6 +1169,9 @@ FIXTURES = [
         "tokenizer_id": "name-list",
         "completions": (2, 0, 2),
         "license": ("CC0-1.0", "Mokuji conformance fixtures"),
+        # Written the way `names` is, since a segment is written the way its
+        # collection's base is.
+        "inline_postings": 0,
         "cases": [],
     },
 ]
@@ -1131,6 +1214,7 @@ def main():
             extra=spec.get("extra"),
             completions=spec.get("completions"),
             license=spec.get("license"),
+            inline=spec.get("inline_postings", INLINE_POSTINGS),
         )
         # Every case is checked here as well as in cases.toml, so that a change
         # to a fixture cannot quietly invalidate the expectations the other

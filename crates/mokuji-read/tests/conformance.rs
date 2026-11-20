@@ -294,17 +294,35 @@ fn a_limit_stops_the_scan_early() {
 
 #[test]
 fn a_prefix_range_reads_its_postings_in_one_request() {
-    let reader = CountingReader::new(SliceReader::new(load("tiny")));
+    // `names` stores every run, where `tiny` writes short postings inline.
+    let reader = CountingReader::new(SliceReader::new(load("names")));
     let index = block_on(Index::open(&reader)).unwrap();
 
-    let matches = block_on(index.prefix(b"ch", 100)).unwrap();
-    let entries: Vec<_> = matches.iter().map(|(_, entry)| *entry).collect();
+    let matches = block_on(index.prefix(b"bl", 100)).unwrap();
+    let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();
+    let stored = entries.iter().filter(|e| e.run_len() > 0).count();
+    assert!(stored >= 2, "the prefix needs several runs to test this");
     reader.reset();
 
     // Postings are written in term order, so a contiguous range of terms has a
-    // contiguous range of runs. Two terms, one read.
+    // contiguous range of runs: several runs, one read.
     let postings = block_on(index.postings_span(&entries)).unwrap();
     assert_eq!(reader.reads(), 1);
+    assert_eq!(postings.len(), entries.len());
+}
+
+#[test]
+fn postings_the_dictionary_states_cost_no_read() {
+    let reader = CountingReader::new(SliceReader::new(load("tiny")));
+    let index = block_on(Index::open(&reader)).unwrap();
+
+    // `chiyoda` is implied and `chuo` inline (SPEC.md §5.3.4): the term block
+    // that found them holds their postings too.
+    let matches = block_on(index.prefix(b"ch", 100)).unwrap();
+    let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();
+    reader.reset();
+    let postings = block_on(index.postings_span(&entries)).unwrap();
+    assert_eq!(reader.reads(), 0);
     assert_eq!(postings[0].docs, [0]);
     assert_eq!(postings[1].docs, [1, 3]);
 }
@@ -386,5 +404,7 @@ fn a_query_that_asks_no_phrase_never_reads_the_positions() {
     // the file and no reads in a query that does not want them.
     let matches = block_on(index.search(&[b"tokyo", b"chuo"])).unwrap();
     assert_eq!(matches.len(), 1);
-    assert_eq!(reader.reads(), 5);
+    // Two term blocks, `tokyo`'s run, one payload block; `chuo`'s postings are
+    // inline in its entry.
+    assert_eq!(reader.reads(), 4);
 }

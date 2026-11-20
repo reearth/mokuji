@@ -19,16 +19,17 @@ mokuji search documents.mokuji 建築物 -n 3
 363	7.082	procedure/tocC_11_01_02.md|C.11.1.2 LOD1
 299	7.081	procedure/tocC_02_01.md|C.2.1 建築物モデル
 
-3 shown, ranked by BM25
-query:    9 read(s) - 4 dictionary and postings, 5 payload
-bytes:    19499 of 3094317
+448 match(es), 3 shown, ranked by BM25
+open:     1 read(s)
+query:    6 read(s) - 4 dictionary and postings, 2 payload
+bytes:    16488 of 2727976
 ```
 
 | | |
 |---|---|
 | Corpus | 2,523 documents, 15.2 million characters, 25 MB |
 | Terms | 77,240 bigrams |
-| Index | 3.1 MB |
+| Index | 2.7 MB |
 | Build | 2.1 s |
 
 ## Sections, against the address index
@@ -36,13 +37,19 @@ bytes:    19499 of 3094317
 ```
                     documents          addresses
 term_index             1.3 KB            11.1 KB
-term_blocks            1.08 MB  (35%)   863.2 KB  (12%)
-postings               1.96 MB  (63%)          0        implied
-payload                 43.5 KB (1.4%)    5.99 MB  (84%)
+term_blocks            1.10 MB  (40%)   863.2 KB  (12%)
+postings               1.58 MB  (58%)          0        implied
+payload                 43.5 KB (1.6%)    5.99 MB  (84%)
 doc_lengths              4.3 KB                  absent
                        -------           -------
-                        3.1 MB            7.1 MB
+                        2.7 MB            7.1 MB
 ```
+
+54,566 of the 77,240 bigrams, 71%, are rare enough that their postings are
+written in their dictionary entries rather than as runs (`SPEC.md` §5.3.4).
+That took the postings section from 1.96 MB to 1.58 MB and the file from 3.1 MB
+to 2.7. It costs the query above a kilobyte, because the blocks it reads are
+larger, and no reads.
 
 Inverted, and neither shape required the format to choose. What a term is, what
 payload means, whether a term's postings are worth storing, whether anything is
@@ -79,9 +86,9 @@ fragments and the question is nearly always whether they were adjacent.
 
 | | without | with positions |
 |---|---|---|
-| Index | 3.1 MB | 11.9 MB |
-| positions section | — | 8.7 MB (73%) |
-| An ordinary query | 6 reads, 15.5 KB | **6 reads**, 20.0 KB |
+| Index | 2.7 MB | 11.5 MB |
+| positions section | — | 8.7 MB (76%) |
+| An ordinary query | 6 reads, 16.5 KB | **6 reads**, 22.6 KB |
 | A phrase query | not possible | 19 reads |
 
 **Positions cost bytes, not reads.** A query that asks no phrase never touches

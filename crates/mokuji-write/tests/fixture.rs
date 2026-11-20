@@ -25,6 +25,7 @@ fn options() -> Options {
         // the specification by hand.
         compress: false,
         completions: None,
+        inline_postings: 8,
     }
 }
 

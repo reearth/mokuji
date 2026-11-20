@@ -144,7 +144,7 @@ async fn walk<R: RangeReader>(index: &Index<R>) -> Result<Stats, Error> {
     let mut expected_term_id = 0u64;
     for ordinal in 0..term_index.block_count() {
         let block = index.read_term_block(ordinal).await?;
-        let entries = term::decode_block(&block, index.has_positions())?;
+        let entries = term::decode_block(&block, index.block_shape())?;
         if entries.is_empty() {
             return Err(Error::Invalid(format!("term block {ordinal} is empty")));
         }
@@ -177,7 +177,7 @@ async fn walk<R: RangeReader>(index: &Index<R>) -> Result<Stats, Error> {
             if let Some(&first) = term.first() {
                 let slot = &mut stats.first_bytes[usize::from(first)];
                 slot.0 += 1;
-                slot.1 += entry.postings_len;
+                slot.1 += entry.run_len();
             }
             let postings = index.postings(&entry).await?;
             stats.postings += postings.len() as u64;
@@ -231,7 +231,7 @@ async fn check_completions<R: RangeReader>(
 
     for (prefix, listed) in completions.entries() {
         let matched = index.prefix(prefix, usize::MAX).await?;
-        let entries: Vec<_> = matched.iter().map(|(_, e)| *e).collect();
+        let entries: Vec<_> = matched.iter().map(|(_, e)| e.clone()).collect();
         let mut docs: Vec<u64> = index
             .postings_span(&entries)
             .await?
@@ -263,7 +263,7 @@ async fn check_completions<R: RangeReader>(
                 if let Some(&next) = term.get(prefix.len()) {
                     let child = children.entry(next).or_default();
                     child.0 += 1;
-                    child.1 += entry.postings_len;
+                    child.1 += entry.run_len();
                 }
             }
             for (next, (count, span)) in children {

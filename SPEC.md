@@ -151,7 +151,8 @@ reads = 0                      resident set (header, section table, meta, term i
 ```
 
 where `m' <= m`, since documents that are adjacent in document ID order share a
-payload block.
+payload block. A term whose postings are implied or inline (§5.3.4) costs no
+postings read, since its term block already holds them.
 
 **The stated upper bound is `2k + m` range reads, plus one additional read on a
 cold start to populate the resident set.**
@@ -433,7 +434,8 @@ Each entry:
 | `term` | front-coded key, relative to the previous entry in this block |
 | `doc_freq` | `varint`, number of documents containing the term |
 | `postings_offset` | `varint`; first entry absolute, later entries the delta from the previous entry's offset |
-| `postings_len` | `varint` |
+| `postings_len` | `varint`; the run's length in bytes, or `0` for implied postings, or `1` for inline postings |
+| inline postings | present only if `postings_len` is `1`; below |
 | `positions_offset` | `varint`, present only if `HAS_POSITIONS`; first entry absolute, later entries the delta from the previous entry's offset |
 | `positions_len` | `varint`, present only if `HAS_POSITIONS` |
 
@@ -470,9 +472,34 @@ the equivalence in the dictionary removes both the bytes and one range read per
 query.
 
 A writer MAY use implied postings for any term whose postings are exactly the
-document with that term's ID at frequency one, and MUST write a normal run
-otherwise. It is decided per term, so an index whose terms mostly name one
-record each still benefits from the terms that do.
+document with that term's ID at frequency one. It is decided per term, so an
+index whose terms mostly name one record each still benefits from the terms
+that do.
+
+##### Inline postings
+
+A `postings_len` of one means the term's postings are written in the entry
+itself, immediately after `postings_len`. No run of length one can exist — the
+shortest run is three bytes (§5.4.2) — so the value is free to mean this.
+
+| Field | Encoding |
+|---|---|
+| document values | `doc_freq` × `varint` |
+| frequency values | `doc_freq` × `varint`; present only if `HAS_FREQS` |
+
+The first document value is the zigzag encoding (§5.5.3) of `doc − expected`,
+where `expected` is one more than the last document of the nearest earlier entry
+in the same block whose postings are implied or inline, or `first_term_id` if
+there is none. Each later value is `doc_id[i] − doc_id[i − 1] − 1`, and each
+frequency value is `frequency − 1`, as in a run (§5.4.2).
+
+A reader MUST reject inline postings whose `doc_freq` is zero, whose documents
+are not strictly increasing, or that name a document not less than `num_docs`.
+As with implied postings, the entry's `postings_offset` is the running position
+and consumes no bytes of the postings section.
+
+A writer MAY write any term's postings inline, and MUST write a run for any term
+whose postings are neither inline nor implied.
 
 Terms MUST be strictly increasing across the whole dictionary, blocks MUST
 partition the terms in order, and the first term of block `i` MUST equal
@@ -1156,6 +1183,46 @@ of 29 reads and up to 13 MB. Indexing each name as one term (`name-list`,
 answered every one of 2,776 partly typed names in at most 3 reads and 24 KB
 before the payload — the same answers, in all 2,776, as walking the dictionary
 without them.
+
+**Short postings are written in the dictionary entry.**
+A postings run has a fixed cost before its first document: a codec byte, a
+count, and a bit width, three bytes, and then the document itself, uncompressed
+because the postings section's addressed unit is one run (§5.6). A term that
+names one document pays six bytes for perhaps one byte of information, in a
+section no compressor reaches, and a range read to fetch it.
+
+That is the common case in more than dictionaries. Measured on the national
+reverse-geocoding index (`demo/reverse`), 72% of 13.0 million terms name one
+polygon and 24% name two, and postings were 81.6 MB of a 196 MB file — 6.3
+bytes a term. Written in the entry instead, the documents land in a term block,
+which is deflated, and next to the entries for neighbouring cells, which name
+the same polygons. Predicting each entry's first document from the entry before
+it turns that into a run of small numbers. Measured on that index, dictionary
+and postings together went from 94.5 MB to 19.8 MB — 7.3 bytes a term to 1.5 —
+and the file from 196 MB to 121 MB, with one range read fewer for a point.
+
+A text index gains less, and still gains. On the PLATEAU specifications
+(`demo/documents`), 71% of 77,240 bigrams are inlined and the file goes from
+3.1 MB to 2.7 MB; the queries measured there read the same number of times and
+4–6% more bytes, because the blocks they read are larger.
+
+Implied postings (above) are the limiting case and stay as they are: a term
+that names the document with its own ID costs nothing at all, where inline
+postings would cost a byte before compression. The prediction counts implied
+entries too, so an index that mixes the two loses nothing at the seam.
+
+The marker is a length of one rather than a flag, because a flag would cost a
+bit in every entry of every file, and one is a length no run can have. A reader
+written before this rule fails on such an entry rather than misreading it,
+since a one-byte run is malformed.
+
+Which terms to inline is the writer's choice. Moving postings into a block
+makes the block larger, and a block is read for every lookup of every term in
+it; the reference writer inlines a term only when doing so is no longer than
+the run it replaces and no longer than a stated bound (`--inline-postings`),
+eight bytes by default. On the PLATEAU index a bound of 64 made the file 0.9%
+smaller than 8 did and the queries 11–14% larger, and on the reverse-geocoding
+index every bound from 8 to 64 produced the same file.
 
 **The license and the credit are in the metadata, not in `attrs`.**
 `attrs` is where an application puts what only it understands, and a reader

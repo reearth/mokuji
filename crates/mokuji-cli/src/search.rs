@@ -225,7 +225,7 @@ async fn rank<R: RangeReader>(
 
     let mut runs = Vec::with_capacity(present.len());
     for (_, entry) in &present {
-        runs.push((*entry, index.postings(entry).await?));
+        runs.push((entry.clone(), index.postings(entry).await?));
     }
     let probed: Vec<(String, u64)> = present
         .iter()

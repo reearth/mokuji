@@ -4,6 +4,10 @@ use mokuji_format::{
     HEADER_LEN, SECTION_ENTRY_LEN, SPEC_MAJOR, SPEC_MINOR,
 };
 
+/// A `postings_len` meaning the postings follow in the entry (`SPEC.md`
+/// §5.3.4). No run is this short, so the value is free.
+const INLINE: u64 = 1;
+
 /// Build parameters.
 ///
 /// These belong in the metadata section's `generator.params`, since `SPEC.md`
@@ -57,6 +61,15 @@ pub struct Options {
     pub compress: bool,
     /// Whether to answer expensive prefixes ahead of time (`SPEC.md` §5.3.5).
     pub completions: Option<Completions>,
+    /// The most bytes a term's postings may take when written inline, in its
+    /// dictionary entry (`SPEC.md` §5.3.4); zero writes every term a run.
+    ///
+    /// A term is inlined only when that is also no longer than its run would
+    /// be. Inline postings are compressed with the block and cost no read, but
+    /// they make the block larger, and a block is read for every lookup of
+    /// every term in it — so the bound keeps long lists in runs, where only the
+    /// query that wants them pays.
+    pub inline_postings: usize,
 }
 
 /// Which prefixes get an entry in the completions section, and how many
@@ -89,6 +102,7 @@ impl Default for Options {
             doc_lengths: false,
             compress: true,
             completions: None,
+            inline_postings: 8,
         }
     }
 }
@@ -150,7 +164,13 @@ pub struct Builder {
 struct Term {
     term: Vec<u8>,
     doc_freq: u64,
+    /// The postings run; empty when the postings are implied or inline.
     run: Vec<u8>,
+    /// The postings as written in the dictionary entry, when they are.
+    inline: Option<Vec<u8>>,
+    /// The documents and frequencies, kept while the term is short enough
+    /// that it might yet be inlined, and dropped once that is decided.
+    short: Option<(Vec<u64>, Vec<u64>)>,
     positions: Vec<u8>,
     /// The term's first documents, as many as a completion lists; empty unless
     /// completions were asked for.
@@ -359,6 +379,7 @@ impl Builder {
             });
         }
 
+        self.inline_postings();
         let term_chunks: Vec<&[Term]> = self.terms.chunks(self.options.terms_per_block).collect();
         let per_block = self.options.docs_per_payload_block as usize;
         let raw_payload_blocks: Vec<Vec<u8>> = match self.options.payload {
@@ -690,7 +711,16 @@ impl Builder {
                     },
                     &mut block,
                 );
-                varint::encode(term.run.len() as u64, &mut block);
+                match &term.inline {
+                    Some(inline) => {
+                        varint::encode(INLINE, &mut block);
+                        block.extend_from_slice(inline);
+                    }
+                    // Zero for implied postings, which have no run.
+                    None => {
+                        varint::encode(term.run.len() as u64, &mut block);
+                    }
+                }
                 if self.options.positions {
                     varint::encode(
                         match previous_positions {
@@ -752,6 +782,8 @@ impl Builder {
                 term: open.term,
                 doc_freq: 1,
                 run: Vec::new(),
+                inline: None,
+                short: None,
                 positions,
                 head,
             });
@@ -779,13 +811,64 @@ impl Builder {
             bitpack::encode(&freqs, &mut run);
         }
 
+        // Every inline value costs at least a byte, so a term with more
+        // documents than the bound allows bytes can never be inlined, and its
+        // documents need not be kept until that is decided.
+        let doc_freq = open.docs.len() as u64;
+        let short =
+            (open.docs.len() <= self.options.inline_postings).then_some((open.docs, open.freqs));
         self.terms.push(Term {
             term: open.term,
-            doc_freq: open.docs.len() as u64,
+            doc_freq,
             run,
+            inline: None,
+            short,
             positions,
             head,
         });
+    }
+
+    /// Moves short postings into their dictionary entries (`SPEC.md` §5.3.4).
+    ///
+    /// Done once every term is known and before anything is placed, because
+    /// the encoding depends on the block a term lands in — its first document
+    /// is predicted from the entries before it in the same block — and the
+    /// decision changes how long the postings section is.
+    fn inline_postings(&mut self) {
+        let bound = self.options.inline_postings;
+        let has_freqs = self.options.has_freqs;
+        let per_block = self.options.terms_per_block;
+        for (ordinal, chunk) in self.terms.chunks_mut(per_block).enumerate() {
+            let first_term_id = (ordinal * per_block) as u64;
+            let mut expected = first_term_id;
+            for (i, term) in chunk.iter_mut().enumerate() {
+                let Some((docs, freqs)) = term.short.take() else {
+                    if term.run.is_empty() {
+                        // Implied: the document is the term's own ID.
+                        expected = first_term_id + i as u64 + 1;
+                    }
+                    continue;
+                };
+                if bound == 0 {
+                    continue;
+                }
+                let mut inline = Vec::new();
+                varint::encode(zigzag(docs[0] as i64 - expected as i64), &mut inline);
+                for pair in docs.windows(2) {
+                    varint::encode(pair[1] - pair[0] - 1, &mut inline);
+                }
+                if has_freqs {
+                    for &freq in &freqs {
+                        varint::encode(freq - 1, &mut inline);
+                    }
+                }
+                if inline.len() <= bound && inline.len() <= term.run.len() {
+                    expected = docs[docs.len() - 1] + 1;
+                    term.inline = Some(inline);
+                    term.run = Vec::new();
+                }
+            }
+        }
     }
 }
 

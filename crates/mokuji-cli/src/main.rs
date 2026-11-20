@@ -15,6 +15,10 @@ mokuji - a cloud-optimized concordance format
 usage:
     mokuji build <input.tsv> <output.mokuji> [options]
         --terms-per-block <n>          terms per dictionary block (default 128)
+        --inline-postings <bytes>      write a term's postings in its dictionary
+                                       entry when they fit in this many bytes
+                                       and no more than a run would take
+                                       (default 8; 0 writes every term a run)
         --docs-per-payload-block <n>   documents per payload block (default 64)
         --no-freqs                     omit term frequencies
         --positions                    store where each term occurs, which is
@@ -185,6 +189,7 @@ fn build_command(input: &str, output: &str, flags: &[&str]) -> Result<(), Error>
             "--no-doc-lengths" => options.doc_lengths = false,
             "--positions" => options.positions = true,
             "--terms-per-block" => options.terms_per_block = take_number(flag, &mut rest)? as usize,
+            "--inline-postings" => options.inline_postings = take_number(flag, &mut rest)? as usize,
             "--docs-per-payload-block" => {
                 options.docs_per_payload_block = u32::try_from(take_number(flag, &mut rest)?)
                     .map_err(|_| Error::Usage(format!("{flag} is too large")))?;
