@@ -261,6 +261,10 @@ html[data-lang="ja"] .display {
   display: block;
   white-space: nowrap;
 }
+.lede strong {
+  font-weight: 500;
+  color: var(--ink);
+}
 .lede {
   max-width: 34em;
   margin: clamp(20px, 3vw, 36px) 0 0;
@@ -1138,12 +1142,44 @@ html[data-lang="ja"] .done {
 .way .code + .code {
   margin-top: -4px;
 }
+.langs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--rule);
+}
+.langs button {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 4px 0 8px;
+  font: 400 13px/1 var(--mono);
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color var(--t);
+}
+.langs button:hover,
+.langs button[aria-selected="true"] {
+  color: var(--ink);
+}
+.langs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--shu);
+}
+.code-tab {
+  display: grid;
+  gap: 8px;
+}
+.code-tab[hidden] {
+  display: none;
+}
 .code .prompt {
   color: var(--ink-3);
   user-select: none;
-}
-#offline .links {
-  margin-top: clamp(40px, 6vw, 72px);
 }
 @media (max-width: 900px) {
   .steps {
@@ -1157,18 +1193,126 @@ html[data-lang="ja"] .done {
   }
 }
 
+/* --- the end: what to do next ----------------------------------------
+   The one block in the page drawn inverted, ink for paper, so the page ends
+   on the thing to do. */
+
+.cta {
+  margin-top: clamp(96px, 14vw, 180px);
+  padding-top: clamp(56px, 8vw, 104px) !important;
+  padding-bottom: clamp(56px, 8vw, 104px);
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 6px;
+}
+main > section.cta {
+  max-width: calc(var(--measure) - 2 * var(--gutter));
+  padding-left: clamp(24px, 5vw, 72px);
+  padding-right: clamp(24px, 5vw, 72px);
+}
+@media (max-width: 1240px) {
+  main > section.cta {
+    margin-left: var(--gutter);
+    margin-right: var(--gutter);
+  }
+}
+.cta-title {
+  margin: 0;
+  font: 400 clamp(44px, 7vw, 104px) / 0.95 var(--serif);
+  letter-spacing: -0.025em;
+}
+html[data-lang="ja"] .cta-title {
+  font: 500 clamp(32px, 5vw, 72px) / 1.2 var(--serif-ja);
+  letter-spacing: -0.01em;
+}
+.installs {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  margin: clamp(36px, 5vw, 56px) 0 0;
+  padding: 0;
+}
+.installs li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px 12px 18px;
+  border: 1px solid color-mix(in srgb, var(--paper) 18%, transparent);
+  border-radius: 4px;
+}
+.install-label {
+  font: 400 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--paper) 55%, transparent);
+}
+.installs code {
+  font-size: 13px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.cta .copy {
+  border: 1px solid color-mix(in srgb, var(--paper) 30%, transparent);
+  background: none;
+  color: var(--paper);
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--t), background var(--t);
+}
+.cta .copy:hover {
+  border-color: var(--paper);
+}
+.cta-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  margin: clamp(32px, 5vw, 48px) 0 0;
+  font-size: 15px;
+}
+.cta-links a {
+  color: var(--paper);
+  text-decoration-color: color-mix(in srgb, var(--paper) 35%, transparent);
+}
+.cta-links a:hover {
+  text-decoration-color: var(--shu);
+}
+.cta-links .primary {
+  padding: 12px 26px;
+  border-radius: 999px;
+  background: var(--shu);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 500;
+  transition: filter var(--t);
+}
+.cta-links .primary:hover {
+  filter: brightness(1.08);
+}
+@media (max-width: 640px) {
+  .installs li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .install-label {
+    grid-column: 1 / -1;
+  }
+}
+
 /* --- footer -------------------------------------------------------------- */
 
 .foot {
   max-width: var(--measure);
-  margin: clamp(96px, 14vw, 180px) auto 0;
+  margin: clamp(40px, 6vw, 72px) auto 0;
   padding: 28px var(--gutter) 48px;
   border-top: 1px solid var(--rule);
   font-size: 13px;
   color: var(--ink-3);
 }
 .foot p {
-  margin: 0 0 6px;
+  margin: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

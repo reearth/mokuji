@@ -6,7 +6,7 @@
     <title>Mokuji — search, without a server</title>
     <meta
       name="description"
-      content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."
+      content="Mokuji is a file format for search indexes, with libraries and a command line tool to build and read it. The file is uploaded once; each query reads only the few pieces it needs, by HTTP range requests."
     />
     <meta name="color-scheme" content="light dark" />
     <!-- build.py writes ja/index.html from this page, replacing what is
@@ -24,7 +24,7 @@
     <meta property="og:title" content="Mokuji — search, without a server" />
     <meta
       property="og:description"
-      content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."
+      content="Mokuji is a file format for search indexes, with libraries and a command line tool to build and read it. The file is uploaded once; each query reads only the few pieces it needs, by HTTP range requests."
     />
     <meta property="og:image" content="https://reearth.github.io/mokuji/img/og-en.png" />
     <meta property="og:image:width" content="1200" />
@@ -89,8 +89,8 @@
           <span lang="ja"><span class="line">サーバーなし</span><span class="line">で、検索。</span></span>
         </h1>
         <p class="lede">
-          <span lang="en">Mokuji turns a search index into one file you upload. Each query reads only the few pieces of it that it needs, by HTTP range requests.</span>
-          <span lang="ja">Mokuji は、検索インデックスを置くだけのファイル1つにします。検索のたびに読むのは、そのうち必要な数か所だけ。HTTP の Range リクエストで読みます。</span>
+          <span lang="en">Mokuji is a <strong>file format</strong> for search indexes, with <strong>libraries</strong> and a <strong>command line tool</strong> to build and read it. The file is uploaded once; each query reads only the few pieces it needs, by HTTP range requests.</span>
+          <span lang="ja">Mokuji は、検索インデックスの<strong>ファイル形式</strong>と、それを作って読む<strong>ライブラリ</strong>と<strong>CLI</strong>です。ファイルは置くだけ。検索のたびに読むのは、そのうち必要な数か所だけです。</span>
         </p>
         </div>
 
@@ -287,8 +287,8 @@
         <div class="formula" aria-label="2k plus m">2<i>k</i>&thinsp;+&thinsp;<i>m</i></div>
         <div class="chapter-body">
           <p>
-            <span lang="en">For a query of <i>k</i> terms returning <i>m</i> documents, a reader makes at most 2<i>k</i> + <i>m</i> range reads, plus one when it opens the file. The bound is in the specification, and the conformance suite checks the count as well as the answers, for every implementation: the Rust crates, the TypeScript reader, and a Python builder written from the specification alone.</span>
-            <span lang="ja"><i>k</i> 語で <i>m</i> 件を返す検索の読み出しは、多くて 2<i>k</i> + <i>m</i> 回。ファイルを開くときにもう1回。この上限は仕様に書いてあり、conformance スイートは答えだけでなく読み出しの回数も確かめます。Rust の実装、TypeScript の reader、仕様だけから書いた Python のビルダー、どれも同じケースに答えます。</span>
+            <span lang="en">For a query of <i>k</i> terms returning <i>m</i> documents, a reader makes at most 2<i>k</i> + <i>m</i> range reads, plus one when it opens the file. The bound is in the specification, and the conformance suite checks the count as well as the answers, for every implementation: the Rust crates, the TypeScript and Python readers, and a Python builder written from the specification alone.</span>
+            <span lang="ja"><i>k</i> 語で <i>m</i> 件を返す検索の読み出しは、多くて 2<i>k</i> + <i>m</i> 回。ファイルを開くときにもう1回。この上限は仕様に書いてあり、conformance スイートは答えだけでなく読み出しの回数も確かめます。Rust の実装、TypeScript と Python の reader、仕様だけから書いた Python のビルダー、どれも同じケースに答えます。</span>
           </p>
           <p class="links">
             <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md">SPEC.md</a>
@@ -372,35 +372,79 @@ query:    2 read(s) - 1 dictionary and postings, 1 payload
 bytes:    1474 of 2206580</code></pre>
           </div>
           <div class="way">
-            <p class="step-label"><span lang="en">From the library: a file on disk, or one the user picked</span><span lang="ja">ライブラリで（ディスク上のファイル、または利用者が選んだファイル）</span></p>
-            <pre class="code"><code>import { openAsBlob } from "node:fs";
+            <p class="step-label"><span lang="en">From the library, in the same few lines in each language</span><span lang="ja">ライブラリで（どの言語でも同じ数行）</span></p>
+            <!-- One API in three languages: js/, crates/mokuji, python/. If a
+                 name changes in one, change it here and in the others. -->
+            <div class="langs" role="tablist" aria-label="Language">
+              <button type="button" role="tab" aria-selected="true" data-code="js">JavaScript</button>
+              <button type="button" role="tab" aria-selected="false" data-code="rust">Rust</button>
+              <button type="button" role="tab" aria-selected="false" data-code="python">Python</button>
+            </div>
+            <div class="code-tab" data-code="js">
+              <pre class="code"><code>import { openAsBlob } from "node:fs";
 import { MokujiIndex } from "@reearth/mokuji";
 
-const index = await MokujiIndex.open(await openAsBlob("./postal.mokuji"));
-const { results } = await index.lookup("1000005");</code></pre>
-            <pre class="code"><code>import { MokujiIndex } from "@reearth/mokuji";
-
+const index = await MokujiIndex.open(await openAsBlob("postal.mokuji"));
+const { results } = await index.lookup("1000005", 10);</code></pre>
+              <pre class="code"><code>// in a page, a file the user picked
 const index = await MokujiIndex.open(input.files[0]);</code></pre>
+            </div>
+            <div class="code-tab" data-code="rust" hidden>
+              <pre class="code"><code>use mokuji::MokujiIndex;
+
+let index = MokujiIndex::open_file("postal.mokuji").await?;
+let found = index.lookup("1000005", 10).await?;</code></pre>
+            </div>
+            <div class="code-tab" data-code="python" hidden>
+              <pre class="code"><code>from mokuji import MokujiIndex
+
+index = MokujiIndex.open("postal.mokuji")
+found = index.lookup("1000005", 10)</code></pre>
+            </div>
           </div>
         </div>
-        <p class="links">
+      </section>
+
+      <!-- The end: what to do next. Install commands are the ones the
+           packages' READMEs give; change them there first. -->
+      <section class="cta" id="get" aria-labelledby="get-title">
+        <h2 id="get-title" class="cta-title">
+          <span lang="en">Replace a search server<br />with a file.</span>
+          <span lang="ja">検索サーバーを、<br />ファイル1つに。</span>
+        </h2>
+        <ul class="installs">
+          <li>
+            <span class="install-label">JavaScript</span>
+            <code>pnpm add "git+https://github.com/reearth/mokuji.git#&lt;commit&gt;&amp;path:/js"</code>
+            <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
+          </li>
+          <li>
+            <span class="install-label">Rust</span>
+            <code>cargo add --git https://github.com/reearth/mokuji mokuji</code>
+            <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
+          </li>
+          <li>
+            <span class="install-label">Python</span>
+            <code>pip install "git+https://github.com/reearth/mokuji.git@&lt;commit&gt;#subdirectory=python"</code>
+            <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
+          </li>
+          <li>
+            <span class="install-label">CLI</span>
+            <code>cargo install --git https://github.com/reearth/mokuji mokuji-cli</code>
+            <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
+          </li>
+        </ul>
+        <p class="cta-links">
+          <a class="primary" href="https://github.com/reearth/mokuji">GitHub</a>
+          <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md"><span lang="en">Specification</span><span lang="ja">仕様</span></a>
           <a href="https://github.com/reearth/mokuji#readme">README</a>
-          <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md">SPEC.md</a>
-          <a href="https://github.com/reearth/mokuji/tree/main/js">@reearth/mokuji</a>
-          <a href="https://github.com/reearth/mokuji">GitHub</a>
+          <a href="https://github.com/reearth/mokuji/issues"><span lang="en">Questions and measurements</span><span lang="ja">質問・計測の報告</span></a>
         </p>
       </section>
     </main>
 
     <footer class="foot">
-      <p class="status">
-        <span lang="en">Draft, version 0.1. The format may still change before 1.0; pin the commit you depend on.</span>
-        <span lang="ja">ドラフト版 0.1。1.0 までは形式が変わることがあります。使うときはコミットを固定してください。</span>
-      </p>
-      <p class="fine">
-        MIT OR Apache-2.0 · <a href="https://eukarya.io">Eukarya</a> ·
-        <a href="./" class="to-top"><span lang="en">Back to top</span><span lang="ja">トップへ</span></a>
-      </p>
+      <p class="fine">MIT OR Apache-2.0 · Re:Earth and contributors</p>
     </footer>
 
     <script type="module" src="./figures.js"></script>

@@ -8,7 +8,7 @@
 // (reearth/reearth-places); if those change how a file is read, change this
 // too.
 
-import { MokujiIndex } from "./mokuji/index.js";
+import { MokujiIndex, jaAddress } from "./mokuji/index.js";
 
 const ORIGIN = "https://places.reearth.land";
 const DATASETS = `${ORIGIN}/v1/datasets`;
@@ -681,6 +681,20 @@ function contains(rings, x, y) {
   }
   return inside;
 }
+/** The name a 町丁目 is answered with, from its payload's label, as
+ * reearth-places src/jp.js reverseResult names it: the registry's address
+ * when the area was linked to one 町字 (LINKED_ADDRESS), else the census's
+ * names after the registry's municipality, normalized by ja-address. The
+ * fields are the file's `payload-fields`, cut at U+001F; a file without them
+ * has a label that is one name. */
+function areaName(index, label) {
+  const declared = index.meta?.attrs?.["payload-fields"];
+  if (typeof declared !== "string" || !declared) return label;
+  const values = label.split("\x1f");
+  const f = Object.fromEntries(declared.split(",").map((name, i) => [name.trim(), values[i] ?? ""]));
+  return f.LINKED_ADDRESS || jaAddress(f.PREF_NAME + f.MUNICIPALITY + f.S_NAME);
+}
+
 async function locate(index, lat, lon) {
   const precisions = String(index.meta?.attrs?.["geohash-precisions"] ?? "5,6,7").split(",").map(Number);
   const scale = 10 ** Number(/1e(\d+)/.exec(String(index.meta?.attrs?.geometry ?? "1e5"))?.[1] ?? 5);
@@ -693,7 +707,7 @@ async function locate(index, lat, lon) {
   const payloads = await index.payloadSpan(docs);
   const candidates = docs.map((doc, i) => {
     const cut = payloads[i].indexOf("|");
-    return { label: payloads[i].slice(0, cut), rings: decodeRings(payloads[i].slice(cut + 1), scale) };
+    return { label: areaName(index, payloads[i].slice(0, cut)), rings: decodeRings(payloads[i].slice(cut + 1), scale) };
   });
   return { cell, candidates, inside: candidates.filter((c) => contains(c.rings, lon, lat)) };
 }
@@ -818,14 +832,28 @@ document.querySelectorAll("[data-set-lang]").forEach((a) =>
   }),
 );
 
+// The library's code in three languages, one shown.
+document.querySelector(".langs")?.addEventListener("click", (e) => {
+  const tab = e.target.closest("[data-code]");
+  if (!tab) return;
+  for (const b of document.querySelectorAll(".langs [data-code]")) b.setAttribute("aria-selected", String(b === tab));
+  for (const c of document.querySelectorAll(".code-tab")) c.hidden = c.dataset.code !== tab.dataset.code;
+});
+
+// Copy an install command, and say so on the button.
+for (const button of document.querySelectorAll(".installs .copy")) {
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(button.previousElementSibling.textContent);
+      flash(button, t("Copied", "コピーしました"));
+    } catch {
+      flash(button, t("Could not copy", "コピーできませんでした"));
+    }
+  });
+}
+
 const bar = document.querySelector(".bar");
 addEventListener("scroll", () => bar.classList.toggle("scrolled", scrollY > 8), { passive: true });
-
-// Back to top without leaving a # in the address.
-document.querySelector(".to-top").addEventListener("click", (e) => {
-  e.preventDefault();
-  scrollTo({ top: 0 });
-});
 
 startHero();
 

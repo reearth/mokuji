@@ -32,8 +32,8 @@ JA = [
         "<title>Mokuji — サーバーなしで、検索</title>",
     ),
     (
-        'content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."\n    />\n    <meta name="color-scheme"',
-        'content="Mokuji は、検索インデックスを置くだけのファイル1つにします。検索のたびに読むのは、そのうち必要な数か所だけ。"\n    />\n    <meta name="color-scheme"',
+        'content="Mokuji is a file format for search indexes, with libraries and a command line tool to build and read it. The file is uploaded once; each query reads only the few pieces it needs, by HTTP range requests."\n    />\n    <meta name="color-scheme"',
+        'content="Mokuji は、検索インデックスのファイル形式と、それを作って読むライブラリと CLI です。ファイルは置くだけ。検索のたびに読むのは、そのうち必要な数か所だけです。"\n    />\n    <meta name="color-scheme"',
     ),
     (
         '<link rel="canonical" href="https://reearth.github.io/mokuji/" />',
@@ -48,8 +48,8 @@ JA = [
         '<meta property="og:title" content="Mokuji — サーバーなしで、検索" />',
     ),
     (
-        'property="og:description"\n      content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."',
-        'property="og:description"\n      content="Mokuji は、検索インデックスを置くだけのファイル1つにします。検索のたびに読むのは、そのうち必要な数か所だけ。"',
+        'property="og:description"\n      content="Mokuji is a file format for search indexes, with libraries and a command line tool to build and read it. The file is uploaded once; each query reads only the few pieces it needs, by HTTP range requests."',
+        'property="og:description"\n      content="Mokuji は、検索インデックスのファイル形式と、それを作って読むライブラリと CLI です。ファイルは置くだけ。検索のたびに読むのは、そのうち必要な数か所だけです。"',
     ),
     ("/img/og-en.png", "/img/og-ja.png"),
     (
