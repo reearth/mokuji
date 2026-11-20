@@ -150,3 +150,89 @@ export async function locate(index, lat, lon) {
     answers: candidates.filter((c) => contains(c.rings, lon, lat)),
   };
 }
+
+/** The geohash cells of one precision that cover a rectangle. */
+export function cellsCovering(rect, precision) {
+  const bits = 5 * precision;
+  const width = 360 / 2 ** Math.ceil(bits / 2);
+  const height = 180 / 2 ** Math.floor(bits / 2);
+  const cells = new Set();
+  for (let x = Math.floor(rect.minX / width) * width; x < rect.maxX; x += width) {
+    for (let y = Math.floor(rect.minY / height) * height; y < rect.maxY; y += height) {
+      cells.add(geohash(x + width / 2, y + height / 2, precision));
+    }
+  }
+  return [...cells];
+}
+
+/** Whether polygon rings and a rectangle share any point. */
+export function intersects(rings, rect) {
+  const inRect = ([x, y]) => x >= rect.minX && x <= rect.maxX && y >= rect.minY && y <= rect.maxY;
+  for (const ring of rings) if (ring.some(inRect)) return true;
+  const corners = [
+    [rect.minX, rect.minY],
+    [rect.maxX, rect.minY],
+    [rect.maxX, rect.maxY],
+    [rect.minX, rect.maxY],
+  ];
+  if (corners.some(([x, y]) => contains(rings, x, y))) return true;
+  // Neither holds a vertex of the other, so they meet only if edges cross.
+  const side = (a, b, c) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  const cross = (a, b, c, d) => side(a, b, c) !== side(a, b, d) && side(c, d, a) !== side(c, d, b);
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length - 1; i++) {
+      for (let j = 0; j < 4; j++) {
+        if (cross(ring[i], ring[i + 1], corners[j], corners[(j + 1) % 4])) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** The polygons meeting a rectangle, and what finding them touched.
+ *
+ * The same index as `locate`, with no change to it. The rectangle is covered
+ * by cells of one precision, the finest that keeps them to `maxCells`; a
+ * polygon meets one of those cells if its covering has a cell inside it, which
+ * is a prefix lookup, or a coarser cell holding it, which is an exact lookup of
+ * the cell's own prefixes. Both are answered from the dictionary blocks those
+ * keys fall in, all fetched at once, and neighbouring blocks — dictionary or
+ * payload — are read as one request.
+ *
+ * The cells overhang the rectangle, so the candidates are a superset, and each
+ * is tested against the rectangle itself.
+ */
+export async function within(index, rect, { maxCells = 32 } = {}) {
+  const precisions = precisionsOf(index);
+  const scale = scaleOf(index);
+  let precision = Math.max(...precisions);
+  while (precision > 1 && cellsCovering(rect, precision).length > maxCells) precision--;
+  const cells = cellsCovering(rect, precision);
+
+  const ancestors = new Set();
+  for (const cell of cells) {
+    for (const p of precisions) if (p < precision) ancestors.add(cell.slice(0, p));
+  }
+  const [inside, holding] = await Promise.all([
+    index.prefixMany(cells),
+    index.exactMany([...ancestors]),
+  ]);
+  const entries = [...inside.flat(), ...holding.filter(Boolean)];
+  entries.sort((a, b) => a.postingsOffset - b.postingsOffset);
+  const postings = await index.postingsSpan(entries);
+  const docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b);
+  const payloads = await index.payloadSpan(docs);
+
+  const candidates = docs.map((doc, i) => {
+    const payload = String(payloads[i]);
+    const cut = payload.indexOf("|");
+    return { doc, label: payload.slice(0, cut), rings: decodeRings(payload.slice(cut + 1), scale) };
+  });
+  return {
+    precision,
+    cells,
+    terms: entries.length,
+    candidates,
+    answers: candidates.filter((c) => intersects(c.rings, rect)),
+  };
+}

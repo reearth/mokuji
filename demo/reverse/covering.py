@@ -292,10 +292,21 @@ def main():
         help="decimal places of a degree to store coordinates at: 6 is about "
         "10 cm, 5 about a metre. Record it with --meta geometry=delta-int-1e<N>",
     )
+    parser.add_argument(
+        "--terms",
+        help="a TSV of a property's value and further keys for that feature, "
+        "space-separated: link.py writes the registry's town addresses by KEY_CODE",
+    )
+    parser.add_argument("--terms-field", default="KEY_CODE")
     parser.add_argument("--stats", action="store_true")
     args = parser.parse_args()
 
     fields = [f for f in args.label_fields.split(",") if f]
+    extra = {}
+    if args.terms:
+        for line in pathlib.Path(args.terms).read_text(encoding="utf-8").splitlines():
+            value, _, keys = line.partition("\t")
+            extra[value] = keys
     data = json.loads(pathlib.Path(args.geojson).read_text(encoding="utf-8"))
 
     # Documents in spatial order, so that the payload blocks group neighbours.
@@ -345,6 +356,8 @@ def main():
         # dictionary — CJK and base32 do not share prefixes — so a document can
         # carry both keys and the file answers in either direction.
         text = f"{label} {cells_text}" if args.key and label else cells_text
+        if keys := extra.get(str(properties.get(args.terms_field))):
+            text = f"{keys} {text}"
         lines.append(f"{text}\t{label}|{encode(rings, scale)}")
 
     pathlib.Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")

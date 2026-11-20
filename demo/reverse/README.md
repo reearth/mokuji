@@ -54,7 +54,7 @@ answer    東京都小笠原村父島字西町
 | | |
 |---|---|
 | Polygons | 6,021 町丁目, all of Tokyo |
-| Vertices | 563,084, at full source precision |
+| Vertices | 562,692, at full source precision |
 | Cells | 170,266 — 28.3 per polygon |
 | Terms | 105,552 |
 | Index | 2.1 MB, from a 19 MB GeoJSON |
@@ -80,7 +80,7 @@ index on top of it.
 
 | Max precision | Cell | Cells | Terms | Index | File | Candidates per query |
 |---|---|---|---|---|---|---|
-| 6 | 1.2 km × 0.6 km | 20,573 | 4,380 | 25 KB | 1.80 MB | 9.28 |
+| 6 | 1.2 km × 0.6 km | 20,573 | 4,380 | 38 KB | 1.81 MB | 9.28 |
 | **7** | **153 m × 153 m** | **170,266** | **105,552** | **224 KB** | **1.99 MB** | **2.07** |
 | 8 | 38 m × 19 m | 2,076,529 | 1,721,295 | 1.72 MB | 3.49 MB | 1.20 |
 
@@ -143,10 +143,12 @@ built from. Such postings are now written in the dictionary entry (`SPEC.md`
 
 ## Where it stops
 
-**FlatGeobuf does this better, and does it exactly.** A packed Hilbert R-tree
-answers a point query in three or four reads with no approximation at all, and
-that is what it is for. A covering is an approximation that a client has to
-finish.
+**FlatGeobuf is the established way to do this, and GIS tools read it.** Its
+packed Hilbert R-tree narrows a point to bounding boxes, a covering narrows it
+to cells, and either leaves the point-in-polygon test to the client. Measured
+on the whole country, [below](#against-flatgeobuf), the R-tree narrows no
+better and costs more: about eight requests and 150 KB a point, against two and
+20 KB here, from a file four times the size.
 
 What this is for is different: the same file holds the forward direction too.
 An address key and a geohash cell occupy disjoint ranges of one sorted
@@ -179,38 +181,49 @@ not about which structure is better.
 
 ## The whole country
 
-All 47 prefectures in one file, built and checked rather than estimated:
+All 47 prefectures in one file, built and checked rather than estimated. The
+keys from the address registry that `link.py` writes are described
+[below](#linked-to-the-address-registry):
 
 ```sh
 ./fetch-boundaries.sh all
+python3 link.py --fullset ../addresses/abr/mt_town_fullset_all.csv \
+    --pos ../addresses/abr/pos --boundaries 'boundaries/pref??.geojson' --out links.tsv
 for code in $(seq -w 1 47); do echo $code; done | xargs -P 7 -I{} \
   python3 covering.py --geojson boundaries/pref{}.geojson --out boundaries/cover{}.tsv \
-    --max-precision 7 --label-fields PREF_NAME,CITY_NAME,S_NAME --key --skip HCODE=8154
+    --max-precision 7 --label-fields PREF_NAME,CITY_NAME,S_NAME --key --skip HCODE=8154 \
+    --terms links.tsv
 cat boundaries/cover??.tsv > national.tsv
 mokuji build national.tsv reverse-jp.mokuji --tokenizer space-split \
     --no-freqs --no-doc-lengths --docs-per-payload-block 32 \
-    $(python3 ../provenance.py args boundaries/pref??.zip) --source covering.py \
+    $(python3 ../provenance.py args boundaries/pref??.zip \
+        ../addresses/abr/mt_town_fullset_all.csv.zip) \
+    --source covering.py --source link.py \
     --meta geohash-precisions=5,6,7 --meta geometry=delta-int-1e6 \
-    --attribution "出典：政府統計の総合窓口(e-Stat)（令和2年国勢調査 小地域境界）を加工して作成"
+    --attribution "出典：政府統計の総合窓口(e-Stat)（令和2年国勢調査 小地域境界）を加工して作成。アドレス・ベース・レジストリ（デジタル庁）, CC BY 4.0"
 ```
 
 | | |
 |---|---|
 | Polygons | 231,668 町丁目, all 47 prefectures |
 | Cells | 17,134,266 — 633 at precision 5, 222,901 at 6, the rest at 7 |
-| Terms | 13,000,764, cells and address keys together |
-| **Index** | **123 MB**, both directions, from a 395 MB corpus; 88.5 MB [to the metre](#two-editions-as-published-and-to-the-metre) |
+| Terms | 13,589,325: cells, census names and registry addresses |
+| **Index** | **126 MB**, from a 435 MB corpus; 91.5 MB [to the metre](#two-editions-as-published-and-to-the-metre) |
 | Opening | 1 request, 256 KB |
-| A point | 4–6 range reads; 2.9 requests and 13.5 KB in the browser |
-| Build | 38 s, after 3 minutes of covering on 7 cores |
+| A point | 4–6 range reads from the CLI; 2.1 requests and 19.8 KB in the browser |
+| Build | 50 s, after 3 minutes of covering on 7 cores |
+
+The browser figure is the mean over 500 points inside polygons, a random
+町丁目 each, through `../web/reverse.js`, which reads neighbouring blocks in one
+request.
 
 Where the bytes went:
 
 | Section | |
 |---|---|
 | Geometry (payload) | 103.1 MB |
-| Dictionary blocks, with most postings in them | 19.8 MB |
-| Postings | 0.007 MB |
+| Dictionary blocks, with most postings in them | 22.3 MB |
+| Postings | 0.4 MB |
 | Everything resident | 0.2 MB |
 
 The first build was 196 MB, and 81.6 MB of it was postings: 13.0 million cells,
@@ -223,9 +236,13 @@ costs one read fewer, since its postings arrive with the term block.
 
 Payload blocks are 32 documents rather than the default 64. A point fetches one
 to three polygons, and a smaller block carries fewer neighbours along with
-them: in the browser, 13.5 KB a point against 22.1 KB, for a file 1.8 MB
-larger. Sixteen documents would make it 9.1 KB, and push the resident set past
-the 256 KB a reader asks for at open, which then takes two requests.
+them: in the browser, 13.5 KB a point against 22.1 KB at seven landmarks, for a
+file 1.8 MB larger. Sixteen documents would make it 9.1 KB, and push the
+resident set past the 256 KB a reader asks for at open, which then takes two
+requests.
+
+Before the registry's keys were added, at the same seven landmarks and reading
+each block on its own:
 
 | | 196 MB build | 123 MB build |
 |---|---|---|
@@ -251,11 +268,11 @@ than assuming one.
 
 | | 10⁻⁶° (as published) | 10⁻⁵° (a metre) |
 |---|---|---|
-| Index | 123.2 MB | **88.5 MB** |
+| Index | 126.1 MB | **91.5 MB** |
 | Geometry (payload) | 103.1 MB | 68.5 MB |
 | Polygons | 231,668 | 231,668 — rounding drops none |
 | Opening | 1 request | 1 request |
-| A point, in the browser | 2.9 requests, 13.5 KB | 2.7 requests, 10.1 KB |
+| A point, in the browser | 2.1 requests, 19.8 KB | 2.1 requests, 14.2 KB |
 
 How often the rounded edition answers differently, against the published
 geometry, both by brute force over every polygon:
@@ -301,6 +318,93 @@ answer    静岡県富士宮市富士山国有林
 
 `../web/reverse.html?url=<url>` reads it from a bucket; see `../web`.
 
+### Linked to the address registry
+
+The town-level index in `../addresses` answers an address with a point. This
+one answers a point with a polygon, and it can answer the address too, if the
+two agree on what the address is called. `link.py` gives each polygon the keys
+the town index answers with — the registry's town address, normalized by the
+same `ja-address` the town index's terms were — so the term a town lookup
+returns is a term here:
+
+```
+東京都千代田区丸の内一丁目
+  -> town index:  東京都千代田区丸の内1丁目            2 requests
+  -> this index:  東京都千代田区丸の内一丁目 (polygon)  2 requests, 9.1 KB
+```
+
+There is no published table to join the two on. The registry's position table
+has a column for the census small area, `cns_bnd_s_area_kcode`, and in the
+2026-11-15 release it is empty in every row. So each of the registry's 726,285
+町字 in force is linked the way a person would link it:
+
+| How | 町字 | |
+|---|---|---|
+| The name | 527,006 | the municipality codes agree and the names do once numerals, ヶ/ケ, の/ノ, 大字 and 字 are folded |
+| Within | 28,003 | the census divides a 大字 the registry does not, and the census area's name begins with it |
+| The point | 38,909 | no name matches, and the registry's own point for it falls in the polygon |
+| Its 大字 | 57,285 | none of those, so it takes the polygons of its 大字・町 |
+| Not linked | 75,082 | |
+
+Of the name links whose 町字 has a point of its own, 151,197 hold it in one of
+the polygons they name and 6,019, 3.8%, do not: places where two areas of one
+municipality share a name, or where the census and the registry draw a 町 in
+different places. Sampled through both files, 1,797 of 2,006 town addresses,
+90%, came back with a polygon, 1.5 polygons each.
+
+The 884,333 keys add 2.9 MB, 2.4%, mostly to the dictionary.
+
+### Rectangles
+
+The covering answers *which polygons meet this area* from the same file with
+no change to it. `reverse.js` `within()` covers the rectangle with the finest
+cells that keep it to 32, looks up every term beginning with one of them (a
+polygon with a cell inside) and every cell that holds one (a polygon covered
+more coarsely), and tests each candidate against the rectangle. Measured
+against FlatGeobuf below, same points and rectangles, every answer the same:
+
+| Rectangle | Polygons | This index | FlatGeobuf |
+|---|---|---|---|
+| Tokyo Station, 0.5 km | 5 | 3 requests, 17 KB | 5 requests, 237 KB |
+| Tokyo Station, 2 km | 59 | 8 requests, 67 KB | 8 requests, 345 KB |
+| Tokyo Station, 10 km | 839 | 14 requests, 418 KB | 11 requests, 1,627 KB |
+| Sapporo, 2 km | 221 | 12 requests, 101 KB | 8 requests, 371 KB |
+| Rural Hokkaido, 10 km | 3 | 3 requests, 86 KB | 8 requests, 229 KB |
+
+The requests are close only because the reader asks for neighbouring blocks
+together. The cells covering a rectangle are short prefixes in neighbouring
+dictionary blocks, and the documents are numbered in spatial order, so their
+payload blocks are neighbours too; read one block at a time, the 10 km
+rectangle is 68 requests. `SPEC.md` §4 allows a reader to coalesce, since it
+only ever lowers the count.
+
+Coarser cells mean fewer lookups and more candidates to discard. Covering the
+10 km rectangle with 2 cells rather than 9 fetches 5,362 polygons for 839
+answers, 2.0 MB.
+
+### Against FlatGeobuf
+
+The same 231,668 polygons and labels, written by the `flatgeobuf` crate with
+its packed Hilbert R-tree, as GDAL writes it, and read by the `flatgeobuf` npm
+package, against 500 points inside polygons:
+
+| | This index | 1 m edition | FlatGeobuf |
+|---|---|---|---|
+| File | 126 MB | 91.5 MB | 534 MB |
+| Opening | 1 request, 256 KB | 1 request, 256 KB | 1 request, 13 KB |
+| A point | 2.1 requests, 19.8 KB | 2.1 requests, 14.2 KB | 7.8 requests, 150 KB |
+| Candidates a point | 2.31 | 2.32 | 2.28 |
+
+Every answer was the same, bar one point beside a boundary in the 1 m edition.
+The candidates are as few either way: an R-tree of bounding boxes narrows as
+well as a covering does. The difference is the bytes — FlatGeobuf stores a
+coordinate as two uncompressed doubles, sixteen bytes a vertex, and walks its
+tree a level a request.
+
+FlatGeobuf is still what GIS tools read; this is not. QGIS and GDAL open it with
+nothing written, and its features are a standard geometry encoding, where these
+are `covering.py`'s own.
+
 ### What it was estimated to cost
 
 Before it was built, the covering was run over all 47 prefectures and the byte
@@ -323,7 +427,7 @@ of the cells, because a rural 大字 has a long boundary and a covering pays for
 boundary; and Tokyo, at 28 cells per polygon against a national mean of 74, is
 the cheapest kind of geography there is.
 
-Whether it ships as one 123 MB object or 47 averaging under 3 MB is a
+Whether it ships as one 126 MB object or 47 averaging under 3 MB is a
 publishing choice, not a format one — the reads are the same either way.
 
 ## Where it comes from
@@ -331,16 +435,9 @@ publishing choice, not a format one — the reads are the same either way.
 The 2020 Census small-area boundaries, published by Japan's Statistics Bureau
 through e-Stat. One polygon per 町丁目 — the same unit the town-level address
 index in `../addresses` is keyed by, which is what makes the two directions
-joinable.
-
-Joinable, not joined. The census and the Address Base Registry are different
-publications of different years, and they spell the same place differently:
-`丸の内一丁目` here, `丸の内1丁目` in the registry once `ja-address` has
-normalized it, and some census names carry annotations such as `円山西町（番地）`
-that the registry does not. A client that wants the registry's coordinates for a
-polygon has to put the label through the same normalization, and should expect
-some labels to have no counterpart. Boundaries also stop at 2020: a 住居表示 or a
-renaming since then is not in them.
+joinable; `link.py` [joins them](#linked-to-the-address-registry) where it can.
+Boundaries stop at 2020: a 住居表示 or a renaming since then is not in them,
+which is one reason some of the registry's 町字 find no polygon.
 
 e-Stat's terms allow reuse, commercial use included, with the credit
 `出典：政府統計の総合窓口(e-Stat)` and a statement that the data was processed;

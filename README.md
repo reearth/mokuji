@@ -140,8 +140,10 @@ map. A geohash cell is a string whose prefixes are the cells containing it, so
 *which polygon holds this point* is a term lookup: 6,021 Tokyo 町丁目 boundaries
 in 2.0 MB, a point answered in 3–4 reads, and the address key alongside the
 cells for 27 KB more — one file, both directions. The whole country is 231,668
-boundaries in 123 MB, or 88.5 MB with coordinates rounded to a metre, a point
-answered in 4–6 reads.
+boundaries in 126 MB, or 91.5 MB with coordinates rounded to a metre, a point
+answered in 2 requests and 20 KB — against 8 requests and 150 KB from the same
+polygons in FlatGeobuf — and each polygon keyed by the address registry's name
+for it too.
 
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are

@@ -22,7 +22,7 @@ mokuji search documents.mokuji 建築物 -n 3
 448 match(es), 3 shown, ranked by BM25
 open:     1 read(s)
 query:    6 read(s) - 4 dictionary and postings, 2 payload
-bytes:    16488 of 2727976
+bytes:    16488 of 2727977
 ```
 
 | | |
@@ -88,7 +88,7 @@ fragments and the question is nearly always whether they were adjacent.
 |---|---|---|
 | Index | 2.7 MB | 11.5 MB |
 | positions section | — | 8.7 MB (76%) |
-| An ordinary query | 6 reads, 16.5 KB | **6 reads**, 22.6 KB |
+| An ordinary query | 6 reads, 16.5 KB | **6 reads**, 20.6 KB |
 | A phrase query | not possible | 19 reads |
 
 **Positions cost bytes, not reads.** A query that asks no phrase never touches

@@ -43,7 +43,12 @@ application's.
 string whose prefixes are the cells containing it, so the polygon under a point
 is found by looking up two terms — the cell and its parent — and the page
 finishes the job with a point-in-polygon test against the geometry that came
-back. **2 to 4 range requests over 6,021 boundaries in 2.0 MB.**
+back. **2 or 3 range requests over 6,021 boundaries in 2.0 MB**: the reader
+asks for neighbouring blocks in one request, which a point's candidates, being
+neighbours, usually are.
+
+`reverse.js` also answers which polygons meet a rectangle, `within()`, from the
+same file; `../reverse/README.md` has what it costs against FlatGeobuf.
 
 The map draws both halves of that: orange for what the index returned, blue for
 what survived the test. A cell straddling a boundary names every polygon it

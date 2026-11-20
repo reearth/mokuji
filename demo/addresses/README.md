@@ -28,7 +28,7 @@ mokuji prefix abr.mokuji "東京都千代田区丸の内"
 東京都千代田区丸の内3丁目	139.763476,35.676952
 
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    3116 of 4680899
+bytes:    3118 of 4682032
 ```
 
 **725,546 addresses nationwide, every one with coordinates, in 4.7 MB. Two
