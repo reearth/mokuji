@@ -41,13 +41,8 @@ pub fn run(manifest_path: &Path, output: &Path) -> Result<(), Error> {
     let base = collection.segment(0);
     let base_meta = Meta::parse(base.meta())?;
     let options = options_of(base, &base_meta)?;
-    for i in 1..collection.len() {
-        agree(
-            &manifest.segments[i].path,
-            base,
-            &base_meta,
-            collection.segment(i),
-        )?;
+    for (i, segment) in manifest.segments.iter().enumerate().skip(1) {
+        agree(&segment.path, base, &base_meta, collection.segment(i))?;
     }
 
     // New IDs in collection order.
