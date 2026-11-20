@@ -87,8 +87,49 @@ export function nameList(text: string): string {
     .join(" ");
 }
 
+/** The terms `bigram` makes of a text (TOKENIZERS.md): compatibility
+ * composition, a run at everything that is not a letter or a digit, each run
+ * lowercased, and a run that is all ASCII kept whole while any other becomes
+ * its character bigrams, or its one character. */
+export function bigram(text: string): string[] {
+  const out: string[] = [];
+  for (const piece of text.normalize("NFKC").split(/[^\p{Alphabetic}\p{N}]/u)) {
+    if (!piece) continue;
+    const run = piece.toLowerCase();
+    // eslint-disable-next-line no-control-regex
+    if (/^[\x00-\x7f]*$/.test(run)) {
+      out.push(run);
+      continue;
+    }
+    const chars = [...run];
+    if (chars.length === 1) {
+      out.push(chars[0]!);
+      continue;
+    }
+    for (let i = 0; i + 1 < chars.length; i++) out.push(chars[i]! + chars[i + 1]!);
+  }
+  return out;
+}
+
 /** What a query goes through, by the identifier the index records. */
 export type Normalize = (query: string) => string;
+
+/** The terms a query is looked up as, by the identifier the index records.
+ *
+ * A search, unlike a prefix, puts the query through the tokenizer whole: a
+ * tokenizer that splits turns what was typed into several terms. */
+export const SPLITTERS: Readonly<Record<string, (query: string) => string[]>> = {
+  "space-split": (q) => q.split(" ").filter(Boolean),
+  identity: (q) => [q],
+  bigram,
+  "ja-address": (q) => [jaAddress(q)],
+  "ja-address-bigram": (q) => bigram(jaAddress(q)),
+  "name-list": (q) =>
+    q
+      .split("\u001f")
+      .map(nameList)
+      .filter(Boolean),
+};
 
 export const TOKENIZERS: Readonly<Record<string, Normalize>> = {
   "space-split": (q) => q,

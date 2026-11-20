@@ -14,9 +14,11 @@ export type {
   Postings,
   Provenance,
   RequestInfo,
+  SearchOptions,
+  SearchResult,
   Source,
   Stats,
   TermEntry,
 } from "./mokuji.js";
-export { TOKENIZERS, jaAddress, nameList } from "./tokenizers.js";
+export { SPLITTERS, TOKENIZERS, bigram, jaAddress, nameList } from "./tokenizers.js";
 export type { Normalize } from "./tokenizers.js";

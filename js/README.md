@@ -30,6 +30,19 @@ const found = await collection.complete("tokyo", 10);
 
 The query goes through the tokenizer the file records (`TOKENIZERS.md`)
 before it is looked up, so `一丁目` finds `1丁目` in a `ja-address` index.
+
+`search` ranks by BM25, the same ranking as `mokuji search` with the same
+options, and splits the query the way the file's tokenizer does — into bigrams,
+for a `ja-address-bigram` index:
+
+```ts
+const fuzzy = await MokujiIndex.open("https://example.com/abr-fuzzy.mokuji");
+const { results } = await fuzzy.search("和光市", { boost: "municipality" });
+// results[0].payload === "埼玉県和光市|139.605693,35.781104"
+
+// Typed wrong: any of its bigrams, the six rarest, without length normalization.
+await fuzzy.search("千代田区丸乃内", { any: true, probe: 6, lengthNorm: 0 });
+```
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
 

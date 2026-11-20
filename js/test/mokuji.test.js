@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { MokujiCollection, MokujiIndex, jaAddress, nameList } from "../dist/index.js";
+import { MokujiCollection, MokujiIndex, bigram, jaAddress, nameList } from "../dist/index.js";
 
 const CONFORMANCE = fileURLToPath(new URL("../../conformance/", import.meta.url));
 
@@ -315,4 +315,36 @@ test("ja-address folds the spellings of a place name onto one", () => {
   // Inside a katakana word these are letters, not connectives.
   assert.equal(jaAddress("マルノウチ"), "マルノウチ");
   assert.equal(jaAddress("ケーキ"), "ケーキ");
+});
+
+test("bigram splits as TOKENIZERS.md says", () => {
+  assert.deepEqual(bigram("建築物"), ["建築", "築物"]);
+  assert.deepEqual(bigram("CityGML"), ["citygml"]);
+  assert.deepEqual(bigram("3D都市"), ["3d", "d都", "都市"]);
+  assert.deepEqual(bigram("都"), ["都"]);
+  assert.deepEqual(bigram(jaAddress("丸の内一丁目")), ["丸の", "の内", "内1", "1丁", "丁目"]);
+});
+
+test("search ranks as mokuji search does", async () => {
+  const tiny = await MokujiIndex.open(await fileSource("tiny"));
+  // Scores to three places, as `mokuji search` prints them for the same file.
+  const rounded = (r) => r.results.map((x) => [x.doc, x.score.toFixed(3), x.payload]);
+
+  const all = await tiny.search("tokyo chuo");
+  assert.deepEqual(rounded(all), [[1, "1.050", "35.671,139.772"]]);
+
+  const any = await tiny.search("tokyo chuo", { any: true });
+  assert.deepEqual(rounded(any), [
+    [1, "1.050", "35.671,139.772"],
+    [3, "0.693", "34.681,135.513"],
+    [0, "0.357", "35.694,139.754"],
+    [2, "0.357", "35.664,139.698"],
+  ]);
+
+  const probed = await tiny.search("tokyo chuo", { any: true, probe: 1 });
+  assert.deepEqual(probed.probed.map((p) => p.term), ["chuo"]);
+  assert.equal(probed.skipped, 1);
+
+  assert.equal((await tiny.search("tokyo nowhere")).matched, 0);
+  await assert.rejects(tiny.search("tokyo", { boost: "absent" }));
 });

@@ -59,6 +59,42 @@ export interface Column {
     scaleExponent: number;
     values: number[];
 }
+/** How `search` combines and ranks the terms of a query. */
+export interface SearchOptions {
+    /** How many results to return with their payload. */
+    limit?: number;
+    /** The union of the terms rather than their intersection: what an n-gram
+     * query wants, since a misspelling shares every gram but two. */
+    any?: boolean;
+    /** Fetch postings for only this many of the terms, the rarest, which the
+     * dictionary says without reading any postings. */
+    probe?: number;
+    /** BM25's `b`, from 0 to 1. Zero for a corpus whose long documents are its
+     * good ones. */
+    lengthNorm?: number;
+    /** An attribute column added to each score as `ln(1 + value)`, a static
+     * prior. */
+    boost?: string;
+}
+/** What `search` found, and what deciding it took. */
+export interface SearchResult {
+    /** The terms the query became. */
+    terms: string[];
+    /** The terms whose postings were read, with how many documents each names. */
+    probed: {
+        term: string;
+        docFreq: number;
+    }[];
+    /** Terms present but not read, because `probe` left them out. */
+    skipped: number;
+    /** Every document matched, best first. */
+    matched: number;
+    results: {
+        doc: number;
+        score: number | null;
+        payload: string;
+    }[];
+}
 /** The completions section (SPEC.md §5.3.5), keyed by prefix bytes. */
 export interface Completions {
     minTerms: number;
@@ -188,6 +224,18 @@ export declare class MokujiIndex {
     /** Payload for documents, as text: opaque bytes decoded, or integers written
      * out against the scale the file declares. */
     payloadSpan(docs: number[]): Promise<string[]>;
+    /** Documents ranked by BM25 over the terms the query becomes.
+     *
+     * The same ranking as `mokuji search`: Robertson–Spärck Jones idf, `k1` of
+     * 1.2, `b` from `lengthNorm`, a union scored over the terms a document
+     * actually has, and ties broken by document ID. Without document lengths the
+     * order is by document ID and the scores are null.
+     *
+     * One request per run of dictionary blocks the terms fall in, then one per
+     * term whose postings are stored as a run, then the payload of the first
+     * `limit`.
+     */
+    search(query: string, options?: SearchOptions): Promise<SearchResult>;
     /** The first `limit` documents for what has been typed.
      *
      * From the completions section when the prefix has an entry that reaches

@@ -8,7 +8,7 @@
 // It bundles no decompressor. The required codec is raw deflate precisely so
 // that a page can use DecompressionStream and stay this small.
 
-import { TOKENIZERS, type Normalize } from "./tokenizers.js";
+import { SPLITTERS, TOKENIZERS, type Normalize } from "./tokenizers.js";
 
 const MAGIC = "MOKUJIv0";
 const SECTION_ENTRY_LEN = 24;
@@ -108,6 +108,37 @@ export interface Column {
   name: string;
   scaleExponent: number;
   values: number[];
+}
+
+/** How `search` combines and ranks the terms of a query. */
+export interface SearchOptions {
+  /** How many results to return with their payload. */
+  limit?: number;
+  /** The union of the terms rather than their intersection: what an n-gram
+   * query wants, since a misspelling shares every gram but two. */
+  any?: boolean;
+  /** Fetch postings for only this many of the terms, the rarest, which the
+   * dictionary says without reading any postings. */
+  probe?: number;
+  /** BM25's `b`, from 0 to 1. Zero for a corpus whose long documents are its
+   * good ones. */
+  lengthNorm?: number;
+  /** An attribute column added to each score as `ln(1 + value)`, a static
+   * prior. */
+  boost?: string;
+}
+
+/** What `search` found, and what deciding it took. */
+export interface SearchResult {
+  /** The terms the query became. */
+  terms: string[];
+  /** The terms whose postings were read, with how many documents each names. */
+  probed: { term: string; docFreq: number }[];
+  /** Terms present but not read, because `probe` left them out. */
+  skipped: number;
+  /** Every document matched, best first. */
+  matched: number;
+  results: { doc: number; score: number | null; payload: string }[];
 }
 
 /** The completions section (SPEC.md §5.3.5), keyed by prefix bytes. */
@@ -953,6 +984,102 @@ export class MokujiIndex {
       }
     }
     return out;
+  }
+
+  /** Documents ranked by BM25 over the terms the query becomes.
+   *
+   * The same ranking as `mokuji search`: Robertson–Spärck Jones idf, `k1` of
+   * 1.2, `b` from `lengthNorm`, a union scored over the terms a document
+   * actually has, and ties broken by document ID. Without document lengths the
+   * order is by document ID and the scores are null.
+   *
+   * One request per run of dictionary blocks the terms fall in, then one per
+   * term whose postings are stored as a run, then the payload of the first
+   * `limit`.
+   */
+  async search(query: string, options: SearchOptions = {}): Promise<SearchResult> {
+    const { limit = 10, any = false, probe, lengthNorm = 0.75, boost } = options;
+    const split = SPLITTERS[this.tokenizerId] ?? ((q: string) => [q]);
+    const terms = split(query);
+    const column = boost === undefined ? undefined : this.column(boost);
+    if (boost !== undefined && !column) {
+      throw new Error(`this index carries no attribute column called '${boost}'`);
+    }
+    const none: SearchResult = { terms, probed: [], skipped: 0, matched: 0, results: [] };
+    if (terms.length === 0) return none;
+
+    const found = await this.exactMany(terms);
+    let present: { term: string; entry: TermEntry }[] = [];
+    for (let i = 0; i < terms.length; i++) {
+      const entry = found[i];
+      if (entry) present.push({ term: terms[i]!, entry });
+      // A term nobody wrote down cannot be in an intersection.
+      else if (!any) return none;
+    }
+    if (present.length === 0) return none;
+
+    // Rarest first: a term matching few documents says the most about which
+    // ones, and costs the least to say it. Stable, as the CLI's sort is.
+    let skipped = 0;
+    if (probe !== undefined) {
+      present = present
+        .map((p, i) => ({ p, i }))
+        .sort((a, b) => a.p.entry.docFreq - b.p.entry.docFreq || a.i - b.i)
+        .map(({ p }) => p);
+      skipped = Math.max(0, present.length - probe);
+      present = present.slice(0, probe);
+    }
+    const runs = await Promise.all(
+      present.map(async ({ entry }) => (await this.postingsSpan([entry]))[0]!),
+    );
+    const probed = present.map(({ term, entry }) => ({ term, docFreq: entry.docFreq }));
+
+    let matched: number[];
+    if (any) {
+      matched = [...new Set(runs.flatMap((r) => r.docs))].sort((a, b) => a - b);
+    } else {
+      const rest = runs.slice(1).map((r) => new Set(r.docs));
+      matched = runs[0]!.docs.filter((doc) => rest.every((s) => s.has(doc)));
+    }
+
+    let ranked: { doc: number; score: number | null }[];
+    if (!this.docLengths) {
+      ranked = matched.map((doc) => ({ doc, score: null }));
+    } else {
+      const lengths = this.docLengths;
+      const n = this.numDocs;
+      const avgdl = Math.max(n === 0 ? 1 : this.sumDoclen / n, 1);
+      const K1 = 1.2;
+      const b = lengthNorm;
+      const at = runs.map((r) => new Map(r.docs.map((doc, i) => [doc, r.freqs[i]!])));
+      ranked = matched.map((doc) => {
+        const dl = lengths[doc] ?? 0;
+        let score = 0;
+        present.forEach(({ entry }, i) => {
+          const tf = at[i]!.get(doc);
+          if (tf === undefined) return;
+          const df = entry.docFreq;
+          const idf = Math.log((n - df + 0.5) / (df + 0.5) + 1);
+          score += (idf * (tf * (K1 + 1))) / (tf + K1 * (1 - b + (b * dl) / avgdl));
+        });
+        if (column) score += Math.log(1 + Math.max(column.values[doc] ?? 0, 0));
+        return { doc, score };
+      });
+      ranked.sort((x, y) => y.score! - x.score! || x.doc - y.doc);
+    }
+
+    const shown = ranked.slice(0, limit);
+    const payloads = await this.payloadSpan(shown.map((r) => r.doc).sort((a, b) => a - b));
+    const byDoc = new Map(
+      shown.map((r) => r.doc).sort((a, b) => a - b).map((doc, i) => [doc, payloads[i]!]),
+    );
+    return {
+      terms,
+      probed,
+      skipped,
+      matched: matched.length,
+      results: shown.map((r) => ({ ...r, payload: byDoc.get(r.doc)! })),
+    };
   }
 
   /** The first `limit` documents for what has been typed.
