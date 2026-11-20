@@ -11,8 +11,11 @@ Mokuji is a single-file layout for an inverted index, designed to be published
 as a static object and queried directly over HTTP range requests. A search
 index becomes a file you upload, not a service you operate.
 
-> Status: **early draft.** The format is not frozen and will change. Do not
-> build on it yet.
+> **Status: draft, version 0.1.** The format may still change incompatibly
+> before 1.0. Every file names the writer and version that produced it, so a
+> file can be rebuilt when that happens; pin the commit you depend on. Questions,
+> measurements on your own data, and independent implementations are welcome
+> as [issues](https://github.com/reearth/mokuji/issues).
 
 ## Why
 
@@ -42,7 +45,8 @@ derivative of a source of truth rather than an opaque blob.
 ```
 Header + section table + metadata + term index   resident, tens of KB
 Term blocks           front-coded, one read per term
-Postings              delta + bit-packing, one read per term
+Postings              delta + bit-packing, one read per term,
+                      or none when a term's documents fit in its entry
 Payload               document ID order, block compressed
 ```
 
@@ -69,25 +73,55 @@ The crate boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
 about each other is a requirement of the format and not only good practice.
 
+## Getting started
+
+The command line tool needs a Rust toolchain:
+
 ```sh
-cargo test
-
-# text<TAB>payload, one document per line
-mokuji build addresses.tsv addresses.mokuji
-mokuji search addresses.mokuji tokyo chuo
-mokuji verify addresses.mokuji --source addresses.tsv
-mokuji info addresses.mokuji
+cargo install --git https://github.com/reearth/mokuji mokuji-cli
 ```
 
-`search` reports what the query cost:
+Its input is one document per line, its text and its payload separated by a
+tab:
+
+```sh
+printf 'tokyo chiyoda marunouchi\t35.681,139.767\n' >  places.tsv
+printf 'tokyo chuo ginza\t35.671,139.772\n'          >> places.tsv
+printf 'osaka kita umeda\t34.702,135.496\n'          >> places.tsv
+
+mokuji build places.tsv places.mokuji
+mokuji search places.mokuji tokyo chuo
+```
+
+`search` prints the matches, then what the query cost:
 
 ```
-1	35.671,139.772
+1	1.451	35.671,139.772
 
-1 match(es)
-open: 1 read(s)
-query: 5 read(s), bound 5
+1 match(es), 1 shown, ranked by BM25
+open:     1 read(s)
+query:    2 read(s) - 1 dictionary and postings, 1 payload
+bytes:    118 of 748
 ```
+
+`mokuji prefix` completes a prefix, `mokuji info` shows the sections and the
+metadata, and `mokuji verify places.mokuji --source places.tsv` reads the whole
+file, checks it, and confirms it was built from that source. `mokuji` with no
+arguments lists every command and option.
+
+To query a file from a browser, a Cloudflare Worker or Node, serve it from
+anywhere that honours `Range` requests and read it with
+[`@reearth/mokuji`](js). The demos below are each a complete, reproducible
+example of one kind of index.
+
+## Implementing it
+
+[SPEC.md](SPEC.md) is meant to be enough to write a reader or a writer without
+reading this code. [conformance](conformance) holds the fixtures and cases an
+implementation answers to — results and the number of range reads — and a
+Python builder that produces the fixtures from the specification alone,
+independently of the Rust writer. The Rust crates, the TypeScript reader and
+that builder all pass the same cases.
 
 ## Three shapes on one layout
 
@@ -165,11 +199,11 @@ What both get is the same: a sorted dictionary, postings and payload that can be
 located without reading anything else, provenance back to a source of truth, and
 a stated bound on the number of range reads.
 
-The full-text side is the less complete of the two. There are no positions, so
-no phrase queries; `bigram` is coarser than morphological analysis and produces
-a larger dictionary; and ranking is the caller's, which is deliberate but is
-still work the caller has to do. See [SPEC.md](SPEC.md) §1 for where those lines
-are drawn and why.
+The full-text side is the less complete of the two. `bigram` is coarser than
+morphological analysis and produces a larger dictionary; phrase queries need
+`--positions`, which quadruples that index; and ranking is the caller's, which
+is deliberate but is still work the caller has to do. See [SPEC.md](SPEC.md) §1
+for where those lines are drawn and why.
 
 ## Address lookup
 
@@ -177,13 +211,19 @@ Forward geocoding is the case the format is shaped for, because an address is a
 hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 
 ```sh
-cd demo/addresses && ./run.sh
+cd demo/addresses
+./fetch-abr.sh abr
+python3 abr.py town --fullset abr/mt_town_fullset_all.csv --pos abr/pos \
+  --city-pos abr/mt_city_pos_all.csv --pos-level --out abr.tsv
+mokuji build abr.tsv abr.mokuji --tokenizer ja-address --payload ints:6 \
+  --attribute pos_level
+mokuji prefix abr.mokuji 東京都千代田区丸の内
 ```
 
-Against the 725,814 addresses of Japan's Address Base Registry, in a 5.7 MB
-file, completing a prefix costs **two range reads and about 1 KB** — and costs
-the same two at any file size, because a contiguous range of terms is contiguous
-in every section at once. See [demo/addresses](demo/addresses) for the
+Against the 725,546 town-level addresses of Japan's Address Base Registry, in a
+4.7 MB file, completing a prefix costs **two range reads and about 3 KB** — and
+costs the same two at any file size, because a contiguous range of terms is
+contiguous in every section at once. See [demo/addresses](demo/addresses) for the
 measurements, the provenance chain back to the register, and what the numbers do
 and do not show.
 
@@ -191,8 +231,8 @@ A browser reads the same kind of file in [demo/web](demo/web) — Tokyo at
 residence level, 1,744,962 addresses in 8.7 MB — with a reader of 13 KB
 gzipped, no WebAssembly and no bundled decompressor. That is what the choice of
 deflate as the required codec buys: browsers already have it. The reader is the
-`@reearth/mokuji` package in [js](js), which a page, a Cloudflare Worker and
-Node all use unchanged.
+[`@reearth/mokuji`](js) package, which a page, a Cloudflare Worker and Node all
+use unchanged.
 
 ## Scope
 
@@ -208,6 +248,16 @@ because it decides what a term is, and the index should record that.
 Because the metadata names the source by content hash, `mokuji verify` can walk
 a whole file, check that everything it claims about itself holds, and confirm
 that it derives from the source it says it does.
+
+## Developing
+
+```sh
+cargo test                                            # the Rust crates
+python3 conformance/fixtures/build_fixtures.py --check  # the fixtures match the spec
+(cd js && npm ci && npm test)                         # the TypeScript reader
+```
+
+CI runs these, with `cargo fmt --check` and `cargo clippy`.
 
 ## License
 

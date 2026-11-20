@@ -9,7 +9,7 @@ It is the third implementation of [SPEC.md](../SPEC.md), after the Rust crates
 and the Python fixture builder, and answers to the same conformance cases,
 read counts included.
 
-> Not published to npm yet: the format is a draft. Depend on it from git (below).
+> Installed from git rather than npm while the format is a draft (below).
 
 ## Use
 
@@ -49,16 +49,16 @@ const source = {
 const index = await MokujiIndex.open(source);
 ```
 
-## Depending on it before it is published
+## Install
 
 `dist/` is committed and checked by CI to be what `src/` builds, so the package
 installs from git with no build step. With pnpm:
 
 ```sh
-pnpm add "git+ssh://git@github.com/reearth/mokuji.git#<commit>&path:/js"
+pnpm add "git+https://github.com/reearth/mokuji.git#<commit>&path:/js"
 ```
 
-Pin a commit: the format and this API are still drafts.
+Pin a commit: the format and this API may change before 1.0.
 
 ## Develop
 

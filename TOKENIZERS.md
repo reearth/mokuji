@@ -27,9 +27,9 @@ produce the same tokens for the same input, and must name every parameter that
 changes the output. Identifiers are never redefined; a change in behaviour is a
 new identifier.
 
-That rule binds from the first published version. While this registry is a
-draft nothing depends on it, and `ja-address` has been changed once under that
-licence — variant folding was added to it — rather than being registered twice.
+That rule binds from version 1.0. Until then an identifier may still change in
+place, and `ja-address` has been changed once that way — variant folding was
+added to it — rather than being registered twice.
 
 Identifiers beginning `x-` are private and will never be registered here.
 
