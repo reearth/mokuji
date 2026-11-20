@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A book's fore-edge with one page pulled out, as the page draws a file. -->
+  <style>
+    .bg { fill: #17150f; } .p { fill: #e9e3d6; } .l { fill: #a39c8b; } .s { fill: #d23f1c; }
+    @media (prefers-color-scheme: dark) { .bg { fill: #ece6d6; } .p { fill: #c8bfab; } .l { fill: #8f8877; } .s { fill: #e04a24; } }
+  </style>
+  <rect class="bg" width="32" height="32" rx="7"/>
+  <rect class="p" x="5" y="13" width="22" height="13" rx="1"/>
+  <rect class="l" x="6" y="13" width="1" height="13"/><rect class="l" x="8" y="13" width="1" height="13"/><rect class="l" x="10" y="13" width="1" height="13"/><rect class="l" x="12" y="13" width="1" height="13"/><rect class="l" x="14" y="13" width="1" height="13"/><rect class="l" x="16" y="13" width="1" height="13"/><rect class="l" x="18" y="13" width="1" height="13"/><rect class="l" x="20" y="13" width="1" height="13"/><rect class="l" x="22" y="13" width="1" height="13"/><rect class="l" x="24" y="13" width="1" height="13"/><rect class="l" x="26" y="13" width="1" height="13"/>
+  <rect class="s" x="17" y="5" width="3" height="21"/>
+</svg>

@@ -808,29 +808,15 @@ async function startReverse() {
 
 // --- the page ----------------------------------------------------------------
 
-function setLang(next) {
-  html.lang = next;
-  html.dataset.lang = next;
-  try {
-    localStorage.setItem("mokuji-lang", next);
-  } catch {}
-  orderTabs();
-  if (!hero.chosen && hero.f && hero.mode !== defaultMode()) {
-    setMode(defaultMode()).then(() => {
-      $("q").value = MODES[hero.mode].examples[0];
-      query();
-    });
-  } else if (hero.mode) {
-    $("q").placeholder = MODES[hero.mode].placeholder();
-    draw();
-    // Place names are shown in the page's language, so ask again.
-    if (hero.mode === "world" && $("q").value.trim()) query();
-  }
-  drawReverse();
-  credit(hero.last?.shelf ?? []);
-}
-
-document.querySelectorAll("[data-set-lang]").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.setLang)));
+// The switch is a link to the other page; following it is a choice, kept so
+// that / stops sending this visitor to /ja/, or starts.
+document.querySelectorAll("[data-set-lang]").forEach((a) =>
+  a.addEventListener("click", () => {
+    try {
+      localStorage.setItem("mokuji-lang", a.dataset.setLang);
+    } catch {}
+  }),
+);
 
 const bar = document.querySelector(".bar");
 addEventListener("scroll", () => bar.classList.toggle("scrolled", scrollY > 8), { passive: true });

@@ -1,8 +1,8 @@
 name: pages
 
 # The landing page in site/, on GitHub Pages. It is static: the files it
-# searches are Re:Earth Places', on object storage, and site/mokuji is a link
-# to js/dist, the reader as committed, which cp -L copies in as files.
+# searches are Re:Earth Places', on object storage. build.py writes the page
+# at / and at /ja/, and copies site/mokuji, a link to js/dist, in as files.
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      - run: cp -RL site _site
+      - run: python3 site/build.py _site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site

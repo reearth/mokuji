@@ -166,9 +166,8 @@ html[data-lang="ja"] :is(h1, h2, p, dd) {
   border-radius: 999px;
   padding: 2px;
 }
-.lang-switch button {
-  border: 0;
-  background: none;
+.lang-switch a {
+  text-decoration: none;
   padding: 3px 10px;
   border-radius: 999px;
   font-size: 12px;

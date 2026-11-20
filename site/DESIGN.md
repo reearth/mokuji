@@ -1,11 +1,16 @@
 # The landing page
 
-`index.html`, `style.css` and `app.js`, served as they are. `mokuji` is a link
-to `../js/dist`; the Pages workflow copies it in as files. Locally:
+`index.html`, `style.css`, `app.js` and `figures.js`. `build.py` writes the
+published site: the page at `/` in English, and at `/ja/` in Japanese.
+`mokuji` is a link to `../js/dist`, copied in as files. Locally:
 
 ```sh
-cd site && python3 -m http.server
+python3 site/build.py _site && python3 -m http.server -d _site
 ```
+
+The images in `img/` are rendered from `brand/` by `brand/render.sh`, which
+needs agent-browser; run it after changing `img/favicon.svg` or
+`brand/og.html`, and commit the PNGs.
 
 ## What it is for
 
@@ -33,8 +38,12 @@ searching anyway.
   repository's READMEs report; change them there first. No cost comparisons
   that were not measured.
 - **Both languages are in the page,** in `lang="en"` and `lang="ja"` pairs,
-  and one is shown. Japanese visitors see Japan's addresses and postal codes
-  first; others, places worldwide.
+  and the address decides which is shown: `/` English, `/ja/` Japanese. `/`
+  sends on to `/ja/` a browser that prefers Japanese, unless its visitor chose
+  English there; a link to `/ja/` is always Japanese. What a crawler reads
+  without running the page (title, description, link preview) is replaced
+  for `/ja/` by `build.py`. Japanese visitors see Japan's addresses and postal
+  codes first; others, places worldwide.
 - **Light and dark, phone and desktop,** each checked by looking before a
   change is called done.
 - Hover and open transitions are 0.2–0.3 s.

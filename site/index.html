@@ -9,6 +9,30 @@
       content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."
     />
     <meta name="color-scheme" content="light dark" />
+    <!-- build.py writes ja/index.html from this page, replacing what is
+         English here; keep the two in step there. -->
+    <link rel="canonical" href="https://reearth.github.io/mokuji/" />
+    <link rel="alternate" hreflang="en" href="https://reearth.github.io/mokuji/" />
+    <link rel="alternate" hreflang="ja" href="https://reearth.github.io/mokuji/ja/" />
+    <link rel="alternate" hreflang="x-default" href="https://reearth.github.io/mokuji/" />
+    <link rel="icon" href="./img/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="./img/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="./img/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mokuji" />
+    <meta property="og:url" content="https://reearth.github.io/mokuji/" />
+    <meta property="og:title" content="Mokuji — search, without a server" />
+    <meta
+      property="og:description"
+      content="Mokuji turns a search index into one file you upload. Each query reads only the few pieces it needs, by HTTP range requests."
+    />
+    <meta property="og:image" content="https://reearth.github.io/mokuji/img/og-en.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Search, without a server: 3.1 KB of a 4.5 MB file, in 2 range reads" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="ja_JP" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,16 +42,24 @@
     <link rel="preconnect" href="https://places.reearth.land" crossorigin />
     <link rel="stylesheet" href="./style.css" />
     <script>
-      // Before first paint, so the page does not flash the other language.
+      // The page's language is its address: / is English, /ja/ Japanese. The
+      // English page, the one a bare link opens, sends on to /ja/ a visitor
+      // whose browser prefers Japanese, unless they chose English here
+      // before; a link to /ja/ is always answered in Japanese. Before first
+      // paint, so the English page does not flash.
       (() => {
-        const asked = new URLSearchParams(location.search).get("lang");
-        let lang = asked === "ja" || asked === "en" ? asked : null;
+        if (document.documentElement.lang !== "en") return;
+        let chosen = null;
         try {
-          lang ??= localStorage.getItem("mokuji-lang");
+          chosen = localStorage.getItem("mokuji-lang");
         } catch {}
-        lang ??= (navigator.language || "").startsWith("ja") ? "ja" : "en";
-        document.documentElement.lang = lang;
-        document.documentElement.dataset.lang = lang;
+        if (chosen === "en") return;
+        const prefers = (navigator.languages?.length ? navigator.languages : [navigator.language || ""])
+          .map((l) => l.toLowerCase())
+          .find((l) => l.startsWith("en") || l.startsWith("ja"));
+        if (chosen === "ja" || prefers?.startsWith("ja")) {
+          location.replace("./ja/" + location.search + location.hash);
+        }
       })();
     </script>
   </head>
@@ -41,8 +73,8 @@
         <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md"><span lang="en">Spec</span><span lang="ja">仕様</span></a>
         <a href="https://github.com/reearth/mokuji">GitHub</a>
         <div class="lang-switch" role="group" aria-label="Language">
-          <button type="button" data-set-lang="en">EN</button>
-          <button type="button" data-set-lang="ja">日本語</button>
+          <a href="./" hreflang="en" data-set-lang="en">EN</a>
+          <a href="./ja/" hreflang="ja" data-set-lang="ja">日本語</a>
         </div>
       </nav>
     </header>

@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- img/favicon.svg at ?size=, for the PNG icons brand/render.sh makes,
+     rendered in its light colours: a PNG cannot follow the theme. The
+     background is the icon's own, so a platform that rounds the corners
+     itself (iOS) finds no white behind them. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #17150f;
+        overflow: hidden;
+      }
+      img {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="icon" src="../img/favicon.svg" alt="" />
+    <script>
+      const size = Number(new URLSearchParams(location.search).get("size") || 32);
+      Object.assign(document.getElementById("icon"), { width: size, height: size });
+    </script>
+  </body>
+</html>

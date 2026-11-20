@@ -1,0 +1,132 @@
+<!doctype html>
+<!-- The link preview image, 1200 × 630. Rendered to img/og-en.png and
+     img/og-ja.png by brand/render.sh; ?lang=ja for the Japanese one. The
+     numbers are a real query's: 東京都千代田区丸の内 against town.mokuji, as
+     the hero shows it. If the hero's drawing of a file changes, change this. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+JP:wght@500&display=block"
+    />
+    <style>
+      :root {
+        --paper: #f2eee4;
+        --paper-2: #e9e3d6;
+        --ink: #17150f;
+        --ink-2: #5e5849;
+        --ink-3: #8f8877;
+        --edge: #c8bfab;
+        --shu: #d23f1c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: var(--paper);
+        color: var(--ink);
+      }
+      body {
+        position: relative;
+        padding: 64px 72px;
+      }
+      .mark {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        font: 400 34px/1 "Instrument Serif", serif;
+      }
+      .mark span {
+        font: 500 16px/1 "Noto Serif JP", serif;
+        letter-spacing: 0.2em;
+        color: var(--ink-2);
+      }
+      h1 {
+        margin: 44px 0 0;
+        font: 400 104px/0.95 "Instrument Serif", serif;
+        letter-spacing: -0.025em;
+      }
+      html[lang="ja"] h1 {
+        font: 500 84px/1.15 "Noto Serif JP", serif;
+        letter-spacing: -0.01em;
+      }
+      .stats {
+        position: absolute;
+        right: 72px;
+        top: 72px;
+        text-align: right;
+        font: 400 18px/1.5 "JetBrains Mono", monospace;
+        color: var(--ink-2);
+      }
+      .stats b {
+        display: block;
+        font: 400 88px/1 "Instrument Serif", serif;
+        color: var(--shu);
+      }
+      .book {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 150px;
+        background:
+          linear-gradient(180deg, rgba(242, 238, 228, 0.5), transparent 35%),
+          repeating-linear-gradient(90deg, var(--edge) 0 1px, transparent 1px 4px),
+          var(--paper-2);
+      }
+      .head {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 7.5%;
+        background: repeating-linear-gradient(90deg, var(--ink-3) 0 1px, transparent 1px 2px);
+        opacity: 0.5;
+      }
+      .page {
+        position: absolute;
+        bottom: 0;
+        height: 190px;
+        width: 4px;
+        background: var(--shu);
+      }
+      .tag {
+        position: absolute;
+        bottom: 204px;
+        padding: 3px 8px;
+        border: 1.5px solid var(--shu);
+        border-radius: 3px;
+        background: var(--paper);
+        color: var(--shu);
+        font: 500 17px/1.2 "JetBrains Mono", monospace;
+        transform: translateX(-2px);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mark">Mokuji<span>目次</span></div>
+    <h1 id="title">Search,<br />without a server.</h1>
+    <div class="stats" id="stats"><b>3.1 KB</b>of 4.5 MB, in 2 range reads</div>
+    <div class="book">
+      <div class="head"></div>
+      <!-- Where the two reads fall in town.mokuji: 1997936 and 4176477 of 4703441 bytes. -->
+      <div class="page" style="left: 42.5%"></div>
+      <div class="tag" style="left: 42.5%">2.8 KB</div>
+      <div class="page" style="left: 88.8%"></div>
+      <div class="tag" style="left: 88.8%; transform: translateX(calc(-100% + 2px))">288 B</div>
+    </div>
+    <script>
+      if (new URLSearchParams(location.search).get("lang") === "ja") {
+        document.documentElement.lang = "ja";
+        document.getElementById("title").innerHTML = "サーバーなし<br />で、検索。";
+        document.getElementById("stats").innerHTML = "<b>3.1 KB</b>4.5 MB のうち、2 回の読み出し";
+      }
+    </script>
+  </body>
+</html>

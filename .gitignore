@@ -16,3 +16,4 @@ __pycache__/
 /fuzz/artifacts
 /fuzz/coverage
 node_modules/
+_site/
