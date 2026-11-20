@@ -2,5 +2,5 @@
   "name": "mokuji-web-demo",
   "private": true,
   "type": "module",
-  "description": "Pages that read Mokuji files in the browser. The reader itself is the @reearth/mokuji package in ../../js."
+  "description": "Pages that read Mokuji files in the browser. The reader itself is the mokuji package in ../../js."
 }

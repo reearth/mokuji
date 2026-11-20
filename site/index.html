@@ -313,7 +313,7 @@
               <span lang="en">Download one, such as the files this page searches (<a href="https://places.reearth.land/v1/datasets">listed here</a>, each with its licence), or build your own: one document per line, its text and its payload.</span>
               <span lang="ja">このページが検索しているファイル（<a href="https://places.reearth.land/v1/datasets">一覧</a>。ライセンスも書いてあります）のようにダウンロードするか、自分で作ります。1行に1件、テキストとペイロード。</span>
             </p>
-            <pre class="code"><code>cargo install --git https://github.com/reearth/mokuji mokuji --features cli
+            <pre class="code"><code>brew install reearth/tap/mokuji
 mokuji build places.tsv places.mokuji</code></pre>
           </li>
           <li class="step">
@@ -335,8 +335,8 @@ npx wrangler r2 object put my-bucket/postal.mokuji \
               <span lang="en">In a browser, a Worker or Node, with a reader of 13 KB and no dependencies.</span>
               <span lang="ja">ブラウザでも Worker でも Node でも。13 KB の reader で、依存はありません。</span>
             </p>
-            <pre class="code"><code>pnpm add "git+https://github.com/reearth/mokuji.git#&lt;commit&gt;&amp;path:/js"</code></pre>
-            <pre class="code"><code>import { MokujiIndex } from "@reearth/mokuji";
+            <pre class="code"><code>npm install mokuji</code></pre>
+            <pre class="code"><code>import { MokujiIndex } from "mokuji";
 
 const index = await MokujiIndex.open("https://example.com/postal.mokuji");
 const { results } = await index.lookup("1000005");</code></pre>
@@ -382,7 +382,7 @@ bytes:    1474 of 2206580</code></pre>
             </div>
             <div class="code-tab" data-code="js">
               <pre class="code"><code>import { openAsBlob } from "node:fs";
-import { MokujiIndex } from "@reearth/mokuji";
+import { MokujiIndex } from "mokuji";
 
 const index = await MokujiIndex.open(await openAsBlob("postal.mokuji"));
 const { results } = await index.lookup("1000005", 10);</code></pre>
@@ -415,22 +415,22 @@ found = index.lookup("1000005", 10)</code></pre>
         <ul class="installs">
           <li>
             <span class="install-label">JavaScript</span>
-            <code>pnpm add "git+https://github.com/reearth/mokuji.git#&lt;commit&gt;&amp;path:/js"</code>
+            <code>npm install mokuji</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
           <li>
             <span class="install-label">Rust</span>
-            <code>cargo add --git https://github.com/reearth/mokuji mokuji</code>
+            <code>cargo add mokuji</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
           <li>
             <span class="install-label">Python</span>
-            <code>pip install "git+https://github.com/reearth/mokuji.git@&lt;commit&gt;#subdirectory=python"</code>
+            <code>pip install mokuji</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
           <li>
             <span class="install-label">CLI</span>
-            <code>cargo install --git https://github.com/reearth/mokuji mokuji --features cli</code>
+            <code>brew install reearth/tap/mokuji</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
         </ul>

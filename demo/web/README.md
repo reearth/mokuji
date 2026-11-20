@@ -8,7 +8,7 @@ direction on a map: click a point, get the 町丁目 that holds it. `stac.html`
 finds satellite images by word, place and period in a static STAC catalog; see
 [../stac](../stac). `complete.html` completes a place name as it is typed,
 from every place in GeoNames. All four read with the same reader, the
-`@reearth/mokuji` package in [../../js](../../js), over the same file layout.
+`mokuji` package in [../../js](../../js), over the same file layout.
 `mokuji.js` here only re-exports its build, and `serve.py` serves `js/` so that
 a browser can load it.
 

@@ -109,7 +109,7 @@ do they disturb a search for a town: 1,000 町字 typed without their prefecture
 came back first 999 times, with the municipalities and the prior and without
 either.
 
-In a browser, `MokujiIndex.search` in [`@reearth/mokuji`](../../js) ranks
+In a browser, `MokujiIndex.search` in [`mokuji`](../../js) ranks
 exactly as `mokuji search` does, options and all, and `../web/index.html` asks
 this index whenever no address starts with what was typed: `和光市` there is 6
 range requests and 19 KB, once the index is open, and opening it is 2 requests

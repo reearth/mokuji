@@ -7,11 +7,27 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/reearth/mokuji"
 authors = ["Re:Earth and contributors"]
+readme = "README.md"
+keywords = ["search", "index", "geocoding", "range-requests", "serverless"]
+categories = ["data-structures", "encoding", "text-processing", "command-line-utilities"]
+# The repository also holds the TypeScript and Python readers, the page and
+# the demos; the crate is the library, the command, and the documents that
+# say what they implement. The tests read conformance/, which every
+# implementation shares, so they stay in the repository.
+include = [
+    "/src/**/*.rs",
+    "/README.md",
+    "/SPEC.md",
+    "/MANIFEST.md",
+    "/TOKENIZERS.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+]
 
 [features]
 # The `mokuji` command and what it alone depends on. Off by default, so that a
 # program using the library does not build the command:
-#   cargo install --git https://github.com/reearth/mokuji mokuji --features cli
+#   cargo install mokuji --features cli
 cli = ["dep:sha2"]
 
 # The command line tool, built from the same crate as the library.

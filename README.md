@@ -71,8 +71,8 @@ languages, with the same API.
 | `mokuji::tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
 | `mokuji::manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
 | `mokuji::cli`, `src/main.rs` | The `mokuji` command, with the `cli` feature |
-| `js/` (`@reearth/mokuji`) | The reader in TypeScript, for browsers, workers and Node |
-| `python/` (`mokuji`) | The reader in Python, with no dependencies |
+| `js/` (`mokuji` on npm) | The reader in TypeScript, for browsers, workers and Node |
+| `python/` (`mokuji` on PyPI) | The reader in Python, with no dependencies |
 
 The module boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
@@ -80,10 +80,19 @@ about each other is a requirement of the format and not only good practice.
 
 ## Getting started
 
-The command line tool needs a Rust toolchain:
+Install the command line tool:
 
 ```sh
-cargo install --git https://github.com/reearth/mokuji mokuji --features cli
+brew install reearth/tap/mokuji
+cargo install mokuji --features cli    # or from source, with a Rust toolchain
+```
+
+and the library for your language:
+
+```sh
+npm install mokuji     # JavaScript: browsers, workers and Node
+cargo add mokuji       # Rust
+pip install mokuji     # Python
 ```
 
 Its input is one document per line, its text and its payload separated by a
@@ -116,7 +125,7 @@ arguments lists every command and option.
 
 To query a file from a browser, a Cloudflare Worker or Node, serve it from
 anywhere that honours `Range` requests and read it with
-[`@reearth/mokuji`](js). The demos below are each a complete, reproducible
+[`mokuji`](js) on npm. The demos below are each a complete, reproducible
 example of one kind of index.
 
 ## Implementing it
@@ -236,7 +245,7 @@ A browser reads the same kind of file in [demo/web](demo/web) — Tokyo at
 residence level, 1,744,962 addresses in 8.7 MB — with a reader of 13 KB
 gzipped, no WebAssembly and no bundled decompressor. That is what the choice of
 deflate as the required codec buys: browsers already have it. The reader is the
-[`@reearth/mokuji`](js) package, which a page, a Cloudflare Worker and Node all
+[`mokuji`](js) on npm package, which a page, a Cloudflare Worker and Node all
 use unchanged.
 
 ## Scope

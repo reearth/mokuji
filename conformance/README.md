@@ -46,7 +46,7 @@ actually matters; it is written by the Rust writer (`mokuji::write`) and kept cu
 | `mokuji::manifest` | `cargo test --test manifest_conformance` — the collection cases |
 | `mokuji` (`MokujiIndex`) | `cargo test --test search` — the same questions as the TypeScript reader's tests |
 | `build_fixtures.py` | checks every case before writing a fixture |
-| `js/` (`@reearth/mokuji`) | `cd js && npm test` |
+| `js/` (`mokuji` on npm) | `cd js && npm test` |
 | `python/` (`mokuji`) | `python3 -m unittest discover -s python/tests` — every case, read counts included, and a comparison with the TypeScript reader |
 
 ## Why the fixtures are not built by the writer

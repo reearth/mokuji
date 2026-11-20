@@ -79,10 +79,10 @@ index = MokujiIndex.open(Bucket())
 ## Install
 
 ```sh
-pip install "git+https://github.com/reearth/mokuji.git@<commit>#subdirectory=python"
+pip install mokuji
 ```
 
-Pin a commit: the format and this API may change before 1.0.
+The format and this API may change before 1.0, so pin the version.
 
 ## Develop
 

@@ -1,5 +1,5 @@
 {
-  "name": "@reearth/mokuji",
+  "name": "mokuji",
   "version": "0.1.0",
   "description": "Read Mokuji files — a cloud-optimized search index — over HTTP range requests, in a browser, a worker or Node",
   "private": true,

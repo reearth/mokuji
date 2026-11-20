@@ -1,5 +1,5 @@
 // The landing page's live parts. Every query here is answered in this page,
-// by @reearth/mokuji reading .mokuji files on object storage with range
+// by mokuji reading .mokuji files on object storage with range
 // requests. The only other request is /v1/datasets, once, to learn the
 // files' current URLs.
 //

@@ -4,7 +4,7 @@
 //! The layer above [`read`], which reads sections and takes terms as
 //! bytes already normalized. This one puts what was typed through the
 //! tokenizer the file records, as a person's query has to be, and answers in
-//! the same shape as the TypeScript reader (`@reearth/mokuji`) and the Python
+//! the same shape as the TypeScript reader (`mokuji`) and the Python
 //! one, so that the three read alike:
 //!
 //! ```no_run

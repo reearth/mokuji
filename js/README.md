@@ -1,20 +1,22 @@
-# @reearth/mokuji
+# mokuji (JavaScript)
 
 Read [Mokuji](../README.md) files over HTTP range requests, in a browser, a
 Cloudflare Worker or Node. No dependencies, no WebAssembly, and no bundled
 decompressor: the required codec is raw deflate, which every runtime already
 has as `DecompressionStream("deflate-raw")`. About 13 KB gzipped.
 
-It is the third implementation of [SPEC.md](../SPEC.md), after the Rust crates
-and the Python fixture builder, and answers to the same conformance cases,
-read counts included.
+It is an implementation of [SPEC.md](../SPEC.md) beside the Rust crate and the
+Python reader, and answers to the same conformance cases, read counts
+included.
 
-> Installed from git rather than npm while the format is a draft (below).
+```sh
+npm install mokuji
+```
 
 ## Use
 
 ```ts
-import { MokujiIndex, MokujiCollection } from "@reearth/mokuji";
+import { MokujiIndex, MokujiCollection } from "mokuji";
 
 // One file. A URL makes the reader fetch ranges itself.
 const index = await MokujiIndex.open("https://example.com/places.mokuji");
@@ -86,14 +88,11 @@ const index = await MokujiIndex.open(source);
 
 ## Install
 
-`dist/` is committed and checked by CI to be what `src/` builds, so the package
-installs from git with no build step. With pnpm:
-
 ```sh
-pnpm add "git+https://github.com/reearth/mokuji.git#<commit>&path:/js"
+npm install mokuji
 ```
 
-Pin a commit: the format and this API may change before 1.0.
+The format and this API may change before 1.0, so pin the version.
 
 ## Develop
 
