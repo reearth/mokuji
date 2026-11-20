@@ -27,7 +27,9 @@ person would make it, and each one says how:
         --out links.tsv
 
 The output is one census `KEY_CODE` per line with the keys it takes, which
-`covering.py --terms links.tsv` adds to that polygon's document.
+`covering.py --terms links.tsv` adds to that polygon's document, and, when the
+area's name names exactly one 町字, that 町字's key in a third column, which
+covering.py gives the feature as its LINKED_ADDRESS.
 """
 
 import argparse
@@ -145,6 +147,7 @@ def main():
     grid = collections.defaultdict(list)
     links = collections.defaultdict(set)  # key_code -> town ids
     how = {}  # key_code -> method
+    named = {}  # key_code -> the town ids its name matched
     for path in sorted(glob.glob(args.boundaries)):
         for feature in json.load(open(path, encoding="utf-8"))["features"]:
             props = feature.get("properties") or {}
@@ -170,6 +173,7 @@ def main():
             plain = fold(re.sub(r"[（(].*?[）)]", "", name))
             if fold(name) in names or plain in names:
                 links[code].update(names.get(fold(name)) or names[plain])
+                named[code] = set(names.get(fold(name)) or names[plain])
                 how[code] = "name"
             elif plain and (within := [n for n in names if plain.startswith(n)]):
                 links[code].update(names[max(within, key=len)])
@@ -222,7 +226,11 @@ def main():
     with open(args.out, "w", encoding="utf-8") as out:
         for code in sorted(links):
             terms = sorted({term_of[towns[t][1]] for t in links[code]})
-            out.write(f"{code}\t{' '.join(terms)}\n")
+            # The one town its name names, when there is one: the registry's
+            # address for this area, which covering.py can show for it.
+            own = {term_of[towns[t][1]] for t in named.get(code, ())}
+            line = f"{code}\t{' '.join(terms)}"
+            out.write(f"{line}\t{own.pop()}\n" if len(own) == 1 else f"{line}\n")
 
     codes = {a[0] for a in areas}
     print(f"{len(codes):,} census areas, {len(links):,} with a key", file=sys.stderr)

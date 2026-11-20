@@ -354,6 +354,41 @@ different places. Sampled through both files, 1,797 of 2,006 town addresses,
 
 The 884,333 keys add 2.9 MB, 2.4%, mostly to the dictionary.
 
+The link runs the other way too, in what a point answers with. The payload
+writes the label as the census does, `北海道松前町字小島`: no 郡, chome in
+kanji, which is a key of the town index for 71.9% of areas. Two options make
+it the registry's instead:
+
+```sh
+python3 link.py ... --out links.tsv     # now with a third column, below
+python3 covering.py ... --terms links.tsv \
+    --payload-fields KEY_CODE,PREF_NAME,MUNICIPALITY,S_NAME,LINKED_ADDRESS \
+    --municipalities ../addresses/abr/mt_town_fullset_all.csv
+mokuji build ... --meta payload-fields=KEY_CODE,PREF_NAME,MUNICIPALITY,S_NAME,LINKED_ADDRESS
+```
+
+- `link.py` writes, beside an area's keys, the one 町字 its name matched,
+  when it matched exactly one: 171,225 of 220,625 areas, 78%.
+  `covering.py --terms` gives the feature that key as `LINKED_ADDRESS`.
+- `--municipalities` gives each feature a `MUNICIPALITY`: the municipality
+  as the registry writes it, 郡 included (`松前郡松前町`), by the census's
+  PREF and CITY, the first five digits of the registry's `lg_code`. Eight
+  codes of 2020 are not in the registry and keep the census's name:
+  Hamamatsu's seven wards, replaced in 2024, and an unnamed area of Tokyo.
+- `--payload-fields` writes those properties into the payload in place of
+  the label, separated by U+001F, so a reader gets the parts and the codes
+  on their own; `--meta payload-fields` says which they are.
+
+A reader then answers with `LINKED_ADDRESS` where there is one, and
+otherwise with the prefecture, `MUNICIPALITY` and `S_NAME` normalized by
+`ja-address`: over 2,993 areas sampled, a key of the town index for 82.7%,
+against 71.9% for the census's names. The rest are areas the two sources
+call differently (`豊田市小原大倉町`) or the Hamamatsu wards. The keys of the
+terms are unchanged, `links.tsv`'s first two columns byte for byte; the
+national 1 m edition with the fields is 93.3 MB, 1.9 MB more.
+`../web/reverse.js` shows a label as it is, so it shows these fields
+unseparated.
+
 ### Rectangles
 
 The covering answers *which polygons meet this area* from the same file with

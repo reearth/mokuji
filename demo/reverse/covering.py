@@ -261,6 +261,23 @@ def rings_of(geometry):
     return []
 
 
+def municipality_names(path):
+    """Census municipality code (PREF and CITY, five digits) to the
+    municipality as the registry writes it: county, city and ward joined, as
+    ../addresses/abr.py joins them, from the 町字 in force."""
+    import csv
+
+    out = {}
+    with open(path, encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if row.get("ablt_date"):
+                continue
+            code = row["lg_code"][:5]
+            if code not in out:
+                out[code] = "".join(row[k] for k in ("county", "city", "ward"))
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--geojson", required=True)
@@ -298,15 +315,37 @@ def main():
         "space-separated: link.py writes the registry's town addresses by KEY_CODE",
     )
     parser.add_argument("--terms-field", default="KEY_CODE")
+    parser.add_argument(
+        "--payload-fields",
+        default="",
+        help="comma-separated properties to write into the payload in place of "
+        "the label, separated by U+001F, so a reader gets each part of the name "
+        "and the codes on their own: KEY_CODE,PREF_NAME,MUNICIPALITY,S_NAME, "
+        "and LINKED_ADDRESS, the registry address --terms gives an area by name",
+    )
+    parser.add_argument(
+        "--municipalities",
+        help="the Address Base Registry's mt_town_fullset_all.csv, for a "
+        "MUNICIPALITY property: the municipality as the registry writes it, 郡 "
+        "included, by the census's PREF and CITY codes, which are the first "
+        "five digits of the registry's lg_code",
+    )
     parser.add_argument("--stats", action="store_true")
     args = parser.parse_args()
 
     fields = [f for f in args.label_fields.split(",") if f]
+    payload_fields = [f for f in args.payload_fields.split(",") if f]
+    names = municipality_names(args.municipalities) if args.municipalities else None
+    unnamed = set()
     extra = {}
+    linked = {}  # terms-field value -> the registry address link.py matched by name
     if args.terms:
         for line in pathlib.Path(args.terms).read_text(encoding="utf-8").splitlines():
-            value, _, keys = line.partition("\t")
+            value, _, rest = line.partition("\t")
+            keys, _, own = rest.partition("\t")
             extra[value] = keys
+            if own:
+                linked[value] = own
     data = json.loads(pathlib.Path(args.geojson).read_text(encoding="utf-8"))
 
     # Documents in spatial order, so that the payload blocks group neighbours.
@@ -340,7 +379,14 @@ def main():
     vertices = 0
     for feature in features:
         rings = snap(rings_of(feature["geometry"]), scale)
-        properties = feature.get("properties", {})
+        properties = dict(feature.get("properties") or {})
+        if names is not None:
+            code = f"{properties.get('PREF') or ''}{properties.get('CITY') or ''}"
+            properties["MUNICIPALITY"] = names.get(code) or properties.get("CITY_NAME") or ""
+            if code not in names:
+                unnamed.add(code)
+        if own := linked.get(str(properties.get(args.terms_field))):
+            properties["LINKED_ADDRESS"] = own
         label = "".join(str(properties.get(f) or "") for f in fields)
         covering = cover(rings, args.max_precision) if rings else []
         if not covering:
@@ -358,7 +404,12 @@ def main():
         text = f"{label} {cells_text}" if args.key and label else cells_text
         if keys := extra.get(str(properties.get(args.terms_field))):
             text = f"{keys} {text}"
-        lines.append(f"{text}\t{label}|{encode(rings, scale)}")
+        shown = (
+            "\x1f".join(str(properties.get(f) or "") for f in payload_fields)
+            if payload_fields
+            else label
+        )
+        lines.append(f"{text}\t{shown}|{encode(rings, scale)}")
 
     pathlib.Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -367,6 +418,10 @@ def main():
     print(f"{cells} cells, {cells / max(documents, 1):.1f} per document", file=sys.stderr)
     print(f"{interior} interior ({100 * interior / max(cells, 1):.0f}%)", file=sys.stderr)
     print(f"{vertices} vertices", file=sys.stderr)
+    if unnamed:
+        # A municipality merged or renamed since the census: its census name stands.
+        print(f"{len(unnamed)} municipality code(s) not in the registry, named as the census names them: "
+              f"{', '.join(sorted(unnamed))}", file=sys.stderr)
     if args.stats:
         for precision in sorted(by_precision):
             print(f"  precision {precision}: {by_precision[precision]}", file=sys.stderr)
