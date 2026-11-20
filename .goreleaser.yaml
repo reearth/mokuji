@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# The `mokuji` command, released from a v* tag by .github/workflows/release.yml
+# and published to Homebrew through reearth/homebrew-tap, as reearth/cli is.
+# The library is published to crates.io separately; this is the binary.
+version: 2
+
+project_name: mokuji
+
+builds:
+  - id: mokuji
+    builder: rust
+    binary: mokuji
+    # cargo zigbuild, so that every target is cross-compiled from one Linux
+    # runner; the crate is pure Rust, deflate included, so nothing needs a
+    # platform SDK.
+    command: zigbuild
+    flags:
+      - --release
+      - --features=cli
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+      - x86_64-apple-darwin
+      - aarch64-apple-darwin
+      - x86_64-pc-windows-gnu
+
+archives:
+  - id: mokuji
+    ids: [mokuji]
+    name_template: "mokuji_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE-MIT
+      - LICENSE-APACHE
+      - README.md
+
+checksum:
+  name_template: "mokuji_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+signs:
+  # Keyless (OIDC) cosign signature of the checksums file.
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
+
+homebrew_casks:
+  - name: mokuji
+    ids: [mokuji]
+    binaries: [mokuji]
+    homepage: https://github.com/reearth/mokuji
+    description: Build, inspect and search Mokuji files, search indexes read by range requests
+    repository:
+      owner: reearth
+      name: homebrew-tap
+      token: "{{ index .Env \"HOMEBREW_TAP_TOKEN\" }}"
+    directory: Casks
+    # Commits are attributed to the reearth-app bot that owns the token.
+    commit_author:
+      name: '{{ index .Env "GH_APP_USER" }}'
+      email: '171218383+{{ index .Env "GH_APP_USER" }}@users.noreply.github.com'
+    skip_upload: "{{ if index .Env \"HOMEBREW_TAP_TOKEN\" }}false{{ else }}true{{ end }}"
+    hooks:
+      post:
+        # Binaries are not notarized yet; drop the quarantine attribute.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mokuji"]
+          end
+
+changelog:
+  use: github
+  sort: asc
+  abbrev: 7
+  groups:
+    - title: Breaking changes
+      regexp: '^.*?(feat|fix|refactor|perf)(\([^)]+\))?!:.+$'
+      order: 0
+    - title: Features
+      regexp: '^.*?feat(\([^)]+\))?:.+$'
+      order: 1
+    - title: Bug fixes
+      regexp: '^.*?fix(\([^)]+\))?:.+$'
+      order: 2
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - '^.*?(docs|test|ci|chore)(\([^)]+\))?:.+$'
+      - "^Merge (pull request|branch)"
+
+release:
+  github:
+    owner: reearth
+    name: mokuji
+  prerelease: auto
+  footer: |
+    **Install or upgrade the command**
+
+    ```sh
+    brew install reearth/tap/mokuji
+    ```
+
+    Verify the checksums: `cosign verify-blob --bundle mokuji_{{ .Version }}_checksums.txt.sigstore.json --certificate-identity-regexp '^https://github.com/reearth/mokuji/' --certificate-oidc-issuer https://token.actions.githubusercontent.com mokuji_{{ .Version }}_checksums.txt`

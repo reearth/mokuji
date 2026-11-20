@@ -17,3 +17,6 @@ __pycache__/
 /fuzz/coverage
 node_modules/
 _site/
+
+# goreleaser output; js/dist is committed and not this
+/dist
