@@ -130,6 +130,12 @@
         <code>1丁目</code>. The registry spells chome both ways depending on the
         municipality.
       </p>
+      <p class="note">
+        When no address starts with what you typed and a second index is given
+        (<code>?fuzzy=</code>), the page asks that one, which holds every
+        address as character bigrams. <code>和光市</code> is no address&rsquo;s
+        prefix, and it finds <code>埼玉県和光市</code> there.
+      </p>
     </main>
 
     <script type="module">
@@ -144,11 +150,31 @@
         "東京都渋谷区神南一丁目",
         "東京都新宿区西新宿二丁目",
         "東京都台東区",
+        "和光市",
       ];
 
       // `?url=` reads an index from anywhere that serves byte ranges, such as
       // a bucket on another origin; without it, the one serve.py serves.
-      const url = new URLSearchParams(location.search).get("url") || "./index.mokuji";
+      const params = new URLSearchParams(location.search);
+      const url = params.get("url") || "./index.mokuji";
+      // `?fuzzy=` names a second index, built with `ja-address-bigram`, that is
+      // asked when no address starts with what was typed: 和光市 is no prefix
+      // of anything, and the second index finds 埼玉県和光市 by its bigrams.
+      // See ../fuzzy. Without it, the page answers prefixes only.
+      const fuzzyUrl = params.get("fuzzy") || (params.has("url") ? null : "./fuzzy.mokuji");
+      let fuzzy = null;
+      // Opened the first time a query needs it, since opening it reads its
+      // resident set — 621 KB for the national one, most of it the document
+      // lengths BM25 needs — which a prefix never does. A file that is not
+      // there leaves the page answering prefixes.
+      let opening = null;
+      const openFuzzy = () =>
+        (opening ??= fuzzyUrl
+          ? MokujiIndex.open(fuzzyUrl).then(
+              (file) => (fuzzy = file),
+              () => null,
+            )
+          : Promise.resolve(null));
 
       // What the `pos_level` column says, if the index has one: the level of
       // the registry its point was taken from. See ../addresses/abr.py.
@@ -178,12 +204,37 @@
         }
 
         const requests = [];
-        index.onRequest = (r) => requests.push(r);
-        index.resetStats();
+        for (const file of [index, fuzzy]) {
+          if (!file) continue;
+          file.onRequest = (r) => requests.push(r);
+          file.resetStats();
+        }
 
         let normalized, results;
+        let how = "";
         try {
           ({ normalized, results } = await index.lookup(query, 20));
+          const fresh = !fuzzy;
+          const second = results.length === 0 ? await openFuzzy() : null;
+          // Its opening is this query's cost too, so the panel counts it.
+          if (second && fresh) how = "Opened the second index. ";
+          if (second) second.onRequest = (r) => requests.push(r);
+          if (results.length === 0 && second) {
+            // Every bigram typed, then any of them: a name typed without its
+            // prefecture, then a name typed wrong. A municipality's own record
+            // carries a prior, so 和光市 answers 埼玉県和光市 before its towns.
+            const boost = second.column("municipality") ? "municipality" : undefined;
+            let found = await second.search(query, { limit: 20, boost });
+            how += "No address starts with that; these contain it.";
+            if (found.matched === 0) {
+              found = await second.search(query, { limit: 20, boost, any: true, probe: 6, lengthNorm: 0 });
+              how = how.replace(/No address.*$/, "") + "No address starts with or contains that; these are the closest.";
+            }
+            results = found.results.map((r) => {
+              const cut = r.payload.indexOf("|");
+              return { term: r.payload.slice(0, cut), doc: null, payload: r.payload.slice(cut + 1) };
+            });
+          }
         } catch (err) {
           $("status").innerHTML = `<span class="error">${escape(err.message)}</span>`;
           return;
@@ -194,21 +245,26 @@
           .map(
             (r) =>
               `<tr><td>${escape(r.term)}</td><td class="coords">${escape(r.payload)}</td>` +
-              (levels ? `<td class="level">${escape(LEVELS[levels.values[r.doc]] ?? "")}</td>` : "") +
+              (levels ? `<td class="level">${escape(r.doc === null ? "" : LEVELS[levels.values[r.doc]] ?? "")}</td>` : "") +
               `</tr>`
           )
           .join("");
-        $("requests").textContent = index.stats.requests;
-        $("bytes").textContent = bytes(index.stats.bytes);
+        const stats = [index, fuzzy].filter(Boolean).map((f) => f.stats);
+        $("requests").textContent = stats.reduce((n, s) => n + s.requests, 0);
+        $("bytes").textContent = bytes(stats.reduce((n, s) => n + s.bytes, 0));
         $("count").textContent = results.length;
         const rewritten =
           normalized === query
             ? ""
             : ` Normalized to \u201c${normalized}\u201d by the ${index.tokenizerId} tokenizer.`;
         $("status").textContent =
+          (how ? `${how} ` : "") +
           (results.length
             ? `${results.length} shown${results.length === 20 ? " (limit)" : ""}.`
-            : "No address starts with that.") + rewritten;
+            : fuzzy
+              ? "Nothing like it either."
+              : "No address starts with that.") +
+          rewritten;
         renderLog(requests);
       }
 
@@ -239,7 +295,8 @@
         $("opencost").textContent = `${index.stats.requests} request${index.stats.requests === 1 ? "" : "s"}, ${bytes(index.stats.bytes)}`;
         $("status").textContent =
           `${index.numDocs.toLocaleString()} addresses, tokenized with ` +
-          `${index.tokenizerId}. Type a prefix.`;
+          `${index.tokenizerId}. ` +
+          (fuzzyUrl ? "Type a prefix, or a name without its prefecture." : "Type a prefix.");
 
         $("hints").innerHTML = EXAMPLES.map((e) => `<button>${e}</button>`).join("");
         $("hints").addEventListener("click", (event) => {

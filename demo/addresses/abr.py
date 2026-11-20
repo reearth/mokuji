@@ -69,8 +69,8 @@ def write(addresses, out, echo=False, columns=None):
     — but a search that only approximates the address does: it has to show
     which one it found. See ../fuzzy.
 
-    `columns`, if given, is one more field per line, read by `mokuji build
-    --attribute`.
+    `columns`, if given, is one or more further fields per line, tab-separated,
+    read by `mokuji build --attribute` in the order they are written.
     """
     path = pathlib.Path(out)
     with path.open("w", encoding="utf-8") as handle:
@@ -121,6 +121,11 @@ def town(args):
                 cities[row["lg_code"]] = (row["rep_lon"], row["rep_lat"])
         print(f"{len(cities):,} municipality positions", file=sys.stderr)
 
+    if args.municipality_prior and not args.municipalities:
+        sys.exit("--municipality-prior needs --municipalities")
+    if args.municipalities and not cities:
+        sys.exit("--municipalities needs --city-pos, which is where their points are")
+
     def locate(row):
         lg_code, machiaza_id = row["lg_code"], row["machiaza_id"]
         if (position := positions.get((lg_code, machiaza_id))) is not None:
@@ -160,6 +165,16 @@ def town(args):
             continue
         addresses[term], levels[term] = payload, level
 
+    named = set()
+    if args.municipalities:
+        before = len(addresses)
+        named = municipalities(args, cities, addresses, levels)
+        print(
+            f"{len(named):,} municipalities, {len(addresses) - before:,} of them added "
+            "as addresses of their own",
+            file=sys.stderr,
+        )
+
     for level in levels.values():
         if level is not None:
             placed[level] += 1
@@ -169,13 +184,20 @@ def town(args):
         f"by its municipality {placed[CITY]:,}",
         file=sys.stderr,
     )
+    fields = []
     if args.pos_level:
         if missing and not args.require_position:
             sys.exit("--pos-level needs every address placed: pass --city-pos or --require-position")
-        columns = {term: str(levels[term]) for term in addresses}
-        write(addresses, args.out, args.echo_address, columns)
-    else:
-        write(addresses, args.out, args.echo_address)
+        fields.append(lambda term: str(levels[term]))
+    if args.municipality_prior:
+        prior = str(args.municipality_prior)
+        fields.append(lambda term: prior if term in named else "0")
+    columns = (
+        {term: "\t".join(field(term) for field in fields) for term in addresses}
+        if fields
+        else None
+    )
+    write(addresses, args.out, args.echo_address, columns)
 
 
 def rsdt(args):
@@ -222,6 +244,47 @@ def rsdt(args):
     write(addresses, args.out, args.echo_address)
 
 
+def municipalities(args, cities, addresses, levels):
+    """Adds each municipality as an address of its own, at its own point.
+
+    The town master names every 町字 and never a municipality by itself, so a
+    search for 和光市 can only answer with 和光市's towns. Added, 埼玉県和光市 is
+    one more record — the shortest that matches, which is what a ranked search
+    puts first, and the first a prefix completes.
+
+    A ward of a designated city is a municipality in the master, and so is the
+    city: 札幌市 has its own code and point in `mt_city_pos_all`, though no town
+    row names it. Its code is the nearest one at or below its wards' that no town
+    row uses.
+
+    Returns every municipality's name, including the few a town row already
+    spells the same way, which keep that row.
+    """
+    names = {}
+    for row in rows(args.fullset):
+        if row["ablt_date"]:
+            continue
+        names.setdefault(row["lg_code"], (row, "".join(row[k] for k in ("pref", "county", "city", "ward"))))
+    designated = sorted(code for code in cities if code not in names)
+
+    entries = {}
+    for code, (row, name) in names.items():
+        entries[name] = code
+        if row["ward"]:
+            city = max((c for c in designated if c[:2] == code[:2] and c <= code), default=None)
+            if city is not None:
+                entries.setdefault("".join(row[k] for k in ("pref", "county", "city")), city)
+
+    named = set()
+    for name, code in entries.items():
+        if code not in cities:
+            continue
+        named.add(name)
+        if name not in addresses:
+            addresses[name], levels[name] = ",".join(cities[code]), CITY
+    return named
+
+
 def report(total, addresses, duplicates, missing):
     print(
         f"{total:,} rows -> {len(addresses):,} addresses "
@@ -260,6 +323,21 @@ def main():
         action="store_true",
         help="write which level each point came from (0 its own, 1 its 大字・町, "
         "2 its municipality) as a column for --attribute pos_level",
+    )
+    t.add_argument(
+        "--municipalities",
+        action="store_true",
+        help="add each municipality as an address of its own, at its point in "
+        "--city-pos, so that a search for 和光市 can answer 埼玉県和光市",
+    )
+    t.add_argument(
+        "--municipality-prior",
+        type=int,
+        metavar="WEIGHT",
+        help="write WEIGHT for a municipality's own record and 0 for a town, as "
+        "one more column after --pos-level's: built with --attribute municipality "
+        "and searched with --boost municipality, it is added to the score, so 和光市 "
+        "answers 埼玉県和光市 before the towns that repeat its name",
     )
     t.set_defaults(run=town)
 

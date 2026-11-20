@@ -11,7 +11,7 @@ written at — for one prefecture.
 ```sh
 ./fetch-abr.sh abr
 python3 abr.py town --fullset abr/mt_town_fullset_all.csv --pos abr/pos \
-  --city-pos abr/mt_city_pos_all.csv --pos-level --out abr.tsv
+  --city-pos abr/mt_city_pos_all.csv --municipalities --pos-level --out abr.tsv
 mokuji build abr.tsv abr.mokuji --tokenizer ja-address --payload ints:6 \
   --attribute pos_level \
   $(python3 ../provenance.py args abr/mt_town_fullset_all.csv.zip \
@@ -28,20 +28,34 @@ mokuji prefix abr.mokuji "東京都千代田区丸の内"
 東京都千代田区丸の内3丁目	139.763476,35.676952
 
 query:    2 read(s) total - 1 dictionary, 0 postings, 1 payload
-bytes:    3118 of 4682032
+bytes:    3190 of 4703441
 ```
 
-**725,546 addresses nationwide, every one with coordinates, in 4.7 MB. Two
-range reads and 3.1 KB to answer.** Built from the registry as published on
+**727,388 addresses nationwide, every one with coordinates, in 4.7 MB. Two
+range reads and 3.2 KB to answer.** Built from the registry as published on
 2026-11-15.
+
+```
+$ mokuji prefix abr.mokuji 埼玉県和光 -n 3
+埼玉県和光市	139.605693,35.781104
+埼玉県和光市下新倉1丁目	139.615222,35.788597
+埼玉県和光市下新倉2丁目	139.619875,35.788368
+```
+
+The registry's town master names every 町字 and never a municipality on its
+own. `--municipalities` adds each one as an address of its own, at its point in
+`mt_city_pos_all` — 1,842 that no town row already spelled, wards and
+designated cities included — so a prefix that reaches a municipality's name
+completes to the municipality first. For finding one by its name alone, `和光市`
+rather than `埼玉県和光市`, see [../fuzzy](../fuzzy).
 
 | | |
 |---|---|
 | Source | 159 MB of CSV, from three registry tables |
 | Corpus | 47 MB, one address, its coordinates and their level per line |
 | Index | 4.7 MB |
-| Build | 2.3 s |
-| Full verification | 4.5 s, reading and decoding every block, and re-hashing the register |
+| Build | 1.6 s |
+| Full verification | 3.8 s, reading and decoding every block, and re-hashing the register |
 
 ### Where the coordinates come from
 
@@ -55,11 +69,12 @@ above that has one:
 | Its own point | 196,011 | 0 |
 | Its 大字・町's — the same `machiaza_id` with the last three digits zeroed | 473,161 | 1 |
 | Its municipality's, from `mt_city_pos_all` | 56,798 | 2 |
+| A municipality, added by `--municipalities`, at its own point | 1,842 | 2 |
 
 A 小字 placed at its 大字's point is placed by kilometres rather than metres, and
 one placed at its municipality's by more. The index says which, as the
 `pos_level` attribute column (`SPEC.md` §5.8), rather than handing back a
-municipality's centre as if it were the koaza's. The column costs 221 KB, held
+municipality's centre as if it were the koaza's. The column costs 231 KB, held
 in memory once the file is open; `../web` shows it beside each result.
 
 Without `--pos-level` the column is left out and the file is 4.5 MB. Without
@@ -226,7 +241,7 @@ decompressing one 9 KB block per lookup. Same file, different deployment; see
 
 | | addresses | dictionary | per address |
 |---|---|---|---|
-| Town level, nationwide | 725,546 | 2.91 MB | **4.01 B** |
+| Town level, nationwide | 727,388 | 2.91 MB | **4.00 B** |
 | Residence level, Tokyo | 1,744,962 | 861 KB | **0.49 B** |
 
 Residence-level addresses are longer but share far more: thousands of doors

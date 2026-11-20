@@ -214,14 +214,14 @@ hierarchical key: looked up whole or by prefix, never by intersecting its parts.
 cd demo/addresses
 ./fetch-abr.sh abr
 python3 abr.py town --fullset abr/mt_town_fullset_all.csv --pos abr/pos \
-  --city-pos abr/mt_city_pos_all.csv --pos-level --out abr.tsv
+  --city-pos abr/mt_city_pos_all.csv --municipalities --pos-level --out abr.tsv
 mokuji build abr.tsv abr.mokuji --tokenizer ja-address --payload ints:6 \
   --attribute pos_level
 mokuji prefix abr.mokuji 東京都千代田区丸の内
 ```
 
-Against the 725,546 town-level addresses of Japan's Address Base Registry, in a
-4.7 MB file, completing a prefix costs **two range reads and about 3 KB** — and
+Against the 727,388 town-level addresses and municipalities of Japan's Address
+Base Registry, in a 4.7 MB file, completing a prefix costs **two range reads and about 3 KB** — and
 costs the same two at any file size, because a contiguous range of terms is
 contiguous in every section at once. See [demo/addresses](demo/addresses) for the
 measurements, the provenance chain back to the register, and what the numbers do

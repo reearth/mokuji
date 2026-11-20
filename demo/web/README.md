@@ -19,6 +19,18 @@ Build the indexes first — [../addresses](../addresses) and
 python3 serve.py --index ../addresses/tokyo.mokuji --reverse ../reverse/reverse.mokuji
 ```
 
+Give it a second index, the bigram one from [../fuzzy](../fuzzy), and
+`index.html` asks that one whenever no address starts with what was typed — a
+municipality's name without its prefecture, or an address typed wrong:
+
+```sh
+python3 serve.py --index ../addresses/abr.mokuji --fuzzy ../fuzzy/fuzzy.mokuji
+```
+
+`埼玉県和光` completes from the first index in 2 requests and 4.5 KB. `和光市` is
+no address's prefix; the page opens the second, 2 requests and 621 KB the first
+time, and finds `埼玉県和光市` in 6 requests and 19 KB.
+
 Open <http://localhost:8787/> and type a prefix, or
 <http://localhost:8787/reverse.html> and click the map. The panel counts the
 range requests either way.
@@ -102,14 +114,15 @@ partly served from cache.
 ## Publishing this to object storage
 
 `index.html?url=<url>` reads the index from that URL instead of the one
-`serve.py` serves, so the page and the file can live in different places: the
-page on any static host, the file in a bucket. `reverse.html?url=<url>` does the
+`serve.py` serves, and `&fuzzy=<url>` the second index, so the page and the
+files can live in different places: the page on any static host, the files in a
+bucket. `reverse.html?url=<url>` does the
 same for a reverse index, such as the national one in [../reverse](../reverse).
 Both pages show the credit the file states and the dates its sources were
 published (`SPEC.md` §6).
 
 ```
-https://example.com/index.html?url=https://data.example.com/abr-town.mokuji
+https://example.com/index.html?url=https://data.example.com/abr-town.mokuji&fuzzy=https://data.example.com/abr-fuzzy.mokuji
 ```
 
 The town-level index in [../addresses](../addresses) is the one to publish for

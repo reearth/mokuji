@@ -17,22 +17,27 @@ many were there.
 ```sh
 # see ../addresses for how to fetch the registry
 python3 ../addresses/abr.py town --fullset abr/mt_town_fullset_all.csv \
-    --pos abr/pos/ --out town.tsv --echo-address
+    --pos abr/pos --city-pos abr/mt_city_pos_all.csv \
+    --municipalities --municipality-prior 10 --echo-address --out town.tsv
 mokuji build town.tsv fuzzy.mokuji --tokenizer ja-address-bigram \
-    --source abr/mt_town_fullset_all.csv
+    --attribute municipality \
+    $(python3 ../provenance.py args abr/mt_town_fullset_all.csv.zip \
+        abr/mt_city_pos_all.csv.zip abr/pos/*.zip) \
+    --source ../addresses/abr.py --license CC-BY-4.0 \
+    --attribution "アドレス・ベース・レジストリ（デジタル庁）, CC BY 4.0"
 ```
 
 ```
 $ mokuji search fuzzy.mokuji 東京都千代田区丸ノ内 --any --probe 6 --length-norm 0 -n 3
-371608  35.966  東京都千代田区丸の内一丁目|139.767201,35.68156
-371609  35.966  東京都千代田区丸の内三丁目|139.763476,35.676952
-371610  35.966  東京都千代田区丸の内二丁目|139.763447,35.680022
+372775  44.667  東京都千代田区丸の内一丁目|139.767201,35.68156
+372776  44.667  東京都千代田区丸の内三丁目|139.763476,35.676952
+372777  44.667  東京都千代田区丸の内二丁目|139.763447,35.680022
 
-probed:   都千:115 丸の:120 区丸:156 代田:1295 田区:1319 千代:1565
+probed:   都千:116 丸の:120 区丸:156 代田:1298 田区:1325 千代:1569
 skipped:  3 term(s) with more postings, without reading any of them
-3532 match(es), 3 shown, ranked by BM25
+3508 match(es), 3 shown, ranked by BM25
 query:    16 read(s) - 15 dictionary and postings, 1 payload
-bytes:    49293 of 17429814
+bytes:    68431 of 17608103
 ```
 
 ```
@@ -53,26 +58,82 @@ uses.
 
 | | |
 |---|---|
-| Addresses | 725,855 町字, nationwide |
+| Addresses | 727,812: 725,970 町字 nationwide, and 1,842 municipalities |
 | Tokenizer | `ja-address-bigram` |
-| Terms | 155,237 |
-| Postings | 9,223,112 |
-| Index | 17.4 MB |
-| A query | 9–17 range reads, 20–50 KB |
+| Terms | 155,254 |
+| Postings | 9,096,299 |
+| Index | 17.6 MB |
+| A query | 5–17 range reads, 10–70 KB |
+
+## A municipality by its name
+
+Someone looking for a city types its name — `和光市`, not `埼玉県和光市`. The
+registry's town master names every 町字 and never a municipality on its own, so
+that query could only answer with 和光市's towns, in no useful order.
+`--municipalities` adds each municipality as an address of its own, at its
+point in `mt_city_pos_all`: 1,912 of them, wards and designated cities
+included, of which 70 already had a town row spelled the same way.
+
+That is not enough by itself. A town that repeats its municipality's name —
+`広島県府中市府中町`, `北海道古宇郡泊村大字泊村` — holds the query's bigrams twice
+and outranks it. So `--municipality-prior 10` writes a column, 10 for a
+municipality and 0 for a town, and `--boost municipality` adds it to the score
+as a static prior, `ln(1 + 10)`, about 2.4:
+
+```
+$ mokuji search fuzzy.mokuji 和光市 -n 3 --boost municipality
+125271  24.719  埼玉県和光市|139.605693,35.781104
+125288  20.559  埼玉県和光市広沢|139.60131,35.779974
+125297  20.559  埼玉県和光市本町|139.60631,35.787518
+
+35 match(es), 3 shown, ranked by BM25 and a static prior
+query:    5 read(s) - 4 dictionary and postings, 1 payload
+bytes:    15165 of 17608103
+
+$ mokuji search fuzzy.mokuji 府中市 -n 3 --boost municipality
+275611  19.409  広島県府中市|133.236323,34.568349
+374178  19.409  東京都府中市|139.477663,35.668921
+275637  17.656  広島県府中市府中町|133.232682,34.577183
+```
+
+Every municipality typed without its prefecture — `和光市`, `札幌市中央区`,
+`境町` — and where its own record ranked:
+
+| | First | First, or behind only others of the same name | In the top five |
+|---|---|---|---|
+| No prior | 65.4% | 66.0% | 92.6% |
+| **Prior of 10** | **93.3%** | **95.3%** | **100%** |
+
+Before the municipalities were added, none of them could be found at all. Nor
+do they disturb a search for a town: 1,000 町字 typed without their prefecture
+came back first 999 times, with the municipalities and the prior and without
+either.
+
+In a browser, `MokujiIndex.search` in [`@reearth/mokuji`](../../js) ranks
+exactly as `mokuji search` does, options and all, and `../web/index.html` asks
+this index whenever no address starts with what was typed: `和光市` there is 6
+range requests and 19 KB, once the index is open, and opening it is 2 requests
+and 621 KB, most of it the document lengths BM25 needs.
 
 ## Does it actually correct anything?
 
 Recall is the only honest measure, so 200 real addresses per row were damaged
-and looked up again, each query through the CLI against the real index:
+and looked up again, each query through the CLI against the index above:
+
+```sh
+python3 recall.py --index fuzzy.mokuji --corpus town.tsv
+```
 
 | What was done to the address | Top-1 | Top-5 | Reads |
 |---|---|---|---|
-| One character substituted | 81% | 91% | 19.7 |
-| One character deleted | 80% | 91% | 18.6 |
-| Two characters transposed | 70% | 81% | 19.9 |
-| Prefecture left off | 94% | 100% | 16.9 |
-| Kana variant (`の`↔`ノ`, `ヶ`↔`ケ`, `の`↔`之`) | 91% | 99% | 21.1 |
-| `が`↔`ヶ` | 81% | 93% | 20.4 |
+| One character substituted | 80% | 89% | 19.5 |
+| One character deleted | 81% | 92% | 18.5 |
+| Two characters transposed | 70% | 85% | 19.8 |
+| Prefecture left off | 92% | 96% | 17.2 |
+| Kana variant (`の`↔`ノ`, `ヶ`↔`ケ`, `の`↔`之`) | 94% | 99% | 20.7 |
+| `が`↔`ヶ` | 77% | 92% | 20.2 |
+
+With `--boost municipality` every row is the same to the percent.
 
 The kana row was the interesting one, because it is the error people actually
 make, and before the tokenizer folded those spellings it scored **70%** — worse
@@ -84,7 +145,7 @@ distinctive one and it loses its best evidence.
 So the fix went where it belonged, which was not the search. `ja-address-bigram`
 folds `ノ`→`の`, `ケ`/`ヵ`→`ヶ` and `之`→`の` before tokenizing, and that row
 moved to 91% / 99% with every other row unchanged and the index slightly
-smaller. See `TOKENIZERS.md` for what is folded and what was measured and left
+smaller; it is 94% / 99% on the registry measured above. See `TOKENIZERS.md` for what is folded and what was measured and left
 out — `が` is the last row above, and it is already handled as well as any
 substitution is.
 

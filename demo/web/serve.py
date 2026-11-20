@@ -23,6 +23,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     index_path: pathlib.Path
     reverse_path: pathlib.Path | None = None
     stac_path: pathlib.Path | None = None
+    fuzzy_path: pathlib.Path | None = None
     names_path: pathlib.Path | None = None
     collection_dir: pathlib.Path | None = None
 
@@ -30,6 +31,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         name = path.split("?")[0]
         if name == "/index.mokuji":
             return str(self.index_path)
+        if name == "/fuzzy.mokuji" and self.fuzzy_path:
+            return str(self.fuzzy_path)
         if name == "/reverse.mokuji" and self.reverse_path:
             return str(self.reverse_path)
         if name == "/stac.mokuji" and self.stac_path:
@@ -101,6 +104,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", default="addresses.mokuji")
+    parser.add_argument(
+        "--fuzzy",
+        help="a ja-address-bigram index index.html asks when no address starts with the query",
+    )
     parser.add_argument("--reverse", help="the index reverse.html reads")
     parser.add_argument("--stac", help="the index stac.html reads")
     parser.add_argument("--names", help="the index complete.html reads")
@@ -112,6 +119,11 @@ def main():
     if not Handler.index_path.is_file():
         raise SystemExit(f"no index at {Handler.index_path}")
     served = [Handler.index_path.name]
+    if args.fuzzy:
+        Handler.fuzzy_path = pathlib.Path(args.fuzzy).resolve()
+        if not Handler.fuzzy_path.is_file():
+            raise SystemExit(f"no index at {Handler.fuzzy_path}")
+        served.append(f"{Handler.fuzzy_path.name} for names that are no prefix")
     if args.reverse:
         Handler.reverse_path = pathlib.Path(args.reverse).resolve()
         if not Handler.reverse_path.is_file():
