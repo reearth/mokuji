@@ -62,7 +62,7 @@ The reference implementation, in Rust.
 |---|---|
 | `mokuji-format` | Byte layout: header, section table, codec identifiers. No I/O, no dependencies |
 | `mokuji-codec` | Integer and string codecs used inside blocks |
-| `mokuji` | Search a file in what a person types: `lookup`, `complete`, `search`, the same API as the TypeScript reader |
+| `mokuji` | Search a file in what a person types: `lookup`, `complete`, `search`, the same API as the TypeScript and Python readers |
 | `mokuji-read` | `RangeReader`, a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
 | `mokuji-tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
 | `mokuji-write` | Deterministic writer |
@@ -70,6 +70,7 @@ The reference implementation, in Rust.
 | `mokuji-cli` | The `mokuji` command |
 | `mokuji-manifest` | Collections: a manifest over several files (`MANIFEST.md`) |
 | `js/` (`@reearth/mokuji`) | The reader in TypeScript, for browsers, workers and Node |
+| `python/` (`mokuji`) | The reader in Python, with no dependencies |
 
 The crate boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing
@@ -122,8 +123,8 @@ example of one kind of index.
 reading this code. [conformance](conformance) holds the fixtures and cases an
 implementation answers to — results and the number of range reads — and a
 Python builder that produces the fixtures from the specification alone,
-independently of the Rust writer. The Rust crates, the TypeScript reader and
-that builder all pass the same cases.
+independently of the Rust writer. The Rust crates, the TypeScript and Python
+readers, and that builder all pass the same cases.
 
 ## Three shapes on one layout
 

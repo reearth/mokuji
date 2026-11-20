@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mokuji"
+version = "0.1.0"
+description = "Read Mokuji files — a cloud-optimized search index — a range at a time, from a path or over HTTP"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "Re:Earth and contributors" }]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/reearth/mokuji"
+
+[tool.setuptools]
+packages = ["mokuji"]

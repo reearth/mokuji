@@ -43,6 +43,15 @@ jobs:
       - name: js/dist is current
         run: git diff --exit-code -- js/dist
 
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The Python reader, a fourth implementation, against the same cases.
+      # No dependencies, so the runner's own Python 3 is enough; the check
+      # against the TypeScript reader runs on its Node and js/dist.
+      - run: python3 -m unittest discover -s python/tests
+
   msrv:
     runs-on: ubuntu-latest
     steps:
