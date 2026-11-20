@@ -275,6 +275,9 @@ python3 -m unittest discover -s python/tests          # the Python reader
 CI runs these, with `cargo fmt --check` and `cargo clippy`, the library
 again without the `cli` feature, and a build of `tools/`.
 
+A `v*` tag releases the command and publishes the packages; see
+[RELEASING.md](RELEASING.md).
+
 ## License
 
 Code is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE)

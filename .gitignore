@@ -20,3 +20,7 @@ _site/
 
 # goreleaser output; js/dist is committed and not this
 /dist
+
+# Python package builds
+*.egg-info/
+/python-dist
