@@ -14,7 +14,7 @@ mokuji - a cloud-optimized concordance format
 
 usage:
     mokuji build <input.tsv> <output.mokuji> [options]
-        --terms-per-block <n>          terms per dictionary block (default 128)
+        --terms-per-block <n>          terms per dictionary block (default 1024)
         --inline-postings <bytes>      write a term's postings in its dictionary
                                        entry when they fit in this many bytes
                                        and no more than a run would take
