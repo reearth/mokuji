@@ -3,7 +3,7 @@
 **Version:** 0.1 (draft — not frozen, subject to breaking change)
 **Status:** Draft
 **Date:** 2026-11-20
-**Editor:** Eukarya Inc.
+**Editor:** Re:Earth and contributors
 
 > Mokuji — a cloud-optimized concordance format.
 > Single immutable file, bounded range reads, no server.

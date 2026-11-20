@@ -44,8 +44,10 @@ actually matters; it is written by `mokuji-write` and kept current by a test.
 |---|---|
 | `mokuji-read` | `cargo test -p mokuji-read --test conformance` |
 | `mokuji-manifest` | `cargo test -p mokuji-manifest --test conformance` — the collection cases |
+| `mokuji` (the crate people search with) | `cargo test -p mokuji` — the same questions as the TypeScript reader's tests |
 | `build_fixtures.py` | checks every case before writing a fixture |
-| `demo/web/mokuji.js` | `node --test 'demo/web/*.test.js'` |
+| `js/` (`@reearth/mokuji`) | `cd js && npm test` |
+| `python/` (`mokuji`) | `python3 -m unittest discover -s python/tests` — every case, read counts included, and a comparison with the TypeScript reader |
 
 ## Why the fixtures are not built by the writer
 

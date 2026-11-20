@@ -2,7 +2,7 @@
 
 **Version:** 0.1 (draft — not frozen, subject to breaking change)
 **Status:** Draft
-**Editor:** Eukarya Inc.
+**Editor:** Re:Earth and contributors
 
 This document is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
