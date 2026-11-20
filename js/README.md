@@ -43,6 +43,11 @@ const { results } = await fuzzy.search("和光市", { boost: "municipality" });
 // Typed wrong: any of its bigrams, the six rarest, without length normalization.
 await fuzzy.search("千代田区丸乃内", { any: true, probe: 6, lengthNorm: 0 });
 ```
+
+The scores agree with `mokuji search`'s and the Python reader's to about
+1e-12, not to the last bit. JavaScript's `Math.log` is not correctly rounded
+(V8 is one unit in the last place off for about one input in seventy), so two
+documents whose scores differ by less than that may come out in either order.
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
 

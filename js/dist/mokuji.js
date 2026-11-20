@@ -59,15 +59,38 @@ function scaled(value, exponent) {
 const OPEN_PREFIX = 256 * 1024;
 const utf8 = new TextDecoder();
 const encoder = new TextEncoder();
-// Just enough CBOR to read the metadata section (SPEC.md §6): unsigned
-// integers, text, arrays, and maps. Unlike the Rust reader this does not check
-// that the encoding is canonical; a page wants to know where a file came from,
-// and checking that it was written correctly is `mokuji verify`'s job.
+// CBOR for the metadata section (SPEC.md §6). Every type is decoded, since a
+// reader must tolerate keys it does not know, whatever they hold: integers of
+// both signs, byte and text strings, arrays, maps, tagged values (as the value
+// they tag), false, true, null, and floats. Unlike the Rust reader this does
+// not check that the encoding is canonical; a page wants to know where a file
+// came from, and checking that it was written correctly is `mokuji verify`'s
+// job.
 function cbor(bytes, pos = 0) {
     const view = new DataView(bytes.buffer, bytes.byteOffset);
     const initial = bytes[pos];
     const major = initial >> 5;
     const small = initial & 0x1f;
+    if (major === 7) {
+        // Simple values and floats carry their value in the argument's bytes.
+        if (small === 20)
+            return [false, pos + 1];
+        if (small === 21)
+            return [true, pos + 1];
+        if (small === 22 || small === 23)
+            return [null, pos + 1];
+        if (small === 25)
+            return [float16(view.getUint16(pos + 1)), pos + 3];
+        if (small === 26)
+            return [view.getFloat32(pos + 1), pos + 5];
+        if (small === 27)
+            return [view.getFloat64(pos + 1), pos + 9];
+        if (small < 24)
+            return [null, pos + 1];
+        if (small === 24)
+            return [null, pos + 2];
+        throw new Error("metadata uses a reserved or indefinite CBOR simple value");
+    }
     let argument;
     if (small < 24)
         [argument, pos] = [small, pos + 1];
@@ -84,6 +107,10 @@ function cbor(bytes, pos = 0) {
     switch (major) {
         case 0:
             return [argument, pos];
+        case 1:
+            return [-1 - argument, pos];
+        case 2:
+            return [bytes.slice(pos, pos + argument), pos + argument];
         case 3:
             return [utf8.decode(bytes.subarray(pos, pos + argument)), pos + argument];
         case 4: {
@@ -106,9 +133,23 @@ function cbor(bytes, pos = 0) {
             return [map, pos];
         }
         default:
-            throw new Error(`metadata uses CBOR major type ${major}`);
+            // 6: a tag, whose meaning this reader does not need; the value it tags.
+            return cbor(bytes, pos);
     }
 }
+/** An IEEE 754 half-precision float, which DataView has no getter for. */
+function float16(bits) {
+    const sign = bits & 0x8000 ? -1 : 1;
+    const exponent = (bits >> 10) & 0x1f;
+    const fraction = bits & 0x3ff;
+    if (exponent === 0)
+        return sign * 2 ** -14 * (fraction / 1024);
+    if (exponent === 31)
+        return fraction ? NaN : sign * Infinity;
+    return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+/** The metadata section's CBOR, decoded; exported for the tests. */
+export const decodeCbor = (bytes) => cbor(bytes)[0];
 class Cursor {
     bytes;
     pos;
@@ -267,7 +308,9 @@ function decodeColumns(bytes, numDocs) {
     return columns;
 }
 const text = (value) => typeof value === "string" ? value : null;
-const field = (value, key) => value !== null && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
+const field = (value, key) => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array)
+    ? value[key]
+    : undefined;
 // --- a file ---------------------------------------------------------------
 /** One open Mokuji file: its resident set held, everything else read on demand. */
 export class MokujiIndex {
@@ -910,6 +953,9 @@ export class MokujiIndex {
                 .map(({ p }) => p);
             skipped = Math.max(0, present.length - probe);
             present = present.slice(0, probe);
+            // probe: 0 reads no postings, so nothing can be matched.
+            if (present.length === 0)
+                return { ...none, skipped };
         }
         const runs = await Promise.all(present.map(async ({ entry }) => (await this.postingsSpan([entry]))[0]));
         const probed = present.map(({ term, entry }) => ({ term, docFreq: entry.docFreq }));

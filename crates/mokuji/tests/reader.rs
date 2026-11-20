@@ -91,6 +91,20 @@ fn ranks_as_mokuji_search_and_the_typescript_reader_do() {
     );
     assert_eq!(found.skipped, 1);
 
+    // A probe of zero reads no postings, so nothing is matched, and both
+    // present terms are skipped.
+    // An intersection is where it panicked, indexing the first of no runs; a
+    // union of none was already empty.
+    for any in [false, true] {
+        let zero = SearchOptions {
+            any,
+            probe: Some(0),
+            ..SearchOptions::default()
+        };
+        let found = block_on(tiny.search("tokyo chuo", &zero)).unwrap();
+        assert_eq!((found.matched, found.skipped), (0, 2));
+    }
+
     let none = block_on(tiny.search("tokyo nowhere", &SearchOptions::default())).unwrap();
     assert_eq!(none.matched, 0);
 

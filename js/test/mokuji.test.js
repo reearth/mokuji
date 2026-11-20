@@ -222,6 +222,37 @@ test("reads a Blob as it reads any other source", async () => {
   }
 });
 
+test("decodes every CBOR type, since unknown metadata keys may hold any", async () => {
+  const { decodeCbor } = await import("../dist/mokuji.js");
+  // {"a": [-1, h'0102', true, false, null, 1.5 (half), 0.25 (single), 1.1 (double), 1(5)]}
+  const bytes = new Uint8Array([
+    0xa1, 0x61, 0x61, 0x89, 0x20, 0x42, 0x01, 0x02, 0xf5, 0xf4, 0xf6, 0xf9, 0x3e, 0x00,
+    0xfa, 0x3e, 0x80, 0x00, 0x00, 0xfb, 0x3f, 0xf1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a, 0xc1, 0x05,
+  ]);
+  assert.deepEqual(decodeCbor(bytes), {
+    a: [-1, new Uint8Array([1, 2]), true, false, null, 1.5, 0.25, 1.1, 5],
+  });
+});
+
+test("ja-address strips White_Space, not what String.trim strips", () => {
+  // U+0085 is White_Space and String.trim keeps it; U+FEFF is not, and
+  // String.trim takes it. TOKENIZERS.md names the property, as Rust and
+  // Python read it.
+  assert.equal(jaAddress("\u0085東京都\u0085"), "東京都");
+  assert.equal(jaAddress("\ufeff東京都"), "\ufeff東京都");
+});
+
+test("a probe of zero reads no postings and matches nothing", async () => {
+  const tiny = await MokujiIndex.open(await fileSource("tiny"));
+  // An intersection is where it failed, indexing the first of no runs; a
+  // union of none was already empty.
+  for (const any of [false, true]) {
+    const found = await tiny.search("tokyo chuo", { any, probe: 0 });
+    assert.equal(found.matched, 0);
+    assert.equal(found.skipped, 2);
+  }
+});
+
 test("a prefix range costs the reads the specification says", async () => {
   const index = await MokujiIndex.open(await fileSource("dict"));
   index.coalesce = false;

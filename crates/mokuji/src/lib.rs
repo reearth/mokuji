@@ -362,7 +362,9 @@ pub struct Ranking {
 /// outside the specification, since which model is right is a property of the
 /// corpus; what the format supplies is the postings and the statistics a
 /// scorer needs. This is what using them looks like, and the TypeScript and
-/// Python readers rank the same way.
+/// Python readers rank the same way: to about 1e-12, since JavaScript's
+/// `Math.log` is not correctly rounded, so documents whose scores differ by
+/// less than that may be ordered differently there.
 pub async fn rank<R: RangeReader>(
     index: &Index<R>,
     terms: &[String],
@@ -414,6 +416,10 @@ pub async fn rank<R: RangeReader>(
         present.sort_by_key(|(_, entry)| entry.doc_freq);
         skipped = present.len().saturating_sub(probe);
         present.truncate(probe);
+        // A probe of zero reads no postings, so nothing can be matched.
+        if present.is_empty() {
+            return Ok(empty(Vec::new(), skipped));
+        }
     }
 
     let mut runs = Vec::with_capacity(present.len());

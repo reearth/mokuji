@@ -56,7 +56,9 @@ function foldVariants(chars) {
 }
 /** The `ja-address` tokenizer, applied to a query. */
 export function jaAddress(text) {
-    const chars = foldVariants([...text.normalize("NFKC").trim()]);
+    // White_Space, as TOKENIZERS.md says: String.prototype.trim also strips
+    // U+FEFF and leaves U+0085, so it would disagree with the other readers.
+    const chars = foldVariants([...text.normalize("NFKC").replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "")]);
     let out = "";
     let i = 0;
     while (i < chars.length) {

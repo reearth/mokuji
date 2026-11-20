@@ -69,7 +69,9 @@ Parameters: none.
 Normalization, in order:
 
 1. Unicode Normalization Form KC (NFKC).
-2. Strip leading and trailing whitespace.
+2. Strip leading and trailing `White_Space` characters (the Unicode property),
+   as `name-list` does: not a language's own idea of whitespace, which differs
+   at U+0085, U+FEFF and U+001C to U+001F.
 3. Fold the variant spellings below.
 4. Rewrite each maximal run of the characters
    `〇零一二三四五六七八九十百千` that is **immediately followed by `丁目`**

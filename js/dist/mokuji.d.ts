@@ -22,7 +22,7 @@ export interface RequestInfo {
     length: number;
 }
 /** A value the metadata section can hold (SPEC.md §6). */
-export type CborValue = number | string | CborValue[] | {
+export type CborValue = number | string | boolean | null | Uint8Array | CborValue[] | {
     [key: string]: CborValue;
 };
 /** One dictionary entry (SPEC.md §5.3.4). */
@@ -109,6 +109,8 @@ interface Section {
     offset: number;
     length: number;
 }
+/** The metadata section's CBOR, decoded; exported for the tests. */
+export declare const decodeCbor: (bytes: Uint8Array) => CborValue;
 /** One open Mokuji file: its resident set held, everything else read on demand. */
 export declare class MokujiIndex {
     /** Everything a query costs, so the page can show it rather than claim it. */
