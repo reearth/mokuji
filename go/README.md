@@ -1,8 +1,8 @@
 # mokuji (Go)
 
 Read [Mokuji](../README.md) files a range at a time, from a path, a URL or any
-source of bytes. The standard library and `golang.org/x/text`, for the
-Unicode normalization and case mapping the tokenizers need.
+source of bytes, and write them. The standard library and `golang.org/x/text`,
+for the Unicode normalization and case mapping the tokenizers need.
 
 It is a reader of [SPEC.md](../SPEC.md) beside the Rust crate and the
 [TypeScript](../js) and [Python](../python) readers, whose API it follows with
@@ -88,6 +88,45 @@ index, err := mokuji.Open(ctx, bucket{client})
 
 For another HTTP client, `Open` an `&mokuji.HTTPSource{URL: url, Client: client}`.
 
+## Write
+
+`Builder` is the Rust crate's `mokuji::write`. Documents are added first, in
+ID order; postings then, terms in byte order and each term's documents
+ascending. The writer checks the order and owns no sort, so that a corpus
+larger than memory is sorted outside it. `Split` turns a document's text into
+terms as a tokenizer from `TOKENIZERS.md` does.
+
+```go
+options := mokuji.DefaultWriteOptions()
+builder, err := mokuji.NewBuilder(options)
+doc, err := builder.AddDocument([]byte("35.671,139.772"))
+// ... every document, then every posting, in order
+err = builder.AddPosting([]byte("chuo"), doc, 1)
+
+meta, err := (&mokuji.Metadata{
+	Generation:       1,
+	Sources:          []mokuji.Provenance{{ContentHash: "sha2-256:…", URI: "places.tsv"}},
+	GeneratorName:    mokuji.GeneratorName,
+	GeneratorVersion: mokuji.Version,
+	GeneratorParams:  options.Params(),
+	TokenizerID:      "space-split",
+}).Encode()
+file, err := builder.Finish(meta)
+```
+
+The metadata is the caller's to compose: it names the source the index was
+derived from, which the writer never sees (SPEC.md §6). `ExampleBuilder` in
+`example_test.go` is a whole build.
+
+Stored raw (`Compress: false`), a file is the Rust writer's byte for byte, and
+the tests rebuild the conformance fixtures to show it. Compressed, it is not:
+Go's deflate is not the Rust crate's, and no specification of deflate fixes
+which of the valid encodings a compressor emits. Such a file says the same
+thing, every reader reads it, and it is reproducible by this writer, which is
+what SPEC.md §3.4 asks; `generator.name` is `mokuji-go` so that a rebuild is
+checked against the writer that made it. Go's deflate may change between Go
+releases, so a compressed rebuild is checked with the same Go too.
+
 ## Install
 
 ```sh
@@ -105,10 +144,11 @@ From this directory:
 go test ./...
 ```
 
-The tests run the conformance cases from `../conformance/`, and, when
-`python3` is present, ask the Python reader the same questions and compare
-the answers, scores and costs included, and the tokenizers' output on a few
-hundred strings.
+The tests run the conformance cases from `../conformance/`, rebuild the raw
+fixtures byte for byte, and, when `python3` is present, ask the Python reader
+the same questions and compare the answers, scores and costs included, the
+tokenizers' output on a few hundred strings, and its reading of the fixtures
+as this writer compresses them.
 
 ## Where it differs from the TypeScript reader
 

@@ -73,7 +73,7 @@ languages, with the same API.
 | `mokuji::cli`, `src/main.rs` | The `mokuji` command, with the `cli` feature |
 | `js/` (`mokuji` on npm) | The reader in TypeScript, for browsers, workers and Node |
 | `python/` (`mokuji` on PyPI) | The reader in Python, with no dependencies |
-| `go/` (`github.com/reearth/mokuji/go`) | The reader in Go |
+| `go/` (`github.com/reearth/mokuji/go`) | The reader in Go, and a writer |
 
 The module boundaries follow the section boundaries in the specification,
 because keeping the dictionary, the postings, and the payload from knowing

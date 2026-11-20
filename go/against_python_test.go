@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"math"
 	"math/rand"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -190,14 +191,22 @@ func tokenizerStrings() []string {
 	return out
 }
 
-func TestAgainstPython(t *testing.T) {
+type pythonAnswers struct {
+	Answers         []answer
+	Tokens          [][3]any
+	OtherAlphabetic [][2]rune `json:"other_alphabetic"`
+}
+
+// askPythonAbout asks the Python reader every question about the fixtures
+// in dir, and the tokenizers about texts.
+func askPythonAbout(t *testing.T, dir string, texts []string) pythonAnswers {
+	t.Helper()
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3 to compare against")
 	}
-	texts := tokenizerStrings()
 	input := must(json.Marshal(map[string]any{"questions": questions, "strings": texts}))
-	cmd := exec.Command(python, "-I", "-c", askPython, filepath.Join("..", "python"), fixtures)
+	cmd := exec.Command(python, "-I", "-c", askPython, filepath.Join("..", "python"), dir)
 	cmd.Stdin = bytes.NewReader(input)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -205,14 +214,63 @@ func TestAgainstPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python: %v\n%s", err, stderr.String())
 	}
-	var theirs struct {
-		Answers         []answer
-		Tokens          [][3]any
-		OtherAlphabetic [][2]rune `json:"other_alphabetic"`
-	}
+	var theirs pythonAnswers
 	if err := json.Unmarshal(output, &theirs); err != nil {
 		t.Fatal(err)
 	}
+	return theirs
+}
+
+// Files this writer compresses, read by the Python reader, answer every
+// question as the fixtures they rebuild do: Go's deflate is the deflate any
+// reader has. Only the bytes read may differ.
+func TestPythonReadsWhatThisWriterCompresses(t *testing.T) {
+	dir := t.TempDir()
+	for name, build := range map[string]func([]byte) []byte{
+		"tiny":         func(meta []byte) []byte { return buildTiny(t, meta, true) },
+		"dict":         func(meta []byte) []byte { return buildDict(t, meta, true) },
+		"dict-deflate": func(meta []byte) []byte { return buildDict(t, meta, true) },
+		"names":        func(meta []byte) []byte { return buildNames(t, "names", meta, true) },
+		"names-delta":  func(meta []byte) []byte { return buildNames(t, "names-delta", meta, true) },
+	} {
+		file := build(metaOf(t, fixtureBytes(t, name)))
+		if err := os.WriteFile(filepath.Join(dir, name+".mokuji"), file, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	theirs := askPythonAbout(t, dir, []string{})
+	for i, q := range questions {
+		ours, python := goAnswer(t, q), theirs.Answers[i]
+		ours.Stats[1], python.Stats[1] = 0, 0
+		agree(t, q, ours, python)
+	}
+}
+
+// agree checks that two answers to q are the same: order, payloads and cost
+// exactly, scores to a part in 10^12.
+func agree(t *testing.T, q question, ours, python answer) {
+	t.Helper()
+	ourScores, theirScores := ours.Scores, python.Scores
+	ours.Scores, python.Scores = nil, nil
+	if !reflect.DeepEqual(ours, python) {
+		t.Errorf("%+v:\n go     %+v\n python %+v", q, ours, python)
+		return
+	}
+	if len(ourScores) != len(theirScores) {
+		t.Errorf("%+v: %d scores, python %d", q, len(ourScores), len(theirScores))
+		return
+	}
+	for j, a := range ourScores {
+		b := theirScores[j]
+		if (a == nil) != (b == nil) || (a != nil && math.Abs(*a-*b) > math.Abs(*b)*1e-12) {
+			t.Errorf("%+v: score %d is %s, python %s", q, j, scoreText(a), scoreText(b))
+		}
+	}
+}
+
+func TestAgainstPython(t *testing.T) {
+	texts := tokenizerStrings()
+	theirs := askPythonAbout(t, fixtures, texts)
 
 	if len(theirs.Answers) != len(questions) || len(theirs.Tokens) != len(texts) {
 		t.Fatalf("python answered %d of %d questions", len(theirs.Answers), len(questions))
@@ -220,23 +278,7 @@ func TestAgainstPython(t *testing.T) {
 
 	t.Run("answers and costs", func(t *testing.T) {
 		for i, q := range questions {
-			ours, python := goAnswer(t, q), theirs.Answers[i]
-			ourScores, theirScores := ours.Scores, python.Scores
-			ours.Scores, python.Scores = nil, nil
-			if !reflect.DeepEqual(ours, python) {
-				t.Errorf("%+v:\n go     %+v\n python %+v", q, ours, python)
-				continue
-			}
-			if len(ourScores) != len(theirScores) {
-				t.Errorf("%+v: %d scores, python %d", q, len(ourScores), len(theirScores))
-				continue
-			}
-			for j, a := range ourScores {
-				b := theirScores[j]
-				if (a == nil) != (b == nil) || (a != nil && math.Abs(*a-*b) > math.Abs(*b)*1e-12) {
-					t.Errorf("%+v: score %d is %s, python %s", q, j, scoreText(a), scoreText(b))
-				}
-			}
+			agree(t, q, goAnswer(t, q), theirs.Answers[i])
 		}
 	})
 

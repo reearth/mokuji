@@ -2,8 +2,11 @@ package mokuji_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
+	"maps"
+	"slices"
 
 	mokuji "github.com/reearth/mokuji/go"
 )
@@ -69,4 +72,74 @@ func ExampleOpenCollection() {
 	// 0 1 Black Forest
 	// 0 2 Blackpool
 	// 1 0 Black Mountain
+}
+
+func ExampleBuilder() {
+	// Places, one document each: the text to index, and the payload a match
+	// returns.
+	places := [][2]string{
+		{"tokyo chiyoda marunouchi", "35.681,139.767"},
+		{"tokyo chuo ginza", "35.671,139.772"},
+		{"osaka kita umeda", "34.702,135.496"},
+	}
+
+	options := mokuji.DefaultWriteOptions()
+	builder, err := mokuji.NewBuilder(options)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Documents first, in ID order; then postings, terms in byte order and
+	// each term's documents ascending. Sorting is the caller's.
+	docs := map[string][]int{}
+	for _, place := range places {
+		doc, err := builder.AddDocument([]byte(place[1]))
+		if err != nil {
+			log.Fatal(err)
+		}
+		terms, _ := mokuji.Split("space-split", place[0])
+		for _, term := range terms {
+			docs[term] = append(docs[term], doc)
+		}
+	}
+	terms := slices.Sorted(maps.Keys(docs))
+	for _, term := range terms {
+		for _, doc := range docs[term] {
+			if err := builder.AddPosting([]byte(term), doc, 1); err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+
+	// What the index was derived from, by content hash, and how, so that it
+	// can be rebuilt and checked.
+	var source []byte
+	for _, place := range places {
+		source = fmt.Appendf(source, "%s\t%s\n", place[0], place[1])
+	}
+	meta, err := (&mokuji.Metadata{
+		Generation:       1,
+		Sources:          []mokuji.Provenance{{ContentHash: fmt.Sprintf("sha2-256:%x", sha256.Sum256(source)), URI: "places.tsv"}},
+		GeneratorName:    mokuji.GeneratorName,
+		GeneratorVersion: mokuji.Version,
+		GeneratorParams:  options.Params(),
+		TokenizerID:      "space-split",
+	}).Encode()
+	if err != nil {
+		log.Fatal(err)
+	}
+	file, err := builder.Finish(meta)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	index, err := mokuji.Open(context.Background(), mokuji.BytesSource(file))
+	if err != nil {
+		log.Fatal(err)
+	}
+	found, err := index.Search(context.Background(), "tokyo chuo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(found.Results[0].Payload)
+	// Output: 35.671,139.772
 }

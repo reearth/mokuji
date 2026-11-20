@@ -1,5 +1,5 @@
 // Package mokuji reads Mokuji files a range at a time, from a path, a URL or
-// any source of bytes.
+// any source of bytes, and writes them.
 //
 // Mokuji is a single-file layout for an inverted index, designed to be
 // published as a static object and queried over HTTP range requests (see
@@ -15,4 +15,7 @@
 //
 // A collection, a manifest over several files, is opened with
 // OpenCollection.
+//
+// Builder writes a file, from documents and a sorted stream of postings,
+// with metadata composed as a Metadata.
 package mokuji
