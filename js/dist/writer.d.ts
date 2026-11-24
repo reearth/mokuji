@@ -6,7 +6,7 @@ export declare const GENERATOR_NAME = "mokuji-js";
  * the other packages' versions (RELEASING.md), and publishing checks that they
  * agree.
  */
-export declare const VERSION = "0.2.0";
+export declare const VERSION = "0.2.1";
 /** The first section identifier an application may use (SPEC.md §5.2). */
 export declare const SECTION_APPLICATION_MIN = 32768;
 /** An integer as a writer takes it: a safe integer, or a bigint for the rest of 64 bits. */
