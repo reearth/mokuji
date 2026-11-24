@@ -740,6 +740,10 @@ html[data-lang="ja"] .display {
   font-size: 11.5px;
   color: var(--ink-3);
 }
+/* What the files state, then the site they come from. */
+.credit span:not(:empty)::after {
+  content: " · ";
+}
 
 /* --- chapters --------------------------------------------------------------- */
 
