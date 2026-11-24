@@ -25,7 +25,6 @@ and what has to be true before it is declared. Each condition can be checked;
 | 3 | Data from another publisher | Not yet |
 | 4 | The I/O bound measured on large real data | Met |
 | 5 | Deferred work fits a minor version | Not yet |
-| 6 | The fate of 0.x files decided | Not yet |
 
 1. **An independent reader.** Someone outside Re:Earth writes a reader from
    `SPEC.md` and `conformance/` alone, and it passes every case, read counts
@@ -55,9 +54,3 @@ and what has to be true before it is declared. Each condition can be checked;
    later version, such as a dictionary-using codec (Appendix A), is shown to
    be addable without breaking a 1.0 reader. One that cannot be is decided
    before 1.0 instead.
-
-6. **The fate of 0.x files decided.** A 0.x file says `MOKUJIv0` and
-   `spec_major` 0, and §5.1 has a 1.0 reader reject a major it does not
-   implement. Before 1.0 it is decided whether 1.0 readers also read 0.x
-   files, or 0.x files are rebuilt from their sources (every file records its
-   `generator`), and the decision is recorded in Appendix A.

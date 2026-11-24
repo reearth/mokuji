@@ -1273,6 +1273,25 @@ are recorded as given, so a rebuild with the same values produces the same
 bytes, and a rebuild with today's `retrieved` produces a file that truthfully
 differs.
 
+**At 1.0 the magic drops its version, and 0.x files are rebuilt rather than
+read.** A 0.x file says its version twice, in the magic `MOKUJIv0` and in
+`spec_major`. From 1.0 the magic is `MOKUJI` followed by two zero bytes, and the
+version is in `spec_major` and `spec_minor` alone. The field stays eight bytes,
+so nothing else in the header moves.
+
+A 1.0 reader does not read 0.x files. §5.1 already has a reader reject a major
+it does not implement, and keeping a second layout for a draft would make every
+reader carry it for as long as any 0.x file exists. They are rebuilt instead,
+which is what a draft can offer: every file records the generator that wrote it
+and the source it was derived from (§3.4, §6), so the rebuild can be checked.
+When this was decided, the 0.x files in use were Re:Earth Places' 266, all
+built by pipelines from their sources and most of them rebuilt weekly.
+
+With the magic changed, a 1.0 reader would take a 0.x file for something that
+is not a Mokuji file at all, which reads as corruption, and old files reaching
+new readers is the ordinary case during a move. So a 1.0 reader SHOULD
+recognize `MOKUJIv0` and refuse the file as a 0.x file to be rebuilt.
+
 ## Appendix B. A worked example
 
 `conformance/fixtures/tiny.mokuji` is 863 bytes and indexes four documents:
