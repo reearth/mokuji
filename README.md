@@ -203,7 +203,7 @@ for it too.
 
 The section profiles are inverted. In the address index the postings section is
 empty and payload is five sixths of the file; in the document index postings are
-two thirds and payload is a rounding error. Nothing in the format had to choose
+three quarters and payload is a fifteenth. Nothing in the format had to choose
 between them.
 
 That works because of what the format declines to decide, not because of what it
@@ -223,9 +223,36 @@ a stated bound on the number of range reads.
 
 The full-text side is the less complete of the two. `bigram` is coarser than
 morphological analysis and produces a larger dictionary; phrase queries need
-`--positions`, which quadruples that index; and ranking is the caller's, which
+`--positions`, which triples that index; and ranking is the caller's, which
 is deliberate but is still work the caller has to do. See [SPEC.md](SPEC.md) §1
 for where those lines are drawn and why.
+
+### Against bleve
+
+When a file is held whole rather than read in ranges — loaded into memory,
+embedded in a binary, shipped with an application — its size is what it costs.
+The PLATEAU specifications' search was moved from [bleve](https://github.com/blevesearch/bleve)
+to Mokuji, and both were built from the same 2,521 sections:
+
+| | File | gzipped |
+|---|---|---|
+| bleve, stored fields and term vectors (its defaults) | 14.5 MB | 9.6 MB |
+| bleve, stored fields, no term vectors | 6.8 MB | 4.1 MB |
+| bleve, nothing stored | 4.7 MB | 2.9 MB |
+| **Mokuji, each section's text in its payload** | **1.49 MB** | — |
+| Mokuji, section names only | 0.86 MB | — |
+
+bleve with the `cjk` analyzer, which makes bigrams, and Mokuji with `bigram`.
+The second row and the fourth do the same work: rank a query and show a snippet
+of each result from its stored text. There Mokuji is about a fifth of the size,
+and a little over a third of bleve compressed; without the text, the last row
+against the third, it is under a fifth.
+
+One corpus, measured by the people who wrote the format, so read it as an
+example and not a benchmark. Nor is it a criticism of bleve, which is an index
+that takes writes and serves a server, and carries what that needs. A Mokuji
+file is written once and only read, which is what lets every section be packed
+as tightly as it is.
 
 ## Address lookup
 

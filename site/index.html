@@ -359,6 +359,12 @@ const { results } = await index.lookup("1000005");</code></pre>
             <span lang="en">No storage and no network. Keep the file on disk, in your app or on the device, and ask it from the command line or from the library. The search makes no request, and reads only the parts it needs, not the whole file.</span>
             <span lang="ja">ストレージも通信もいりません。ファイルを手元に、アプリの中や端末に置いて、コマンドラインかライブラリで引くだけ。検索は通信をせず、ファイル全体ではなく必要な部分だけを読みます。</span>
           </p>
+          <!-- From README.md, "Against bleve": one corpus, so keep the
+               numbers and the caveat together, and change them there first. -->
+          <p class="aside">
+            <span lang="en">Held whole, it stays small. The 2,521 sections of the PLATEAU specifications, ranked and with a snippet from each result's text, take 1.49 MB; bleve takes 6.8 MB for the same, 4.1 MB gzipped. One corpus, measured by us: <a href="https://github.com/reearth/mokuji#against-bleve">the conditions are in the README</a>.</span>
+            <span lang="ja">まるごと持っても小さいまま。PLATEAU 仕様書の 2,521 節を、順位付きで、結果ごとに本文のスニペットも出せる形にして 1.49 MB。同じことを bleve でやると 6.8 MB、gzip しても 4.1 MB です。私たちが1つの corpus で測った数字なので、<a href="https://github.com/reearth/mokuji#against-bleve">条件は README に書いてあります</a>。</span>
+          </p>
         </div>
         <div class="ways">
           <div class="way">
