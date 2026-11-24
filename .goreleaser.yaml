@@ -58,7 +58,7 @@ homebrew_casks:
     repository:
       owner: reearth
       name: homebrew-tap
-      token: "{{ index .Env \"HOMEBREW_TAP_TOKEN\" }}"
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     # Commits are attributed to the reearth-app bot that owns the token.
     commit_author:
