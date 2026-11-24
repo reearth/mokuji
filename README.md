@@ -1,5 +1,10 @@
 # Mokuji
 
+[![Mokuji — Search, without a server. 3.1 KB of 4.5 MB, in 2 range reads](https://reearth.github.io/mokuji/img/og-en.png)](https://reearth.github.io/mokuji/)
+
+**<https://reearth.github.io/mokuji/>** — search real Mokuji files in the
+browser, and see every range read it makes.
+
 **A cloud-optimized concordance format.** Single immutable file, bounded range
 reads, no server.
 
