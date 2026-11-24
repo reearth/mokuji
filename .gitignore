@@ -4,6 +4,7 @@
 **/*.rs.bk
 *.mokuji
 !conformance/fixtures/*.mokuji
+!conformance/fixtures/malformed/*.mokuji
 .DS_Store
 
 # Working notes, kept out of the repository

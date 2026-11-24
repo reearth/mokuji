@@ -11,7 +11,7 @@ import unittest
 
 from support import FIXTURES, cases, fixture_source
 
-from mokuji import MokujiCollection, MokujiIndex
+from mokuji import MokujiCollection, MokujiError, MokujiIndex
 
 SUITE = cases()
 
@@ -148,3 +148,25 @@ class Cases(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def ask(case):
+    """Opens a malformed fixture and asks the case's question. Columns are
+    decoded when the file is opened, so an attribute case asks nothing more."""
+    index = MokujiIndex.open(fixture_source(case["fixture"]))
+    if "query" in case:
+        term_query(index, [case["query"]])
+    elif "prefix" in case:
+        index.complete(case["prefix"], case["limit"])
+
+
+class Malformed(unittest.TestCase):
+    def test_every_malformed_file_is_rejected_cleanly(self):
+        # Rejected with the reader's own error, which is what SPEC.md §8 means
+        # by failing cleanly: an IndexError or a struct.error would be the
+        # reader tripping over the file rather than refusing it.
+        self.assertTrue(SUITE["malformed"])
+        for case in SUITE["malformed"]:
+            with self.subTest(case["name"], rule=case["rule"]):
+                with self.assertRaises(MokujiError):
+                    ask(case)

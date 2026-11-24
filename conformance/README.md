@@ -27,9 +27,11 @@ fixtures/collection.json     a manifest (MANIFEST.md): names, then names-delta,
 fixtures/*.corpus.txt        the sources they are derived from
 fixtures/*.mokuji             the fixtures
 fixtures/*.hex               annotated hex dumps
+fixtures/malformed/*.mokuji  the fixtures again, each with one rule broken
 cases.toml                   query, expected result, expected read count; [[case]]
                              for term queries, [[completion]] for prefixes,
-                             [[collection]] for prefixes across a collection
+                             [[collection]] for prefixes across a collection;
+                             [[malformed]] for files a reader has to reject
 ```
 
 `tiny` and `dict` are stored raw so that they can be read against the
@@ -37,6 +39,20 @@ specification by hand — and so that two writers can be compared byte for byte,
 which compression makes impossible (`SPEC.md` §3.4). `dict-deflate` exists so
 that decompression is exercised on the read side, where interoperability
 actually matters; it is written by the Rust writer (`mokuji::write`) and kept current by a test.
+
+## Malformed files
+
+`SPEC.md` §8 requires a reader to reject a malformed file cleanly, and the
+rules it enforces are scattered through §5. Each `[[malformed]]` case is a
+fixture with one of those rules broken, by editing bytes in place, so that a
+reader which does not enforce that rule accepts the file. A reader passes when
+it refuses the file with its own error, on opening it or on the case's
+question, rather than answering, crashing, or allocating what a forged count
+asks for. `build_fixtures.py` makes them, and says for each what it broke.
+
+Byte flips and fuzzing show that a reader survives garbage; they do not show
+which rules it enforces, since a reader that checks only that its reads stay in
+the file survives most of them. These cases name the rule.
 
 ## Who answers to these cases
 

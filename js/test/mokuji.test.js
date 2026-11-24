@@ -398,3 +398,38 @@ test("search ranks as mokuji search does", async () => {
   assert.equal((await tiny.search("tokyo nowhere")).matched, 0);
   await assert.rejects(tiny.search("tokyo", { boost: "absent" }));
 });
+
+/**
+ * Opens a malformed fixture and asks the case's question. Columns are decoded
+ * when the file is opened, so an attribute case asks nothing more.
+ */
+async function askMalformed(testCase) {
+  const index = await MokujiIndex.open(await fileSource(testCase.fixture));
+  if (testCase.query !== undefined) {
+    const entry = await index.exact(index.normalize(testCase.query));
+    if (!entry) return;
+    const [postings] = await index.postingsSpan([entry]);
+    await index.payloadSpan(postings.docs);
+  } else if (testCase.prefix !== undefined) {
+    await index.complete(testCase.prefix, testCase.limit);
+  }
+}
+
+for (const testCase of tables.malformed ?? []) {
+  test(`malformed: ${testCase.name}`, async () => {
+    // Refused with the reader's own error (SPEC.md §8). A TypeError or a
+    // RangeError is the reader tripping over the file rather than refusing it.
+    await assert.rejects(askMalformed(testCase), (error) => {
+      assert.ok(error instanceof Error, `${testCase.rule}: threw ${error}`);
+      assert.ok(
+        !(error instanceof TypeError || error instanceof RangeError || error instanceof ReferenceError),
+        `${testCase.rule}: ${error.name}: ${error.message}`,
+      );
+      return true;
+    }, `accepted: ${testCase.rule}`);
+  });
+}
+
+test("the malformed cases were read", () => {
+  assert.ok((tables.malformed ?? []).length > 0);
+});

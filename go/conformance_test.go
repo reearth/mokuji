@@ -43,6 +43,15 @@ type suite struct {
 		FromTable bool `toml:"from_table"`
 		Reads     int
 	}
+	Malformed []struct {
+		Name      string
+		Fixture   string
+		Rule      string
+		Query     string
+		Prefix    string
+		Limit     int
+		Attribute string
+	}
 	Collection []struct {
 		Name      string
 		Manifest  string
@@ -344,5 +353,55 @@ func TestCoalescingNeverCostsMoreThanTheCasesSay(t *testing.T) {
 	// case has to come out cheaper, or coalescing is not happening.
 	if fewer == 0 {
 		t.Fatal("no case came out cheaper with coalescing")
+	}
+}
+
+// askMalformed opens a malformed fixture and asks the case's question,
+// returning the first error. Columns are decoded when the file is opened, so
+// an attribute case asks nothing more.
+func askMalformed(t *testing.T, fixture, query, prefix string, limit int) error {
+	ctx := context.Background()
+	index, err := Open(ctx, BytesSource(fixtureBytes(t, fixture)))
+	if err != nil {
+		return err
+	}
+	switch {
+	case query != "":
+		entry, err := index.Exact(ctx, query)
+		if err != nil || entry == nil {
+			return err
+		}
+		runs, err := index.PostingsSpan(ctx, []TermEntry{*entry})
+		if err != nil {
+			return err
+		}
+		_, err = index.PayloadSpan(ctx, runs[0].Docs)
+		return err
+	case prefix != "":
+		_, err := index.Complete(ctx, prefix, limit)
+		return err
+	}
+	return nil
+}
+
+// Every malformed file is refused with an error, not a panic (SPEC.md §8).
+func TestMalformed(t *testing.T) {
+	s := loadSuite(t)
+	if len(s.Malformed) == 0 {
+		t.Fatal("no malformed cases were loaded")
+	}
+	for _, c := range s.Malformed {
+		t.Run(c.Name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panicked (%s): %v", c.Rule, r)
+				}
+			}()
+			if err := askMalformed(t, c.Fixture, c.Query, c.Prefix, c.Limit); err == nil {
+				t.Fatalf("accepted (%s)", c.Rule)
+			} else {
+				t.Log(err)
+			}
+		})
 	}
 }

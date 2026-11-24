@@ -320,3 +320,136 @@ docs = [1]
 payloads = ["Tokyo Tower"]
 reads = 5
 
+
+
+# Malformed files (SPEC.md §8). Each is a fixture above with one rule broken,
+# made by conformance/fixtures/build_fixtures.py, which says how. A reader
+# passes a case when it rejects the file, cleanly, either when it opens it or
+# when it is asked the case's question: `query`, one term looked up with its
+# postings and payload read; `prefix`, completed to `limit`; or `attribute`, a
+# column read. Cleanly means the reader's own error, not a crash, a panic, or
+# an error the language raises for a bug such as an index out of range, and
+# without allocating what a count or length in the file asks for.
+
+[[malformed]]
+name = "bad-magic"
+fixture = "malformed/bad-magic"
+rule = "SPEC.md §5.1: the magic does not match"
+query = "tokyo"
+
+[[malformed]]
+name = "unknown-major"
+fixture = "malformed/unknown-major"
+rule = "SPEC.md §5.1: a spec_major this version does not define"
+query = "tokyo"
+
+[[malformed]]
+name = "table-past-end"
+fixture = "malformed/table-past-end"
+rule = "SPEC.md §8: the section table runs past the end of the file"
+query = "tokyo"
+
+[[malformed]]
+name = "section-count-huge"
+fixture = "malformed/section-count-huge"
+rule = "SPEC.md §8: a section count of four billion, in a table of nine entries"
+query = "tokyo"
+
+[[malformed]]
+name = "section-past-end"
+fixture = "malformed/section-past-end"
+rule = "SPEC.md §8: the metadata section runs past the end of the file"
+query = "tokyo"
+
+[[malformed]]
+name = "block-past-end"
+fixture = "malformed/block-past-end"
+rule = "SPEC.md §8: the last term block ends past the end of the file"
+query = "tokyo"
+
+[[malformed]]
+name = "block-count-huge"
+fixture = "malformed/block-count-huge"
+rule = "SPEC.md §8: a term index of four billion blocks, in a few dozen bytes"
+query = "tokyo"
+
+[[malformed]]
+name = "term-index-out-of-order"
+fixture = "malformed/term-index-out-of-order"
+rule = "SPEC.md §5.3.2: boundary keys that do not increase"
+query = "tokyo"
+
+[[malformed]]
+name = "implied-doc-freq"
+fixture = "malformed/implied-doc-freq"
+rule = "SPEC.md §5.3.4: implied postings with a doc_freq of 2"
+query = "chiyoda"
+
+[[malformed]]
+name = "implied-past-index"
+fixture = "malformed/implied-past-index"
+rule = "SPEC.md §5.3.4: implied postings naming document 5 of 5"
+query = "東京都港区赤坂1丁目1番1号"
+
+[[malformed]]
+name = "inline-doc-freq-zero"
+fixture = "malformed/inline-doc-freq-zero"
+rule = "SPEC.md §5.3.4: inline postings with a doc_freq of 0"
+query = "osaka"
+
+[[malformed]]
+name = "inline-past-index"
+fixture = "malformed/inline-past-index"
+rule = "SPEC.md §5.3.4: inline postings naming document 7 of 4"
+query = "osaka"
+
+[[malformed]]
+name = "run-past-index"
+fixture = "malformed/run-past-index"
+rule = "SPEC.md §5.4.2: a postings run naming document 7 of 6"
+query = "tokyo"
+
+[[malformed]]
+name = "unit-length"
+fixture = "malformed/unit-length"
+rule = "SPEC.md §5.6: a compressed unit one byte shorter than it declares"
+query = "東京都千代田区丸の内1丁目1番1号"
+
+[[malformed]]
+name = "unit-length-huge"
+fixture = "malformed/unit-length-huge"
+rule = "SPEC.md §5.6, §8: a compressed unit declaring 2^62 bytes"
+query = "東京都千代田区丸の内1丁目1番1号"
+
+[[malformed]]
+name = "positions-without-freqs"
+fixture = "malformed/positions-without-freqs"
+rule = "SPEC.md §5.1.1: HAS_POSITIONS without HAS_FREQS"
+query = "tokyo"
+
+[[malformed]]
+name = "completion-order"
+fixture = "malformed/completion-order"
+rule = "SPEC.md §5.3.5: completion prefixes that do not increase"
+prefix = "bl"
+limit = 2
+
+[[malformed]]
+name = "completion-past-index"
+fixture = "malformed/completion-past-index"
+rule = "SPEC.md §5.3.5: a completion listing document 6 of 6"
+prefix = "bl"
+limit = 2
+
+[[malformed]]
+name = "completion-twice"
+fixture = "malformed/completion-twice"
+rule = "SPEC.md §5.3.5: a completion listing one document twice"
+prefix = "bl"
+limit = 2
+
+[[malformed]]
+name = "column-twice"
+fixture = "malformed/column-twice"
+rule = "SPEC.md §5.8: two attribute columns by one name"
+attribute = "importance"

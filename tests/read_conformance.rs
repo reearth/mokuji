@@ -20,6 +20,25 @@ struct Suite {
     case: Vec<Case>,
     #[serde(default)]
     completion: Vec<Completion>,
+    #[serde(default)]
+    malformed: Vec<Malformed>,
+}
+
+/// A file with one rule broken, which a reader rejects when it opens it or
+/// when it is asked the case's question (`SPEC.md` §8).
+#[derive(Deserialize)]
+struct Malformed {
+    name: String,
+    fixture: String,
+    rule: String,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    attribute: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -173,6 +192,54 @@ fn every_completion_comes_from_where_the_case_says_within_its_reads() {
         }
         assert_eq!(reader.reads(), case.reads, "{}: read count", case.name);
     }
+}
+
+/// Opens the file and asks the case's question, returning whether anything
+/// along the way was refused.
+fn rejected(case: &Malformed) -> bool {
+    let reader = SliceReader::new(load(&case.fixture));
+    let Ok(index) = block_on(Index::open(&reader)) else {
+        return true;
+    };
+    if let Some(term) = &case.query {
+        return block_on(index.search(&[term.as_bytes()])).is_err();
+    }
+    if let Some(prefix) = &case.prefix {
+        let limit = case.limit.expect("a prefix case has a limit");
+        return match block_on(index.complete(prefix.as_bytes(), limit)) {
+            Ok((docs, _)) => block_on(index.payload_span(&docs)).is_err(),
+            Err(_) => true,
+        };
+    }
+    // Columns are decoded when the file is opened, so one that opened has
+    // accepted them.
+    assert!(
+        case.attribute.is_some(),
+        "{}: the case asks nothing",
+        case.name
+    );
+    false
+}
+
+#[test]
+fn every_malformed_file_is_rejected_without_a_panic() {
+    let suite = suite();
+    assert!(
+        !suite.malformed.is_empty(),
+        "no malformed cases were loaded"
+    );
+
+    let mut accepted = Vec::new();
+    for case in &suite.malformed {
+        // A panic is a failure as much as an acceptance is: §8 asks for a
+        // clean refusal.
+        match std::panic::catch_unwind(|| rejected(case)) {
+            Ok(true) => {}
+            Ok(false) => accepted.push(format!("{} accepted ({})", case.name, case.rule)),
+            Err(_) => accepted.push(format!("{} panicked ({})", case.name, case.rule)),
+        }
+    }
+    assert!(accepted.is_empty(), "\n{}", accepted.join("\n"));
 }
 
 #[test]

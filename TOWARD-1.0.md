@@ -26,7 +26,6 @@ and what has to be true before it is declared. Each condition can be checked;
 | 4 | The I/O bound measured on large real data | Met |
 | 5 | Deferred work fits a minor version | Not yet |
 | 6 | The fate of 0.x files decided | Not yet |
-| 7 | Malformed files in the conformance suite | Not yet |
 
 1. **An independent reader.** Someone outside Re:Earth writes a reader from
    `SPEC.md` and `conformance/` alone, and it passes every case, read counts
@@ -62,9 +61,3 @@ and what has to be true before it is declared. Each condition can be checked;
    implement. Before 1.0 it is decided whether 1.0 readers also read 0.x
    files, or 0.x files are rebuilt from their sources (every file records its
    `generator`), and the decision is recorded in Appendix A.
-
-7. **Malformed files in the conformance suite.** §8 requires a reader to
-   reject a malformed file cleanly. The Rust reader is fuzzed (`fuzz/`), but
-   the suite holds only well-formed fixtures, so the other readers are not
-   checked against §8. Cases with malformed fixtures and the expected
-   rejection are added, and every reader in this repository passes them.

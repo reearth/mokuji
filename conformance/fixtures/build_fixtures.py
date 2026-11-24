@@ -713,6 +713,8 @@ def load_resident(f):
     count = int.from_bytes(header[12:16], "little")
     table_offset = int.from_bytes(header[32:40], "little")
     table_len = int.from_bytes(header[40:44], "little")
+    # Checked before anything is sized from the count (SPEC.md 8).
+    assert table_len == count * SECTION_ENTRY_LEN, "section table length disagrees with its count"
     table = f.read(table_offset, table_len)
 
     sections, previous_id = {}, None
@@ -1191,6 +1193,352 @@ def check(spec, data):
         assert reads == expected_reads, (spec["name"], query, reads, expected_reads)
 
 
+# --- malformed files ---------------------------------------------------------
+#
+# Each is a well-formed fixture with one rule of SPEC.md broken, for the
+# [[malformed]] cases: a reader has to reject it, cleanly, when it opens the
+# file or when it runs the case's query (SPEC.md 8). They are made by editing
+# bytes in place, so that everything but the one broken rule stays as it was.
+
+
+def u(data, at, size):
+    return int.from_bytes(data[at : at + size], "little")
+
+
+def put(data, at, size, value):
+    data[at : at + size] = value.to_bytes(size, "little")
+
+
+def section_entries(data):
+    """Section ID to (where its table entry is, offset, length)."""
+    count, table = u(data, 12, 4), u(data, 32, 8)
+    entries = {}
+    for i in range(count):
+        at = table + i * SECTION_ENTRY_LEN
+        entries[u(data, at, 2)] = (at, u(data, at + 8, 8), u(data, at + 16, 8))
+    return entries
+
+
+def entry_fields(data, term):
+    """Where the fields of `term`'s dictionary entry are, in the whole file."""
+    flags = u(data, 10, 2)
+    has_freqs, has_positions = flags & FLAG_HAS_FREQS, flags & FLAG_HAS_POSITIONS
+    sections = section_entries(data)
+    _, offsets_at, offsets_len = sections[SEC_TERM_BLOCK_OFFSETS]
+    for ordinal in range(offsets_len // 8 - 1):
+        start = u(data, offsets_at + ordinal * 8, 8)
+        end = u(data, offsets_at + ordinal * 8 + 8, 8)
+        block = data[start:end]
+        count, pos = read_varint(block, 0)
+        first_term_id_at = pos
+        _, pos = read_varint(block, pos)
+        key, offset = b"", None
+        for _ in range(count):
+            key, pos = read_front_coded(block, pos, key)
+            doc_freq_at = pos
+            doc_freq, pos = read_varint(block, pos)
+            delta, pos = read_varint(block, pos)
+            offset = delta if offset is None else offset + delta
+            length_at = pos
+            length, pos = read_varint(block, pos)
+            fields = {
+                "ordinal": ordinal,
+                "first_term_id": start + first_term_id_at,
+                "doc_freq": start + doc_freq_at,
+                "postings_len": start + length_at,
+                "postings": (offset, length),
+            }
+            if length == INLINE:
+                fields["inline"] = start + pos
+                for _ in range(doc_freq * (2 if has_freqs else 1)):
+                    _, pos = read_varint(block, pos)
+            if has_positions:
+                _, pos = read_varint(block, pos)
+                _, pos = read_varint(block, pos)
+            if key == term.encode():
+                return fields
+    raise KeyError(term)
+
+
+def set_byte(data, at, value):
+    data[at] = value
+    return data
+
+
+def term_index_key(data, ordinal):
+    """Where boundary key `ordinal`'s suffix begins."""
+    _, at, _ = section_entries(data)[SEC_TERM_INDEX]
+    pos, key = at + 4, b""
+    for i in range(ordinal + 1):
+        key, end = read_front_coded(data, pos, key)
+        _, after = read_varint(data, pos)
+        _, suffix_at = read_varint(data, after)
+        pos = end
+    return suffix_at
+
+
+def completion_entry(data, prefix):
+    """Where the fields of the completion entry for `prefix` are."""
+    _, at, _ = section_entries(data)[SEC_COMPLETIONS]
+    pos = at
+    for _ in range(3):
+        _, pos = read_varint(data, pos)
+    count, pos = read_varint(data, pos)
+    key = b""
+    for _ in range(count):
+        key_at = pos
+        key, pos = read_front_coded(data, pos, key)
+        n, docs_at = read_varint(data, pos)
+        pos = docs_at
+        values = []
+        for _ in range(n):
+            values.append(pos)
+            _, pos = read_varint(data, pos)
+        if key == (prefix if isinstance(prefix, bytes) else prefix.encode()):
+            return {"key": key_at, "docs": values}
+    raise KeyError(prefix)
+
+
+def malformed_bad_magic(d):
+    return set_byte(d, 0, ord("X"))
+
+
+def malformed_unknown_major(d):
+    return set_byte(d, 8, SPEC_MAJOR + 1)
+
+
+def malformed_table_past_end(d):
+    # The section table's length is unchanged, so it now runs past the end.
+    put(d, 32, 8, len(d) - SECTION_ENTRY_LEN)
+    return d
+
+
+def malformed_section_count_huge(d):
+    # Four billion entries in a table of 24 bytes each: a reader that sizes a
+    # list from the count before it checks it against the table allocates
+    # around a hundred gigabytes.
+    put(d, 12, 4, 0xFFFFFFFF)
+    return d
+
+
+def malformed_section_past_end(d):
+    at, _, length = section_entries(d)[SEC_META]
+    put(d, at + 16, 8, length + len(d))
+    return d
+
+
+def malformed_block_past_end(d):
+    _, at, length = section_entries(d)[SEC_TERM_BLOCK_OFFSETS]
+    put(d, at + length - 8, 8, len(d) + 64)
+    return d
+
+
+def malformed_block_count_huge(d):
+    _, at, _ = section_entries(d)[SEC_TERM_INDEX]
+    put(d, at, 4, 0xFFFFFFFF)
+    return d
+
+
+def malformed_term_index_out_of_order(d):
+    # The second boundary key, `osaka`, shares nothing with `chiyoda` before
+    # it; as `asaka` it sorts before it.
+    at = term_index_key(d, 1)
+    assert d[at : at + 5] == b"osaka"
+    return set_byte(d, at, ord("a"))
+
+
+def malformed_implied_doc_freq(d):
+    at = entry_fields(d, "chiyoda")["doc_freq"]
+    assert d[at] == 1 and d[entry_fields(d, "chiyoda")["postings_len"]] == 0
+    return set_byte(d, at, 2)
+
+
+def malformed_implied_past_index(d):
+    # The last block's first term ID moved up by one: its one term, implied,
+    # now names document 5 of 5.
+    fields = entry_fields(d, "東京都港区赤坂1丁目1番1号")
+    assert d[fields["first_term_id"]] == 4 and d[fields["postings_len"]] == 0
+    return set_byte(d, fields["first_term_id"], 5)
+
+
+def malformed_inline_doc_freq_zero(d):
+    fields = entry_fields(d, "osaka")
+    assert d[fields["postings_len"]] == INLINE and d[fields["doc_freq"]] == 1
+    return set_byte(d, fields["doc_freq"], 0)
+
+
+def malformed_inline_past_index(d):
+    # `osaka` names document 3, written as zigzag(3 - 2) = 2; zigzag(5) = 10
+    # names document 7 of 4.
+    at = entry_fields(d, "osaka")["inline"]
+    assert d[at] == 2
+    return set_byte(d, at, 10)
+
+
+def malformed_run_past_index(d):
+    # `tokyo`'s run in `names` holds document 4 as one three-bit value; all
+    # three bits set make it document 7 of 6.
+    offset, length = entry_fields(d, "tokyo")["postings"]
+    run = d[offset : offset + length]
+    assert run[:4] == bytes([0, 1, 3, 0b100]), run
+    return set_byte(d, offset + 3, 0b111)
+
+
+def malformed_unit_length(d):
+    # dict-deflate's term index is compressed as one unit; it declares one
+    # byte more than it holds.
+    # Adding one to the varint's low seven bits keeps it the same length.
+    _, at, _ = section_entries(d)[SEC_TERM_INDEX]
+    assert d[at] & 0x7F != 0x7F
+    return set_byte(d, at, d[at] + 1)
+
+
+def malformed_unit_length_huge(d):
+    # The same unit declaring 2**62 bytes: allocating that before decompressing
+    # anything is what SPEC.md 5.6 puts the length first to prevent.
+    _, at, _ = section_entries(d)[SEC_TERM_INDEX]
+    _, end = read_varint(d, at)
+    # The varint it has cannot hold 2**62, so the section grows: the unit is
+    # rewritten in place with a nine-byte length, and every offset after it
+    # moves by the difference.
+    head = varint(1 << 62)
+    grown = d[:at] + head + d[end:]
+    shift = len(head) - (end - at)
+    table = u(d, 32, 8)
+    for i in range(u(d, 12, 4)):
+        entry = table + i * SECTION_ENTRY_LEN
+        sid, offset, length = u(d, entry, 2), u(d, entry + 8, 8), u(d, entry + 16, 8)
+        if sid == SEC_TERM_INDEX:
+            put(grown, entry + 16, 8, length + shift)
+        elif offset > at:
+            put(grown, entry + 8, 8, offset + shift)
+    _, offsets_at, offsets_len = section_entries(grown)[SEC_TERM_BLOCK_OFFSETS]
+    for i in range(offsets_len // 8):
+        put(grown, offsets_at + i * 8, 8, u(grown, offsets_at + i * 8, 8) + shift)
+    _, payload_at, _ = section_entries(grown)[SEC_PAYLOAD_OFFSETS]
+    for i in range(u(grown, payload_at + 8, 4) + 1):
+        base = payload_at + 12 + i * 8
+        put(grown, base, 8, u(grown, base, 8) + shift)
+    return grown
+
+
+def malformed_positions_without_freqs(d):
+    flags = u(d, 10, 2)
+    assert flags & FLAG_HAS_POSITIONS and flags & FLAG_HAS_FREQS
+    put(d, 10, 2, flags & ~FLAG_HAS_FREQS)
+    return d
+
+
+def malformed_completion_order(d):
+    # The entry for E6, the first byte of `東` and of `東北`, becomes 00: after
+    # every `b` and `t` entry, a prefix that sorts before them.
+    at = completion_entry(d, b"\xe6")["key"]
+    shared, pos = read_varint(d, at)
+    _, pos = read_varint(d, pos)
+    assert shared == 0 and d[pos] == 0xE6
+    return set_byte(d, pos, 0x00)
+
+
+def malformed_completion_past_index(d):
+    # The `bl` entry lists Black Sea, document 0, first: zigzag(0) = 0.
+    # zigzag(6) = 12 names document 6 of 6.
+    at = completion_entry(d, "bl")["docs"][0]
+    assert d[at] == 0
+    return set_byte(d, at, 12)
+
+
+def malformed_completion_twice(d):
+    # The `bl` entry's second document is Black Forest, one after the first:
+    # zigzag(1) = 2. zigzag(0) = 0 lists Black Sea again.
+    at = completion_entry(d, "bl")["docs"][1]
+    assert d[at] == 2
+    return set_byte(d, at, 0)
+
+
+def malformed_column_twice(_):
+    # Built rather than edited: two columns by one name.
+    data, _ = build(
+        documents=DICT_DOCUMENTS,
+        decimals=6,
+        corpus_name="dict.corpus.txt",
+        tokenizer_id="identity",
+        columns=[("importance", 0, [40, 90, 85, 70, 60]), ("importance", 0, [1, 2, 3, 4, 5])],
+    )
+    return bytearray(data)
+
+
+# name: (the fixture it is made from, how)
+MALFORMED = {
+    "bad-magic": ("tiny", malformed_bad_magic),
+    "unknown-major": ("tiny", malformed_unknown_major),
+    "table-past-end": ("tiny", malformed_table_past_end),
+    "section-count-huge": ("tiny", malformed_section_count_huge),
+    "section-past-end": ("tiny", malformed_section_past_end),
+    "block-past-end": ("tiny", malformed_block_past_end),
+    "block-count-huge": ("tiny", malformed_block_count_huge),
+    "term-index-out-of-order": ("tiny", malformed_term_index_out_of_order),
+    "implied-doc-freq": ("tiny", malformed_implied_doc_freq),
+    "implied-past-index": ("dict", malformed_implied_past_index),
+    "inline-doc-freq-zero": ("tiny", malformed_inline_doc_freq_zero),
+    "inline-past-index": ("tiny", malformed_inline_past_index),
+    "run-past-index": ("names", malformed_run_past_index),
+    "unit-length": ("dict-deflate", malformed_unit_length),
+    "unit-length-huge": ("dict-deflate", malformed_unit_length_huge),
+    "positions-without-freqs": ("tiny", malformed_positions_without_freqs),
+    "completion-order": ("names", malformed_completion_order),
+    "completion-past-index": ("names", malformed_completion_past_index),
+    "completion-twice": ("names", malformed_completion_twice),
+    "column-twice": ("dict", malformed_column_twice),
+}
+
+
+def ask(data, case):
+    """Asks this script's reader the case's question of `data`.
+
+    It reads neither compressed sections nor attribute columns, so a case that
+    depends on them is not asked here; the readers in the repository are.
+    """
+    if "query" in case:
+        search(data, [case["query"]])
+    else:
+        complete(data, case["prefix"], case["limit"])
+
+
+def build_malformed(check_only, stale):
+    import tomllib
+
+    with open(HERE.parent / "cases.toml", "rb") as f:
+        cases = {c["name"]: c for c in tomllib.load(f).get("malformed", [])}
+    assert set(cases) == set(MALFORMED), (
+        "cases.toml and MALFORMED disagree",
+        sorted(set(cases) ^ set(MALFORMED)),
+    )
+    out = HERE / "malformed"
+    out.mkdir(exist_ok=True)
+    for name, (base, mutate) in MALFORMED.items():
+        case = cases[name]
+        assert case["fixture"] == f"malformed/{name}", name
+        data = bytes(mutate(bytearray((HERE / f"{base}.mokuji").read_bytes())))
+        assert data != (HERE / f"{base}.mokuji").read_bytes(), name
+        if base != "dict-deflate" and "attribute" not in case:
+            try:
+                ask(data, case)
+                accepted = True
+            except Exception:  # how this script's reader refuses a file
+                accepted = False
+            assert not accepted, f"{name}: this script's own reader accepts it"
+        path = out / f"{name}.mokuji"
+        if check_only:
+            if not path.exists() or path.read_bytes() != data:
+                stale.append(f"malformed/{name}.mokuji")
+            continue
+        path.write_bytes(data)
+    if check_only and not any(s.startswith("malformed/") for s in stale):
+        print(f"malformed/ is current ({len(MALFORMED)} files)")
+    elif not check_only:
+        print(f"wrote {len(MALFORMED)} files to malformed/")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="verify, do not write")
@@ -1275,6 +1623,8 @@ def main():
     else:
         (HERE / "collection.json").write_text(manifest)
         print("wrote collection.json")
+
+    build_malformed(args.check, stale)
 
     if stale:
         sys.exit(f"stale: {', '.join(stale)}; re-run this script")

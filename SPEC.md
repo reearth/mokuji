@@ -958,6 +958,9 @@ The suite asserts, for each case, both the query result **and the number of
 range reads performed**. The read count is part of the contract, so it is
 checked the same way correctness is.
 
+The suite also holds malformed files, each breaking one rule a reader is
+required to enforce, and a conformant reader rejects every one of them (§8).
+
 A writer is conformant if building the same input twice produces identical
 bytes, and if the resulting file is accepted by a conformant reader.
 
