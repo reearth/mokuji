@@ -155,10 +155,19 @@ export declare class MokujiIndex {
      */
     constructor(source: string | Source | Blob);
     resetStats(): void;
-    read(offset: number, length: number): Promise<Uint8Array>;
+    /**
+     * `length` bytes at `offset`. A range that runs past the end of the file is
+     * refused (SPEC.md §8) rather than answered with what there is, unless
+     * `upTo` says fewer is fine — as it is for the opening read, which asks for
+     * more than a small file holds.
+     */
+    read(offset: number, length: number, upTo?: boolean): Promise<Uint8Array>;
+    private fetchRange;
     unit(bytes: Uint8Array, codec: number): Promise<Uint8Array>;
     private section;
     static open(source: string | Source | Blob): Promise<MokujiIndex>;
+    /** Where block `i` of section `id` is, from that section's offsets, which
+     * are checked to lie within it before they are used (SPEC.md §8). */
     private offsetPair;
     /** Blocks of one section by ordinal, a request for each run of neighbours.
      *

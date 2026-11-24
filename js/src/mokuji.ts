@@ -11,6 +11,7 @@
 import { SPLITTERS, TOKENIZERS, type Normalize } from "./tokenizers.js";
 
 const MAGIC = "MOKUJIv0";
+const HEADER_LEN = 64;
 const SECTION_ENTRY_LEN = 24;
 
 const FLAG_HAS_PAYLOAD = 1 << 1;
@@ -503,8 +504,25 @@ export class MokujiIndex {
     this.stats = { requests: 0, bytes: 0 };
   }
 
-  async read(offset: number, length: number): Promise<Uint8Array> {
+  /**
+   * `length` bytes at `offset`. A range that runs past the end of the file is
+   * refused (SPEC.md §8) rather than answered with what there is, unless
+   * `upTo` says fewer is fine — as it is for the opening read, which asks for
+   * more than a small file holds.
+   */
+  async read(offset: number, length: number, upTo = false): Promise<Uint8Array> {
     if (length === 0) return new Uint8Array(0);
+    if (!upTo && this.fileLength !== undefined && offset + length > this.fileLength) {
+      throw new Error(`${length} bytes at ${offset} lie past the end of the file`);
+    }
+    const bytes = await this.fetchRange(offset, length);
+    if (!upTo && bytes.length !== length) {
+      throw new Error(`${length} bytes at ${offset} lie past the end of the file`);
+    }
+    return bytes;
+  }
+
+  private async fetchRange(offset: number, length: number): Promise<Uint8Array> {
     if (typeof this.source !== "string") {
       const bytes = await this.source.read(offset, length);
       this.stats.requests += 1;
@@ -549,19 +567,29 @@ export class MokujiIndex {
     const index = new MokujiIndex(source);
     // One request for the resident set, optimistically. SPEC.md §5 recommends
     // a layout that puts all of it at the head of the file for exactly this.
-    const prefix = await index.read(0, OPEN_PREFIX);
+    const prefix = await index.read(0, OPEN_PREFIX, true);
+    // Fewer bytes than asked for is the whole file.
+    if (prefix.length < OPEN_PREFIX) index.fileLength ??= prefix.length;
+    if (prefix.length < HEADER_LEN) throw new Error("not a Mokuji file");
 
     const view = new DataView(prefix.buffer, prefix.byteOffset);
     if (utf8.decode(prefix.subarray(0, 8)) !== MAGIC) throw new Error("not a Mokuji file");
     if (prefix[8] !== 0) throw new Error(`unsupported major version ${prefix[8]}`);
 
     index.flags = view.getUint16(10, true);
+    if (index.flags & FLAG_HAS_POSITIONS && !(index.flags & FLAG_HAS_FREQS)) {
+      throw new Error("positions are flagged without frequencies");
+    }
     index.numDocs = Number(view.getBigUint64(16, true));
     index.sumDoclen = Number(view.getBigUint64(24, true));
 
     const tableOffset = Number(view.getBigUint64(32, true));
     const tableLength = view.getUint32(40, true);
     const count = view.getUint32(12, true);
+    // Checked before the count sizes anything (SPEC.md §8).
+    if (tableLength !== count * SECTION_ENTRY_LEN) {
+      throw new Error("the section table length disagrees with its count");
+    }
     const table =
       tableOffset + tableLength <= prefix.length
         ? prefix.subarray(tableOffset, tableOffset + tableLength)
@@ -661,16 +689,28 @@ export class MokujiIndex {
     index.boundaries = [];
     let previous: Uint8Array = new Uint8Array(0);
     for (let i = 0; i < index.blockCount; i++) {
-      previous = cursor.key(previous);
+      const key = cursor.key(previous);
+      // The block search would silently pick the wrong block (SPEC.md §5.3.2).
+      if (i > 0 && compare(previous, key) >= 0) {
+        throw new Error("the term index is not strictly increasing");
+      }
+      previous = key;
       index.boundaries.push(previous);
     }
     return index;
   }
 
-  private offsetPair(table: Uint8Array, base: number, i: number): [number, number] {
+  /** Where block `i` of section `id` is, from that section's offsets, which
+   * are checked to lie within it before they are used (SPEC.md §8). */
+  private offsetPair(table: Uint8Array, base: number, i: number, id: number): [number, number] {
+    if (base + i * 8 + 16 > table.length) throw new Error(`block ${i} has no offset`);
     const view = new DataView(table.buffer, table.byteOffset);
     const start = Number(view.getBigUint64(base + i * 8, true));
     const end = Number(view.getBigUint64(base + i * 8 + 8, true));
+    const section = this.section(id);
+    if (start > end || start < section.offset || end > section.offset + section.length) {
+      throw new Error(`block ${i} lies outside its section`);
+    }
     return [start, end - start];
   }
 
@@ -710,14 +750,14 @@ export class MokujiIndex {
 
   /** Several dictionary blocks, decoded, a request for each run of neighbours. */
   async termBlocks(ordinals: Iterable<number>): Promise<Map<number, TermEntry[]>> {
-    const raw = await this.blockRuns(ordinals, (i) => this.offsetPair(this.termBlockOffsets, 0, i));
+    const raw = await this.blockRuns(ordinals, (i) => this.offsetPair(this.termBlockOffsets, 0, i, SECTION.TERM_BLOCKS));
     const out = new Map<number, TermEntry[]>();
     for (const [ordinal, bytes] of raw) out.set(ordinal, await this.decodeTermBlock(bytes));
     return out;
   }
 
   async termBlock(ordinal: number): Promise<TermEntry[]> {
-    const [offset, length] = this.offsetPair(this.termBlockOffsets, 0, ordinal);
+    const [offset, length] = this.offsetPair(this.termBlockOffsets, 0, ordinal, SECTION.TERM_BLOCKS);
     return this.decodeTermBlock(await this.read(offset, length));
   }
 
@@ -1006,7 +1046,7 @@ export class MokujiIndex {
     // Neighbouring blocks are one range of the file and read as one.
     const raw = await this.blockRuns(
       docs.map((doc) => Math.floor(doc / perBlock)),
-      (i) => this.offsetPair(header, 12, i),
+      (i) => this.offsetPair(header, 12, i, SECTION.PAYLOAD),
     );
     const blocks = new Map<number, Uint8Array>();
     for (const [ordinal, bytes] of raw) {
