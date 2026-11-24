@@ -68,7 +68,13 @@ func TestBigramSplitsAsTokenizersMdSays(t *testing.T) {
 	for given, want := range map[string][]string{
 		"建築物":     {"建築", "築物"},
 		"CityGML": {"citygml"},
-		"3D都市":    {"3d", "d都", "都市"},
+		"3D都市":    {"3d", "都市"},
+		// Split where ASCII meets CJK, after composition, and only there.
+		"LOD2の建物": {"lod2", "の建", "建物"},
+		"ＬＯＤ２の":   {"lod2", "の"},
+		"第3章":     {"第", "3", "章"},
+		"Aー":      {"a", "ー"},
+		"Zürich":  {"zü", "ür", "ri", "ic", "ch"},
 		"都":       {"都"},
 		// Devanagari vowel signs are combining marks by category and
 		// `Alphabetic` by property, so `हिंदी` is one run, not three.
@@ -79,7 +85,7 @@ func TestBigramSplitsAsTokenizersMdSays(t *testing.T) {
 			t.Errorf("%q: %q, want %q", given, got, want)
 		}
 	}
-	if got := Bigram(JaAddress("丸の内一丁目")); !slices.Equal(got, []string{"丸の", "の内", "内1", "1丁", "丁目"}) {
+	if got, _ := Split("ja-address-bigram", "丸の内一丁目"); !slices.Equal(got, []string{"丸の", "の内", "内1", "1丁", "丁目"}) {
 		t.Error(got)
 	}
 }

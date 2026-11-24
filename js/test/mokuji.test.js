@@ -370,9 +370,14 @@ test("ja-address folds the spellings of a place name onto one", () => {
 test("bigram splits as TOKENIZERS.md says", () => {
   assert.deepEqual(bigram("建築物"), ["建築", "築物"]);
   assert.deepEqual(bigram("CityGML"), ["citygml"]);
-  assert.deepEqual(bigram("3D都市"), ["3d", "d都", "都市"]);
+  assert.deepEqual(bigram("3D都市"), ["3d", "都市"]);
   assert.deepEqual(bigram("都"), ["都"]);
-  assert.deepEqual(bigram(jaAddress("丸の内一丁目")), ["丸の", "の内", "内1", "1丁", "丁目"]);
+  // Split where ASCII meets CJK, after composition, and only there.
+  assert.deepEqual(bigram("LOD2の建物"), ["lod2", "の建", "建物"]);
+  assert.deepEqual(bigram("ＬＯＤ２の"), ["lod2", "の"]);
+  assert.deepEqual(bigram("第3章"), ["第", "3", "章"]);
+  assert.deepEqual(bigram("Aー"), ["a", "ー"]);
+  assert.deepEqual(bigram("Zürich"), ["zü", "ür", "ri", "ic", "ch"]);
 });
 
 test("search ranks as mokuji search does", async () => {

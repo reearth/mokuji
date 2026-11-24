@@ -88,28 +88,63 @@ export function nameList(text) {
 }
 /** The terms `bigram` makes of a text (TOKENIZERS.md): compatibility
  * composition, a run at everything that is not a letter or a digit, each run
- * lowercased, and a run that is all ASCII kept whole while any other becomes
- * its character bigrams, or its one character. */
+ * split again where ASCII meets CJK, each piece lowercased, and a piece that is
+ * all ASCII kept whole while any other becomes its character bigrams, or its
+ * one character. */
 export function bigram(text) {
+    return bigrams(text, true);
+}
+/** The blocks `bigram` splits from ASCII: CJK symbols, kana, Hangul, and the
+ * unified and compatibility ideographs. Blocks rather than `\p{Script}`,
+ * because `ー` is Common by script and `々` sits among symbols. */
+const CJK = [
+    [0x1100, 0x11ff], [0x3000, 0x30ff], [0x3130, 0x318f], [0x31f0, 0x31ff],
+    [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xac00, 0xd7af], [0xf900, 0xfaff],
+    [0x20000, 0x3ffff],
+];
+function isCjk(c) {
+    const point = c.codePointAt(0);
+    return CJK.some(([start, end]) => start <= point && point <= end);
+}
+function isAscii(c) {
+    return c.codePointAt(0) < 0x80;
+}
+/** `bigram`, with the split where ASCII meets CJK only when `splitCjk`.
+ * `ja-address-bigram` does not split there: `1丁` is a bigram an address query
+ * leans on. */
+function bigrams(text, splitCjk) {
     const out = [];
-    for (const piece of text.normalize("NFKC").split(/[^\p{Alphabetic}\p{N}]/u)) {
-        if (!piece)
+    for (const run of text.normalize("NFKC").split(/[^\p{Alphabetic}\p{N}]/u)) {
+        if (!run)
             continue;
-        const run = piece.toLowerCase();
-        // eslint-disable-next-line no-control-regex
-        if (/^[\x00-\x7f]*$/.test(run)) {
-            out.push(run);
-            continue;
-        }
         const chars = [...run];
-        if (chars.length === 1) {
-            out.push(chars[0]);
-            continue;
+        let start = 0;
+        for (let i = 1; i <= chars.length; i++) {
+            const boundary = i === chars.length ||
+                (splitCjk &&
+                    ((isAscii(chars[i - 1]) && isCjk(chars[i])) || (isCjk(chars[i - 1]) && isAscii(chars[i]))));
+            if (!boundary)
+                continue;
+            pushBigrams(chars.slice(start, i).join(""), out);
+            start = i;
         }
-        for (let i = 0; i + 1 < chars.length; i++)
-            out.push(chars[i] + chars[i + 1]);
     }
     return out;
+}
+function pushBigrams(piece, out) {
+    const run = piece.toLowerCase();
+    // eslint-disable-next-line no-control-regex
+    if (/^[\x00-\x7f]*$/.test(run)) {
+        out.push(run);
+        return;
+    }
+    const chars = [...run];
+    if (chars.length === 1) {
+        out.push(chars[0]);
+        return;
+    }
+    for (let i = 0; i + 1 < chars.length; i++)
+        out.push(chars[i] + chars[i + 1]);
 }
 /** The terms a query is looked up as, by the identifier the index records.
  *
@@ -120,7 +155,7 @@ export const SPLITTERS = {
     identity: (q) => [q],
     bigram,
     "ja-address": (q) => [jaAddress(q)],
-    "ja-address-bigram": (q) => bigram(jaAddress(q)),
+    "ja-address-bigram": (q) => bigrams(jaAddress(q), false),
     "name-list": (q) => q
         .split("\u001f")
         .map(nameList)

@@ -53,9 +53,18 @@ class Bigram(unittest.TestCase):
     def test_splits_as_tokenizers_md_says(self):
         self.assertEqual(bigram("建築物"), ["建築", "築物"])
         self.assertEqual(bigram("CityGML"), ["citygml"])
-        self.assertEqual(bigram("3D都市"), ["3d", "d都", "都市"])
+        self.assertEqual(bigram("3D都市"), ["3d", "都市"])
         self.assertEqual(bigram("都"), ["都"])
-        self.assertEqual(bigram(ja_address("丸の内一丁目")), ["丸の", "の内", "内1", "1丁", "丁目"])
+        self.assertEqual(SPLITTERS["ja-address-bigram"]("丸の内一丁目"), ["丸の", "の内", "内1", "1丁", "丁目"])
+
+    def test_splits_where_ascii_meets_cjk(self):
+        # After composition, and only there: `ー` is in the blocks whatever its
+        # script, and a Latin letter with a diacritic is not CJK.
+        self.assertEqual(bigram("LOD2の建物"), ["lod2", "の建", "建物"])
+        self.assertEqual(bigram("ＬＯＤ２の"), ["lod2", "の"])
+        self.assertEqual(bigram("第3章"), ["第", "3", "章"])
+        self.assertEqual(bigram("Aー"), ["a", "ー"])
+        self.assertEqual(bigram("Zürich"), ["zü", "ür", "ri", "ic", "ch"])
 
     def test_a_vowel_sign_is_a_letter(self):
         # Devanagari vowel signs are combining marks by category and

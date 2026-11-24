@@ -78,7 +78,7 @@ type answer struct {
 const askPython = `
 import json, sys
 sys.path.insert(0, sys.argv[1])
-from mokuji import MokujiIndex, bigram, ja_address, name_list
+from mokuji import SPLITTERS, MokujiIndex, bigram, ja_address, name_list
 from mokuji.tokenizers import _OTHER_ALPHABETIC
 
 class Bytes:
@@ -112,7 +112,8 @@ for q in asked["questions"]:
                  results=[[d, p] for d, p in zip(r.docs, r.payloads)])
     a["stats"] = [index.stats.requests, index.stats.bytes]
     answers.append(a)
-tokens = [[ja_address(s), bigram(s), name_list(s)] for s in asked["strings"]]
+tokens = [[ja_address(s), bigram(s), name_list(s), SPLITTERS["ja-address-bigram"](s)]
+          for s in asked["strings"]]
 json.dump({"answers": answers, "tokens": tokens, "other_alphabetic": _OTHER_ALPHABETIC}, sys.stdout)
 `
 
@@ -193,7 +194,7 @@ func tokenizerStrings() []string {
 
 type pythonAnswers struct {
 	Answers         []answer
-	Tokens          [][3]any
+	Tokens          [][4]any
 	OtherAlphabetic [][2]rune `json:"other_alphabetic"`
 }
 
@@ -291,12 +292,17 @@ func TestAgainstPython(t *testing.T) {
 	t.Run("tokenizers", func(t *testing.T) {
 		for i, text := range texts {
 			want := theirs.Tokens[i]
-			grams := []any{}
-			for _, g := range Bigram(text) {
-				grams = append(grams, g)
+			asAny := func(terms []string) []any {
+				out := []any{}
+				for _, term := range terms {
+					out = append(out, term)
+				}
+				return out
 			}
-			if JaAddress(text) != want[0] || !reflect.DeepEqual(grams, want[1]) || NameList(text) != want[2] {
-				t.Errorf("%+q: go %+q %+q %+q, python %+q", text, JaAddress(text), Bigram(text), NameList(text), want)
+			address, _ := Split("ja-address-bigram", text)
+			if JaAddress(text) != want[0] || !reflect.DeepEqual(asAny(Bigram(text)), want[1]) ||
+				NameList(text) != want[2] || !reflect.DeepEqual(asAny(address), want[3]) {
+				t.Errorf("%+q: go %+q %+q %+q %+q, python %+q", text, JaAddress(text), Bigram(text), NameList(text), address, want)
 			}
 		}
 	})

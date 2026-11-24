@@ -113,7 +113,7 @@ impl Tokenizer {
                 .collect(),
             Tokenizer::Identity => vec![text.to_string()],
             Tokenizer::JaAddress => vec![ja_address(text)],
-            Tokenizer::JaAddressBigram => bigram(&ja_address(text)),
+            Tokenizer::JaAddressBigram => bigrams(&ja_address(text), false),
             Tokenizer::Bigram => bigram(text),
             Tokenizer::NameList => text
                 .split('\u{1f}')
@@ -144,14 +144,43 @@ pub fn name(text: &str) -> String {
 
 /// The `bigram` tokenizer, as registered in `TOKENIZERS.md`.
 ///
-/// Runs of letters and digits are split on everything else. A run that is all
-/// ASCII becomes one lowercased term; any other run becomes its character
-/// bigrams, or the single character if that is all there is.
+/// Runs of letters and digits are split on everything else, and again where
+/// ASCII meets a CJK character. A run that is all ASCII becomes one lowercased
+/// term; any other run becomes its character bigrams, or the single character
+/// if that is all there is.
 ///
 /// Less precise than morphological analysis, and the index is larger. It is
 /// here because it needs no dictionary, and a dictionary is the one thing a
 /// reader with no server cannot be assumed to have.
 pub fn bigram(text: &str) -> Vec<String> {
+    bigrams(text, true)
+}
+
+/// Whether `c` is in the blocks `bigram` splits from ASCII: CJK symbols, kana,
+/// Hangul, and the unified and compatibility ideographs (`TOKENIZERS.md`).
+///
+/// Blocks rather than the Script property, because `ー` is Common by script
+/// and `々` sits among symbols, and because a table this short is the same in
+/// every language, where a Script table is a dependency.
+fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{1100}'..='\u{11FF}'
+        | '\u{3000}'..='\u{30FF}'
+        | '\u{3130}'..='\u{318F}'
+        | '\u{31F0}'..='\u{31FF}'
+        | '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{AC00}'..='\u{D7AF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{20000}'..='\u{3FFFF}')
+}
+
+/// Character bigrams over runs of letters and digits, the runs split where
+/// ASCII meets CJK when `split_cjk`.
+///
+/// `ja-address-bigram` does not split there: `1丁` is a bigram an address
+/// query leans on, and its measurements were made without the split.
+fn bigrams(text: &str, split_cjk: bool) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization;
 
     let composed: String = text.nfkc().collect();
@@ -160,23 +189,38 @@ pub fn bigram(text: &str) -> Vec<String> {
         if run.is_empty() {
             continue;
         }
-        // Lowercased either way, so that a Latin letter matches the same
-        // whether it stands alone or sits inside a run of kanji.
-        let run = run.to_lowercase();
-        if run.is_ascii() {
-            out.push(run);
-            continue;
-        }
         let chars: Vec<char> = run.chars().collect();
-        if chars.len() == 1 {
-            out.push(chars[0].to_string());
-            continue;
-        }
-        for pair in chars.windows(2) {
-            out.push(pair.iter().collect());
+        let mut start = 0;
+        for i in 1..=chars.len() {
+            let boundary = i == chars.len()
+                || (split_cjk
+                    && ((chars[i - 1].is_ascii() && is_cjk(chars[i]))
+                        || (is_cjk(chars[i - 1]) && chars[i].is_ascii())));
+            if boundary {
+                push_bigrams(&chars[start..i], &mut out);
+                start = i;
+            }
         }
     }
     out
+}
+
+fn push_bigrams(piece: &[char], out: &mut Vec<String>) {
+    // Lowercased either way, so that a Latin letter matches the same whether
+    // it stands alone or sits inside a run of another script.
+    let run = piece.iter().collect::<String>().to_lowercase();
+    if run.is_ascii() {
+        out.push(run);
+        return;
+    }
+    let chars: Vec<char> = run.chars().collect();
+    if chars.len() == 1 {
+        out.push(run);
+        return;
+    }
+    for pair in chars.windows(2) {
+        out.push(pair.iter().collect());
+    }
 }
 
 /// Japanese address normalization, as registered in `TOKENIZERS.md`.
@@ -377,10 +421,29 @@ mod tests {
     #[test]
     fn bigram_keeps_ascii_runs_whole() {
         assert_eq!(bigram("CityGML 3D"), ["citygml", "3d"]);
-        // A mixed run is not all ASCII, so it goes to bigrams rather than being
-        // split at the script boundary — which is what keeps the rule simple
-        // enough to reimplement, at the cost of a bigram straddling it.
-        assert_eq!(bigram("3D都市"), ["3d", "d都", "都市"]);
+    }
+
+    #[test]
+    fn bigram_splits_where_ascii_meets_cjk() {
+        // So that an identifier written against Japanese is the term its
+        // query becomes: `LOD2` is `lod2`, not `lo` `od` `d2` `2の`.
+        assert_eq!(bigram("3D都市"), ["3d", "都市"]);
+        assert_eq!(bigram("LOD2の建物"), ["lod2", "の建", "建物"]);
+        assert_eq!(bigram("ＬＯＤ２の"), ["lod2", "の"]);
+        assert_eq!(bigram("第3章"), ["第", "3", "章"]);
+        // `ー` and `々` are in the blocks, whatever their script.
+        assert_eq!(bigram("Aー"), ["a", "ー"]);
+        assert_eq!(bigram("A々"), ["a", "々"]);
+        // Only CJK: a Latin letter with a diacritic is not split from ASCII.
+        assert_eq!(bigram("Zürich"), ["zü", "ür", "ri", "ic", "ch"]);
+    }
+
+    #[test]
+    fn ja_address_bigram_does_not_split_where_ascii_meets_cjk() {
+        assert_eq!(
+            Tokenizer::JaAddressBigram.split("丸の内一丁目"),
+            ["丸の", "の内", "内1", "1丁", "丁目"]
+        );
     }
 
     #[test]

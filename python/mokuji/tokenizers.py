@@ -203,24 +203,53 @@ def name_list(text):
 def bigram(text):
     """The terms `bigram` makes of a text (TOKENIZERS.md): compatibility
     composition, a run at everything that is not a letter or a digit, each run
-    lowercased, and a run that is all ASCII kept whole while any other becomes
-    its character bigrams, or its one character."""
-    out = []
+    split again where ASCII meets CJK, each piece lowercased, and a piece that
+    is all ASCII kept whole while any other becomes its character bigrams, or
+    its one character."""
+    return _bigrams(text, True)
+
+
+# The blocks `bigram` splits from ASCII: CJK symbols, kana, Hangul, and the
+# unified and compatibility ideographs. Blocks rather than the Script property,
+# because `ー` is Common by script and `々` sits among symbols — and because
+# `unicodedata` has no Script property to ask.
+_CJK = (
+    (0x1100, 0x11FF), (0x3000, 0x30FF), (0x3130, 0x318F), (0x31F0, 0x31FF),
+    (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xAC00, 0xD7AF), (0xF900, 0xFAFF),
+    (0x20000, 0x3FFFF),
+)
+
+
+def _is_cjk(c):
+    point = ord(c)
+    return any(start <= point <= end for start, end in _CJK)
+
+
+def _bigrams(text, split_cjk):
+    """`bigram`, with the split where ASCII meets CJK only when `split_cjk`.
+    `ja-address-bigram` does not split there: `1丁` is a bigram an address
+    query leans on."""
     runs = []
     current = []
     for c in unicodedata.normalize("NFKC", text):
         if _is_alphanumeric(c):
+            if (
+                split_cjk
+                and current
+                and ((current[-1].isascii() and _is_cjk(c)) or (_is_cjk(current[-1]) and c.isascii()))
+            ):
+                runs.append("".join(current))
+                current = []
             current.append(c)
         elif current:
             runs.append("".join(current))
             current = []
     if current:
         runs.append("".join(current))
+    out = []
     for piece in runs:
         run = piece.lower()
-        if run.isascii():
-            out.append(run)
-        elif len(run) == 1:
+        if run.isascii() or len(run) == 1:
             out.append(run)
         else:
             out.extend(run[i : i + 2] for i in range(len(run) - 1))
@@ -236,7 +265,7 @@ SPLITTERS = {
     "identity": lambda q: [q],
     "bigram": bigram,
     "ja-address": lambda q: [ja_address(q)],
-    "ja-address-bigram": lambda q: bigram(ja_address(q)),
+    "ja-address-bigram": lambda q: _bigrams(ja_address(q), False),
     "name-list": lambda q: [n for n in (name_list(p) for p in q.split("\u001f")) if n],
 }
 

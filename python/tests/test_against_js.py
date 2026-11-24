@@ -13,7 +13,7 @@ import unittest
 
 from support import FIXTURES, REPOSITORY, fixture_source
 
-from mokuji import MokujiIndex, bigram, ja_address, name_list
+from mokuji import SPLITTERS, MokujiIndex, bigram, ja_address, name_list
 
 DIST = REPOSITORY / "js" / "dist" / "index.js"
 NODE = shutil.which("node")
@@ -48,7 +48,7 @@ QUESTIONS = [
 SCRIPT = r"""
 import { readFileSync } from "node:fs";
 const [dist, fixtures] = process.argv.slice(1);
-const { MokujiIndex, bigram, jaAddress, nameList } = await import(dist);
+const { MokujiIndex, SPLITTERS, bigram, jaAddress, nameList } = await import(dist);
 const { questions, strings } = JSON.parse(readFileSync(0, "utf8"));
 const answers = [];
 for (const [fixture, method, args] of questions) {
@@ -65,7 +65,7 @@ for (const [fixture, method, args] of questions) {
         : { normalized: r.normalized, fromTable: r.fromTable, docs: r.docs, payloads: r.payloads };
   answers.push({ ...shape, stats: [index.stats.requests, index.stats.bytes] });
 }
-const tokens = strings.map((s) => [jaAddress(s), bigram(s), nameList(s)]);
+const tokens = strings.map((s) => [jaAddress(s), bigram(s), nameList(s), SPLITTERS["ja-address-bigram"](s)]);
 process.stdout.write(JSON.stringify({ answers, tokens }));
 """
 
@@ -157,9 +157,10 @@ class AgainstTypeScript(unittest.TestCase):
                         self.assertAlmostEqual(a, b, delta=abs(b) * 1e-12)
 
     def test_tokenizers_agree(self):
-        for text, (address, grams, name) in zip(self.strings, self.js["tokens"]):
+        for text, (address, grams, name, address_grams) in zip(self.strings, self.js["tokens"]):
             with self.subTest(text=text):
                 self.assertEqual(bigram(text), grams)
+                self.assertEqual(SPLITTERS["ja-address-bigram"](text), address_grams)
                 self.assertEqual(name_list(text), name)
                 # JavaScript's `trim` and `White_Space` differ on U+0085 and
                 # U+FEFF, which the strings above do not put at either end.

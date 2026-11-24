@@ -6,8 +6,9 @@ export declare function jaAddress(text: string): string;
 export declare function nameList(text: string): string;
 /** The terms `bigram` makes of a text (TOKENIZERS.md): compatibility
  * composition, a run at everything that is not a letter or a digit, each run
- * lowercased, and a run that is all ASCII kept whole while any other becomes
- * its character bigrams, or its one character. */
+ * split again where ASCII meets CJK, each piece lowercased, and a piece that is
+ * all ASCII kept whole while any other becomes its character bigrams, or its
+ * one character. */
 export declare function bigram(text: string): string[];
 /** What a query goes through, by the identifier the index records. */
 export type Normalize = (query: string) => string;

@@ -28,8 +28,10 @@ changes the output. Identifiers are never redefined; a change in behaviour is a
 new identifier.
 
 That rule binds from version 1.0. Until then an identifier may still change in
-place, and `ja-address` has been changed once that way — variant folding was
-added to it — rather than being registered twice.
+place, and two have been changed that way rather than being registered twice:
+`ja-address`, when variant folding was added to it, and `bigram`, when it began
+to split where ASCII meets CJK. An index built with `bigram` before that change
+is to be rebuilt; its terms no longer match the queries a current reader makes.
 
 Identifiers beginning `x-` are private and will never be registered here.
 
@@ -146,16 +148,67 @@ parsing the address into fields, which is a geocoder's job and not an index's.
 
 ### `bigram`
 
-Splits on everything that is not a letter or a digit. Each run is lowercased;
-a run that is then all ASCII becomes one term, and any other run becomes its
-character bigrams — or the single character, if that is all there is.
+After Unicode Normalization Form KC (NFKC), splits on everything that is not a
+letter or a digit (`\p{Alphabetic}` or `\p{N}`), and splits each run again
+wherever an ASCII character and a CJK character, as defined below, stand next
+to each other. Each piece is lowercased; a piece that is then all ASCII becomes
+one term, and any other piece becomes its character bigrams — or the single
+character, if that is all there is.
 
-`建築物` becomes `建築`, `築物`. `CityGML` becomes `citygml`. `3D都市` is not
-all ASCII, so it becomes `3d`, `d都`, `都市`; the rule does not split at a
-script boundary, which costs a bigram straddling it and saves a great deal of
-specification.
+The CJK characters are those in these ranges:
+
+| Range | Block |
+|---|---|
+| U+1100–U+11FF | Hangul Jamo |
+| U+3000–U+30FF | CJK Symbols and Punctuation, Hiragana, Katakana |
+| U+3130–U+318F | Hangul Compatibility Jamo |
+| U+31F0–U+31FF | Katakana Phonetic Extensions |
+| U+3400–U+4DBF | CJK Unified Ideographs Extension A |
+| U+4E00–U+9FFF | CJK Unified Ideographs |
+| U+AC00–U+D7AF | Hangul Syllables |
+| U+F900–U+FAFF | CJK Compatibility Ideographs |
+| U+20000–U+3FFFF | Supplementary and Tertiary Ideographic Planes |
+
+`建築物` becomes `建築`, `築物`. `CityGML` becomes `citygml`. `LOD2の建物`
+becomes `lod2`, `の建`, `建物`, and so does `ＬＯＤ２の建物`, because the
+split comes after NFKC. `3D都市` becomes `3d`, `都市`. `Zürich` is not split,
+since `ü` is not CJK, and becomes `zü`, `ür`, `ri`, `ic`, `ch`.
 
 Parameters: none.
+
+#### Why split where ASCII meets CJK
+
+Japanese technical writing attaches identifiers to the text around them:
+`LOD2の`, `CityGMLで`, `第3章`. Unsplit, `LOD2の` becomes `lo`, `od`, `d2`,
+`2の`, while a query for `LOD2` is all ASCII and becomes the one term `lod2` —
+so the query never matches the text it was copied from. Measured on the 2,521
+sections of the PLATEAU specifications:
+
+| | unsplit | split |
+|---|---|---|
+| Sections matching `lod2` | 262 | 389 |
+| Sections matching `citygml` | 74 | 214 |
+| Terms | 25,554 | 23,809 |
+| Index, each section's text in its payload | 1.56 MB | 1.49 MB |
+
+The index is smaller, because the bigrams that straddled a boundary are gone.
+What the split costs is looser matching where a number sits inside Japanese:
+`第3章` becomes `第`, `3`, `章`, three terms that match wherever each occurs,
+where the unsplit rule made `第3`, `3章`. That cannot be had back by leaving
+digits alone, since `LOD2の` is a digit next to kana too.
+
+The ranges are blocks and not the Unicode Script property for two reasons. The
+property gets Japanese wrong where it matters: the long vowel mark `ー` is
+Common by script, and `々` is Han but sits among symbols. And a table of nine
+ranges is the same in every language, where a Script table is a dependency —
+Python's standard library has none. A symbol inside a range does no harm, since
+a symbol is not a letter or a digit and was a split already. Half-width katakana
+and most compatibility forms need no range, because NFKC has replaced them
+before the split is decided.
+
+The split is limited to CJK. Splitting wherever ASCII meets anything else would
+cut `Zürich` into `z`, `ü`, `rich`, and Thai or Devanagari next to a digit the
+same way, which no corpus measured here asked for.
 
 #### Why bigrams rather than morphology
 
@@ -177,12 +230,22 @@ identifier.
 
 ### `ja-address-bigram`
 
-The normalization of `ja-address`, then the token boundary of `bigram`.
+The normalization of `ja-address`, then the token boundary of `bigram`
+**without** the split where ASCII meets CJK: after NFKC, a run at everything
+that is not a letter or a digit, each run lowercased, and a run that is all
+ASCII kept whole while any other becomes its character bigrams, or its single
+character.
 
 Parameters: none.
 
 `東京都千代田区丸の内一丁目` normalizes to `東京都千代田区丸の内1丁目` and
 becomes `東京`, `京都`, `都千`, … `内1`, `1丁`, `丁目`.
+
+The split is left out because an address is not technical writing. `内1` and
+`1丁` tie a chome number to the town before it and to `丁目` after it; split, the
+number is a term of its own that every address with a `1` in it shares. The
+measurements in `demo/fuzzy` were made with those bigrams, and the split has not
+been measured against them.
 
 Two entries with the same normalization and different token boundaries, because
 an address is asked for in two ways. Looked up whole or by prefix it wants

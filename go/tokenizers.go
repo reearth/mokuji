@@ -57,7 +57,7 @@ var tokenizers = map[string]tokenizer{
 	// The same normalization as `ja-address`; only the token boundary
 	// differs, and a prefix is not split in either.
 	"ja-address-bigram": {JaAddress, func(q string) []string {
-		return Bigram(JaAddress(q))
+		return bigrams(JaAddress(q), false)
 	}},
 	// What was typed is a prefix of one name, so it is normalized, not split.
 	"name-list": {NameList, func(q string) []string {
@@ -193,21 +193,54 @@ func NameList(text string) string {
 
 // Bigram is the terms `bigram` makes of a text (TOKENIZERS.md): compatibility
 // composition, a run at everything that is not a letter or a digit, each run
-// lowercased, and a run that is all ASCII kept whole while any other becomes
-// its character bigrams, or its one character.
-func Bigram(text string) []string {
+// split again where ASCII meets CJK, each piece lowercased, and a piece that
+// is all ASCII kept whole while any other becomes its character bigrams, or
+// its one character.
+func Bigram(text string) []string { return bigrams(text, true) }
+
+// isCJK is the blocks `bigram` splits from ASCII: CJK symbols, kana, Hangul,
+// and the unified and compatibility ideographs. Blocks rather than the Script
+// property, because `ー` is Common by script and `々` sits among symbols.
+func isCJK(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x11FF, r >= 0x3000 && r <= 0x30FF,
+		r >= 0x3130 && r <= 0x318F, r >= 0x31F0 && r <= 0x31FF,
+		r >= 0x3400 && r <= 0x4DBF, r >= 0x4E00 && r <= 0x9FFF,
+		r >= 0xAC00 && r <= 0xD7AF, r >= 0xF900 && r <= 0xFAFF,
+		r >= 0x20000 && r <= 0x3FFFF:
+		return true
+	}
+	return false
+}
+
+// bigrams is `bigram`, with the split where ASCII meets CJK only when
+// splitCJK. `ja-address-bigram` does not split there: `1丁` is a bigram an
+// address query leans on.
+func bigrams(text string, splitCJK bool) []string {
 	out := []string{}
 	pieces := strings.FieldsFunc(norm.NFKC.String(text), func(r rune) bool { return !isAlphanumeric(r) })
 	for _, piece := range pieces {
-		run := lower(piece)
-		if isASCII(run) || utf8.RuneCountInString(run) == 1 {
-			out = append(out, run)
-			continue
+		chars := []rune(piece)
+		start := 0
+		for i := 1; i <= len(chars); i++ {
+			if i == len(chars) || splitCJK &&
+				(chars[i-1] < utf8.RuneSelf && isCJK(chars[i]) || isCJK(chars[i-1]) && chars[i] < utf8.RuneSelf) {
+				out = appendBigrams(out, string(chars[start:i]))
+				start = i
+			}
 		}
-		chars := []rune(run)
-		for i := 0; i+1 < len(chars); i++ {
-			out = append(out, string(chars[i:i+2]))
-		}
+	}
+	return out
+}
+
+func appendBigrams(out []string, piece string) []string {
+	run := lower(piece)
+	if isASCII(run) || utf8.RuneCountInString(run) == 1 {
+		return append(out, run)
+	}
+	chars := []rune(run)
+	for i := 0; i+1 < len(chars); i++ {
+		out = append(out, string(chars[i:i+2]))
 	}
 	return out
 }
