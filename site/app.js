@@ -104,7 +104,10 @@ async function files() {
       const url = (id, role) => {
         const f = datasets.find((d) => d.id === id)?.files.find((f) => f.role === role);
         if (!f) throw new Error(`no ${role} file in ${id}`);
-        return new Book(ORIGIN + f.url);
+        const book = new Book(ORIGIN + f.url);
+        // How the catalog says to search the file, as mokuji's SearchOptions.
+        book.search = f.search ?? {};
+        return book;
       };
       return {
         address: url("jp-address", "segment"),
@@ -303,11 +306,11 @@ async function answerJapan(q, f, limit) {
     };
   }
 
-  // Nothing begins with it: the approximate index, by bigrams, as
-  // @reearth/places FUZZY.
+  // Nothing begins with it: the approximate index, by bigrams, searched as
+  // the catalog says.
   await f.fuzzy.open();
   const found = (
-    await f.fuzzy.index.search(q, { any: true, probe: 6, lengthNorm: 0.75, boost: "municipality", limit })
+    await f.fuzzy.index.search(q, { ...f.fuzzy.search, limit })
   ).results;
   return {
     used: [f.address, f.fuzzy],
@@ -321,7 +324,7 @@ async function answerJapan(q, f, limit) {
           "その文字列で始まる住所はないので、2文字ずつの組で探す2つめのファイルが答えました。",
         )
       : t("Nothing like it either.", "似たものもありません。"),
-    code: `const fuzzy = await MokujiIndex.open("${f.fuzzy.source.url}");\nawait fuzzy.search(${JSON.stringify(q)}, { any: true, probe: 6, boost: "municipality" });`,
+    code: `const fuzzy = await MokujiIndex.open("${f.fuzzy.source.url}");\nawait fuzzy.search(${JSON.stringify(q)}, ${JSON.stringify(f.fuzzy.search)});`,
   };
 }
 
