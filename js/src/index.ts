@@ -21,6 +21,17 @@ export type {
   Stats,
   TermEntry,
 } from "./mokuji.js";
+export {
+  contains,
+  decodeRings,
+  fieldsOf,
+  geohash,
+  locate,
+  lookupPrefix,
+  precisionsOf,
+  scaleOf,
+} from "./query.js";
+export type { Located, Polygon, PrefixHit, PrefixMatch, Rings } from "./query.js";
 export { SPLITTERS, TOKENIZERS, bigram, jaAddress, nameList } from "./tokenizers.js";
 export type { Normalize } from "./tokenizers.js";
 export {

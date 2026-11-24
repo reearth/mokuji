@@ -53,6 +53,40 @@ documents whose scores differ by less than that may come out in either order.
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
 
+### An address typed past its key
+
+`lookupPrefix` gives the terms a prefix begins, and, when none does, the
+longest term one of the readings it is given begins with, marked `within`:
+the town an address typed down to its lot number is in, when the file keys
+towns. Every prefix of the readings is looked up at once.
+
+```ts
+import { lookupPrefix } from "mokuji";
+
+const q = index.normalize("東京都千代田区丸の内1丁目9番1号");
+const hits = await lookupPrefix(index, q, 10, [q]);
+// [{ term: "東京都千代田区丸の内1丁目", doc, payload, match: "within" }]
+```
+
+### Which polygon holds a point
+
+`locate` answers from a file of geohash coverings, as `demo/reverse` builds:
+each polygon a document keyed by the cells that cover it, its label and rings
+as payload, and the file's `attrs` saying how (`geohash-precisions`,
+`geometry=delta-int-1e…`, and `payload-fields` for a label cut at U+001F).
+It looks up the point's cell at every precision at once and tests the
+candidates' rings even-odd.
+
+```ts
+import { locate } from "mokuji";
+
+const { cell, candidates, inside } = await locate(index, 35.6812, 139.7671);
+// inside: [{ doc, label, fields: { KEY_CODE, … }, rings: [[[lon, lat], …]] }]
+```
+
+`geohash`, `decodeRings`, `contains`, `precisionsOf`, `scaleOf` and
+`fieldsOf` are the parts it is made of.
+
 ### Reading a file on hand
 
 Give `open` a `Blob`, and it reads a slice at a time: a file on disk is

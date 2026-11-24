@@ -3,12 +3,13 @@
 // requests. The only other request is /v1/datasets, once, to learn the
 // files' current URLs.
 //
-// The files are Re:Earth Places' (https://places.reearth.land). How the
-// Japanese files are asked mirrors that API's src/jp.js and src/reverse.js
-// (reearth/reearth-places); if those change how a file is read, change this
-// too.
+// The files are Re:Earth Places' (https://places.reearth.land). They are
+// asked with mokuji's lookupPrefix and locate, as Places asks them; the
+// Japanese readings of what is typed (a postal code's separators, `1-9-1` as
+// `1丁目9-1`) and the names of a 町丁目 are Places', in @reearth/places, and
+// repeated here in a few lines.
 
-import { MokujiIndex, jaAddress } from "./mokuji/index.js";
+import { MokujiIndex, jaAddress, locate, lookupPrefix } from "./mokuji/index.js";
 
 const ORIGIN = "https://places.reearth.land";
 const DATASETS = `${ORIGIN}/v1/datasets`;
@@ -252,55 +253,18 @@ function curl(entries) {
 
 // --- answering: Japan --------------------------------------------------------
 
-// As reearth-places src/jp.js: a postal code is seven digits, typed with or
+// As @reearth/places: a postal code is seven digits, typed with or
 // without its separators.
 const CODE_SEPARATORS = /[\s〒\-‐‑–—−ー－]/g;
 function postalDigits(q) {
   const digits = q.normalize("NFKC").replace(CODE_SEPARATORS, "");
   return /^\d{1,7}$/.test(digits) ? digits : null;
 }
-// `1-9-1` read as `1丁目9-1`, as reearth-places src/jp.js chomeReading.
+// `1-9-1` read as `1丁目9-1`, as @reearth/places chomeReading.
 function chomeReading(normalized) {
   if (normalized.includes("丁目")) return null;
   const m = /^(\D+)(\d+)-(?=\d)/u.exec(normalized);
   return m ? `${m[1]}${m[2]}丁目${normalized.slice(m[0].length)}` : null;
-}
-
-/** Terms beginning with `normalized`; failing that, the longest term a
- * reading begins with (an address typed past what the file keys). As
- * reearth-places src/jp.js lookup. */
-async function lookup(index, normalized, limit, readings = []) {
-  let entries = await index.prefix(normalized, limit);
-  let within = false;
-  if (!entries.length && readings.length) {
-    const prefixes = [
-      ...new Set(
-        readings.flatMap((r) => {
-          const chars = Array.from(r);
-          return chars.slice(1, -1).map((_, i) => chars.slice(0, i + 2).join(""));
-        }),
-      ),
-    ];
-    const found = prefixes.length ? await index.exactMany(prefixes) : [];
-    let longest = null;
-    found.forEach((entry, i) => {
-      if (entry && (!longest || prefixes[i].length > longest.text.length)) longest = { entry, text: prefixes[i] };
-    });
-    if (longest) {
-      entries = [longest.entry];
-      within = true;
-    }
-  }
-  const postings = await index.postingsSpan(entries);
-  const decoder = new TextDecoder();
-  const hits = [];
-  entries.forEach((entry, i) => {
-    const term = decoder.decode(entry.term);
-    for (const doc of postings[i].docs) hits.push({ term, doc, within });
-  });
-  const shown = hits.slice(0, limit);
-  const payloads = await index.payloadSpan(shown.map((h) => h.doc));
-  return shown.map((h, i) => ({ ...h, payload: payloads[i] }));
 }
 
 const point = (lonlat) => {
@@ -313,7 +277,7 @@ async function answerJapan(q, f, limit) {
   const digits = postalDigits(q);
   if (digits) {
     await f.postal.open();
-    const hits = await lookup(f.postal.index, digits, limit);
+    const hits = await lookupPrefix(f.postal.index, digits, limit);
     return {
       used: [f.postal],
       rows: hits.map((h) => {
@@ -328,9 +292,9 @@ async function answerJapan(q, f, limit) {
   const index = f.address.index;
   const normalized = index.normalize(q);
   const chome = chomeReading(normalized);
-  const hits = await lookup(index, normalized, limit, [normalized, ...(chome ? [chome] : [])]);
+  const hits = await lookupPrefix(index, normalized, limit, [normalized, ...(chome ? [chome] : [])]);
   if (hits.length) {
-    const within = hits[0].within;
+    const within = hits[0].match === "within";
     return {
       used: [f.address],
       rows: hits.map((h) => ({ entry: h.term, locator: point(h.payload) })),
@@ -340,7 +304,7 @@ async function answerJapan(q, f, limit) {
   }
 
   // Nothing begins with it: the approximate index, by bigrams, as
-  // reearth-places src/jp.js FUZZY.
+  // @reearth/places FUZZY.
   await f.fuzzy.open();
   const found = (
     await f.fuzzy.index.search(q, { any: true, probe: 6, lengthNorm: 0.75, boost: "municipality", limit })
@@ -631,85 +595,15 @@ function flash(button, text) {
 
 // --- reverse geocoding ------------------------------------------------------
 
-// The geohash cell a point falls in, and the polygons' rings, as
-// reearth-places src/reverse.js and mokuji demo/web/reverse.js read them.
-const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
-function geohash(lat, lon, precision) {
-  let [lonLo, lonHi, latLo, latHi] = [-180, 180, -90, 90];
-  let out = "";
-  let code = 0;
-  for (let i = 0; i < precision * 5; i++) {
-    if (i % 2 === 0) {
-      const mid = (lonLo + lonHi) / 2;
-      code = code * 2 + (lon >= mid ? 1 : 0);
-      lon >= mid ? (lonLo = mid) : (lonHi = mid);
-    } else {
-      const mid = (latLo + latHi) / 2;
-      code = code * 2 + (lat >= mid ? 1 : 0);
-      lat >= mid ? (latLo = mid) : (latHi = mid);
-    }
-    if (i % 5 === 4) {
-      out += BASE32[code];
-      code = 0;
-    }
-  }
-  return out;
-}
-function decodeRings(text, scale) {
-  return text.split(";").map((part) => {
-    const v = part.split(",");
-    const ring = [];
-    let x = 0;
-    let y = 0;
-    for (let i = 0; i + 1 < v.length; i += 2) {
-      x += Number(v[i]);
-      y += Number(v[i + 1]);
-      ring.push([x / scale, y / scale]);
-    }
-    ring.push(ring[0]);
-    return ring;
-  });
-}
-function contains(rings, x, y) {
-  let inside = false;
-  for (const ring of rings) {
-    for (let i = 0; i < ring.length - 1; i++) {
-      const [x1, y1] = ring[i];
-      const [x2, y2] = ring[i + 1];
-      if (y1 > y !== y2 > y && x < x1 + ((y - y1) * (x2 - x1)) / (y2 - y1)) inside = !inside;
-    }
-  }
-  return inside;
-}
-/** The name a 町丁目 is answered with, from its payload's label, as
- * reearth-places src/jp.js reverseResult names it: the registry's address
- * when the area was linked to one 町字 (LINKED_ADDRESS), else the census's
- * names after the registry's municipality, normalized by ja-address. The
- * fields are the file's `payload-fields`, cut at U+001F; a file without them
- * has a label that is one name. */
-function areaName(index, label) {
-  const declared = index.meta?.attrs?.["payload-fields"];
-  if (typeof declared !== "string" || !declared) return label;
-  const values = label.split("\x1f");
-  const f = Object.fromEntries(declared.split(",").map((name, i) => [name.trim(), values[i] ?? ""]));
+/** The name a 町丁目 is answered with, as @reearth/places reverseResult
+ * names it: the registry's address when the area was linked to one 町字
+ * (LINKED_ADDRESS), else the census's names after the registry's
+ * municipality, normalized by ja-address. A file that names no fields has a
+ * label that is one name. */
+function areaName(polygon) {
+  const f = polygon.fields;
+  if (!f) return polygon.label;
   return f.LINKED_ADDRESS || jaAddress(f.PREF_NAME + f.MUNICIPALITY + f.S_NAME);
-}
-
-async function locate(index, lat, lon) {
-  const precisions = String(index.meta?.attrs?.["geohash-precisions"] ?? "5,6,7").split(",").map(Number);
-  const scale = 10 ** Number(/1e(\d+)/.exec(String(index.meta?.attrs?.geometry ?? "1e5"))?.[1] ?? 5);
-  const cell = geohash(lat, lon, Math.max(...precisions));
-  const found = (await index.exactMany(precisions.map((p) => cell.slice(0, p)))).filter(Boolean);
-  const postings = await Promise.all(
-    found.map((e) => (e.postingsLength === 0 ? index.implied(e) : index.postingsSpan([e]).then(([p]) => p))),
-  );
-  const docs = [...new Set(postings.flatMap((p) => p.docs))].sort((a, b) => a - b);
-  const payloads = await index.payloadSpan(docs);
-  const candidates = docs.map((doc, i) => {
-    const cut = payloads[i].indexOf("|");
-    return { label: areaName(index, payloads[i].slice(0, cut)), rings: decodeRings(payloads[i].slice(cut + 1), scale) };
-  });
-  return { cell, candidates, inside: candidates.filter((c) => contains(c.rings, lon, lat)) };
 }
 
 const MAPLIBRE = "https://unpkg.com/maplibre-gl@5.24.0/dist";
@@ -741,7 +635,8 @@ async function reverseAt(lat, lon) {
   const log = [];
   file.source.listener = (r) => log.push(r);
   const start = performance.now();
-  const found = await locate(file.index, lat, lon);
+  const located = await locate(file.index, lat, lon);
+  const found = { ...located, inside: located.inside.map((p) => ({ ...p, label: areaName(p) })) };
   const ms = performance.now() - start;
   age(file);
   for (const r of log) file.slices.push({ offset: r.offset, length: r.length, kind: "query" });
