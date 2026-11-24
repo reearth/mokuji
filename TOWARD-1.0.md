@@ -18,12 +18,11 @@ and what has to be true before it is declared. Each condition can be checked;
 
 ## Conditions
 
-| | Condition | Status |
-|---|---|---|
-| 1 | An independent reader | Not yet |
-| 2 | A public comment period, closed | Not yet |
-| 3 | Data from another publisher | Not yet |
-| 4 | The I/O bound measured on large real data | Met |
+| | Condition |
+|---|---|
+| 1 | An independent reader |
+| 2 | A public comment period, closed |
+| 3 | Data from another publisher |
 
 1. **An independent reader.** Someone outside Re:Earth writes a reader from
    `SPEC.md` and `conformance/` alone, and it passes every case, read counts
@@ -44,7 +43,3 @@ and what has to be true before it is declared. Each condition can be checked;
 3. **Data from another publisher.** A dataset other than Re:Earth Places is
    published as Mokuji files by its own publisher. A format with one
    publisher has not yet met the questions a second one brings.
-
-4. **The I/O bound measured on large real data.** Met: the bound is measured
-   on 12,854,245 places (`tools/README.md`), and the measurements are in
-   `SPEC.md` §4.1.1 and `MANIFEST.md`.
