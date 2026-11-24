@@ -18,7 +18,8 @@ index becomes a file you upload, not a service you operate.
 
 > **Status: draft, version 0.1.** The format may still change incompatibly
 > before 1.0. Every file names the writer and version that produced it, so a
-> file can be rebuilt when that happens; pin the commit you depend on. Questions,
+> file can be rebuilt when that happens; pin the commit you depend on.
+> [TOWARD-1.0.md](TOWARD-1.0.md) says what 1.0 will promise and what it waits on. Questions,
 > measurements on your own data, and independent implementations are welcome
 > as [issues](https://github.com/reearth/mokuji/issues).
 
