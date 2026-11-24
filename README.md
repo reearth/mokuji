@@ -157,15 +157,15 @@ writer and read by the same reader:
 
 | | Japanese addresses | PLATEAU specifications |
 |---|---|---|
-| Records | 1,744,962 | 2,523 |
-| Terms | 1,744,962 | 77,240 |
+| Records | 1,744,962 | 2,521 |
+| Terms | 1,744,962 | 23,448 |
 | Tokenizer | `ja-address` | `bigram` |
-| Dictionary | 863 KB (12%) | 1.10 MB (40%) |
-| **Postings** | **0 bytes** — implied | **1.58 MB (58%)** |
-| **Payload** | **5.99 MB (84%)** — coordinates | **43 KB (1.6%)** — paths |
-| Document lengths | absent | 4.3 KB |
-| Index | 7.1 MB | 2.7 MB |
-| A query | prefix, **3 reads**, 1.1 KB | `建築物` ranked, **6 reads**, 16 KB |
+| Dictionary | 863 KB (12%) | 149 KB (19%) |
+| **Postings** | **0 bytes** — implied | **580 KB (74%)** |
+| **Payload** | **5.99 MB (84%)** — coordinates | **52 KB (6.6%)** — section names |
+| Document lengths | absent | 3.7 KB |
+| Index | 7.1 MB | 785 KB |
+| A query | prefix, **3 reads**, 1.1 KB | `建築物` ranked, **6 reads**, 17 KB |
 
 A gazetteer is the third: [demo/poi](demo/poi) indexes 98,187 Japanese places
 under all their names at once, with coordinates in attribute columns rather than

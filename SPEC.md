@@ -819,7 +819,7 @@ query wants the positions of the term it is testing, not of one document.
 
 #### What positions cost, and what they do not
 
-Measured on 2,523 documents and 5.1 million token occurrences (`demo/documents`),
+Measured on 2,521 documents and 1.0 million token occurrences (`demo/documents`),
 positions are the largest thing in the file — larger than everything else put
 together.
 
@@ -843,7 +843,7 @@ comes from the header, and the section is either present in full or absent.
 The section is read whole, or not at all. A scorer wants the lengths of every
 candidate document at once and its candidates are scattered, so fetching them
 one at a time would cost more reads than holding them all costs bytes.
-Measured on 2,523 documents it is 1.7 bytes a document.
+Measured on 2,521 documents it is 1.5 bytes a document.
 
 Its presence is the signal that it is available; there is no flag, because
 nothing else in the file depends on it.
@@ -858,9 +858,9 @@ not the length of the document actually being scored. BM25 normalizes by that
 length per document, and so does almost everything else worth using.
 
 Without it a reader cannot rank, and without ranking it cannot ask for the best
-ten — so it fetches the payload of every match. Measured on an index of 2,523
-documents, adding the section cost 4,359 bytes and took a three-term query from
-39 range reads to 6.
+ten — so it fetches the payload of every match. Measured on an index of 2,521
+documents, adding the section cost 3,743 bytes and took a two-term query from
+37 range reads to 6.
 
 That is the line the format draws: it supplies what a scorer needs and has no
 opinion about the scorer.
@@ -903,8 +903,8 @@ format at all.
 #### Cost
 
 The same as any bit-packed column: the width of the largest value it holds.
-Document lengths, which are one such column, measured at 1.7 bytes a document
-over 2,523 documents. A column of small integers costs less; a column of
+Document lengths, which are one such column, measured at 1.5 bytes a document
+over 2,521 documents. A column of small integers costs less; a column of
 timestamps costs about five bytes a document, and is still resident for a corpus
 of millions.
 
@@ -1226,9 +1226,9 @@ and postings together went from 94.5 MB to 19.8 MB — 7.3 bytes a term to 1.5 �
 and the file from 196 MB to 121 MB, with one range read fewer for a point.
 
 A text index gains less, and still gains. On the PLATEAU specifications
-(`demo/documents`), 71% of 77,240 bigrams are inlined and the file goes from
-3.1 MB to 2.7 MB; the queries measured there read the same number of times and
-4–6% more bytes, because the blocks they read are larger.
+(`demo/documents`), 61% of 23,448 terms are inlined and the file goes from
+839 KB to 785 KB; the queries measured there read the same number of times and
+10–25% more bytes, because the blocks they read are larger.
 
 Implied postings (above) are the limiting case and stay as they are: a term
 that names the document with its own ID costs nothing at all, where inline
