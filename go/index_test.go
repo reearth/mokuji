@@ -341,6 +341,26 @@ func TestSearchRanksAsMokujiSearchDoes(t *testing.T) {
 	}
 }
 
+func TestAFilterLeavesOutDocumentsBeforeTheirPayload(t *testing.T) {
+	ctx := context.Background()
+	tiny := openFixture(t, "tiny")
+	even := func(doc int) bool { return doc%2 == 0 }
+	found := must(tiny.Search(ctx, "tokyo chuo", Any(), Filter(even), Limit(1)))
+	// Ranked as without the filter, the odd ones gone: 1 and 3 outscore 0 and
+	// 2, which tie and fall to document order.
+	if found.Matched != 2 || len(found.Results) != 1 || found.Results[0].Doc != 0 {
+		t.Fatalf("%+v", found)
+	}
+	unfiltered := must(tiny.Search(ctx, "tokyo chuo", Any(), Limit(4)))
+	if found.Results[0].Score != unfiltered.Results[2].Score {
+		t.Fatal("a filter changed a score")
+	}
+	none := must(tiny.Search(ctx, "tokyo chuo", Filter(even)))
+	if none.Matched != 0 || len(none.Results) != 0 {
+		t.Fatalf("%+v", none)
+	}
+}
+
 func TestAProbeOfNothingMatchesNothing(t *testing.T) {
 	// Every term left out leaves nothing to intersect, rather than an error.
 	found := must(openFixture(t, "tiny").Search(context.Background(), "tokyo chuo", Probe(0)))

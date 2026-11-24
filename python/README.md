@@ -42,6 +42,11 @@ hits = fuzzy.search("和光市", boost="municipality")
 fuzzy.search("千代田区丸乃内", any=True, probe=6, length_norm=0)
 ```
 
+`filter` keeps only the documents a function accepts, by document ID, before
+ranking and before any payload is read, so that discarding a document costs no
+payload. Numbered by kind, a corpus is filtered by kind with an ID range:
+`filter=lambda doc: doc < 1200`.
+
 The scores agree with `mokuji search`'s and the TypeScript reader's to about
 1e-12, not to the last bit. JavaScript's `Math.log` is not correctly rounded,
 and Python's is, so two documents whose scores differ by less than that may

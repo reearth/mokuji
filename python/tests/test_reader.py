@@ -230,6 +230,14 @@ class Search(unittest.TestCase):
         with self.assertRaises(ValueError):
             tiny.search("tokyo", boost="absent")
 
+    def test_a_filter_leaves_out_documents_before_ranking(self):
+        tiny = MokujiIndex.open(fixture_source("tiny"))
+        even = lambda doc: doc % 2 == 0
+        found = tiny.search("tokyo chuo", any=True, filter=even, limit=1)
+        # Ranked as without the filter, the odd ones gone.
+        self.assertEqual((found.matched, [(r.doc, f"{r.score:.3f}") for r in found.results]), (2, [(0, "0.357")]))
+        self.assertEqual(tiny.search("tokyo chuo", filter=even).matched, 0)
+
     def test_a_probe_of_nothing_matches_nothing(self):
         # Every term left out leaves nothing to intersect, rather than an
         # error.

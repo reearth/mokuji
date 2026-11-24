@@ -963,7 +963,7 @@ export class MokujiIndex {
      * `limit`.
      */
     async search(query, options = {}) {
-        const { limit = 10, any = false, probe, lengthNorm = 0.75, boost } = options;
+        const { limit = 10, any = false, probe, lengthNorm = 0.75, boost, filter } = options;
         const split = SPLITTERS[this.tokenizerId] ?? ((q) => [q]);
         const terms = split(query);
         const column = boost === undefined ? undefined : this.column(boost);
@@ -1009,6 +1009,8 @@ export class MokujiIndex {
             const rest = runs.slice(1).map((r) => new Set(r.docs));
             matched = runs[0].docs.filter((doc) => rest.every((s) => s.has(doc)));
         }
+        if (filter)
+            matched = matched.filter(filter);
         let ranked;
         if (!this.docLengths) {
             ranked = matched.map((doc) => ({ doc, score: null }));

@@ -1144,7 +1144,9 @@ class MokujiIndex:
 
     # --- queries ------------------------------------------------------------
 
-    def search(self, query, *, limit=10, any=False, probe=None, length_norm=0.75, boost=None):
+    def search(
+        self, query, *, limit=10, any=False, probe=None, length_norm=0.75, boost=None, filter=None
+    ):
         """Documents ranked by BM25 over the terms the query becomes.
 
         The same ranking as `mokuji search` and the TypeScript reader:
@@ -1158,7 +1160,10 @@ class MokujiIndex:
         `probe` fetches postings for only that many of the terms, the rarest,
         which the dictionary says without reading any postings. `boost` names
         an attribute column added to each score as `ln(1 + value)`, a static
-        prior.
+        prior. `filter` keeps only the documents it returns true for, by
+        document ID, before they are ranked and before any payload is read, so
+        that discarding a document costs no payload; `matched` counts what it
+        kept.
 
         One request per run of dictionary blocks the terms fall in, then one
         per term whose postings are stored as a run, then the payload of the
@@ -1200,6 +1205,8 @@ class MokujiIndex:
         else:
             rest = [set(run.docs) for run in runs[1:]]
             matched = [doc for doc in runs[0].docs if all(doc in s for s in rest)]
+        if filter is not None:
+            matched = [doc for doc in matched if filter(doc)]
 
         if self.doc_lengths is None:
             ranked = [(doc, None) for doc in matched]

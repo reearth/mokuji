@@ -40,6 +40,23 @@ hits, err := fuzzy.Search(ctx, "和光市", mokuji.Boost("municipality"))
 fuzzy.Search(ctx, "千代田区丸乃内", mokuji.Any(), mokuji.Probe(6), mokuji.LengthNorm(0))
 ```
 
+`Filter` keeps only the documents a function accepts, before ranking and
+before any payload is read. Asking for more results and discarding some costs
+the payload of every one discarded, and the payload is most of what a query
+reads. Numbering the corpus by kind turns a filter by kind into an ID range:
+
+```go
+// Documents 0 to 1,199 are one kind, the rest another.
+spec.Search(ctx, "LOD2", mokuji.Filter(func(doc int) bool { return doc < 1200 }))
+```
+
+A file held in memory (`BytesSource`) pays for a payload block in
+decompression rather than in requests, so it is served better by smaller
+blocks than the default 64 documents (`DocsPerPayloadBlock`). On the 2,521
+sections of the PLATEAU specifications, with each section's text in its
+payload, 16 made the file 8% larger and a filtered search about twice as
+fast.
+
 The scores agree with the other readers' to about 1e-12, not to the last
 bit, since logarithms differ in the last place between platforms; two
 documents whose scores differ by less than that may come out in either order

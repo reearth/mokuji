@@ -141,6 +141,10 @@ export interface SearchOptions {
   /** An attribute column added to each score as `ln(1 + value)`, a static
    * prior. */
   boost?: string;
+  /** Keep only the documents this accepts, by document ID, before they are
+   * ranked and before any payload is read, so that discarding a document costs
+   * no payload. `matched` then counts what it kept. */
+  filter?: (doc: number) => boolean;
 }
 
 /** What `search` found, and what deciding it took. */
@@ -1103,7 +1107,7 @@ export class MokujiIndex {
    * `limit`.
    */
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult> {
-    const { limit = 10, any = false, probe, lengthNorm = 0.75, boost } = options;
+    const { limit = 10, any = false, probe, lengthNorm = 0.75, boost, filter } = options;
     const split = SPLITTERS[this.tokenizerId] ?? ((q: string) => [q]);
     const terms = split(query);
     const column = boost === undefined ? undefined : this.column(boost);
@@ -1148,6 +1152,7 @@ export class MokujiIndex {
       const rest = runs.slice(1).map((r) => new Set(r.docs));
       matched = runs[0]!.docs.filter((doc) => rest.every((s) => s.has(doc)));
     }
+    if (filter) matched = matched.filter(filter);
 
     let ranked: { doc: number; score: number | null }[];
     if (!this.docLengths) {

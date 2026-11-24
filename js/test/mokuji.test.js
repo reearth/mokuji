@@ -404,6 +404,16 @@ test("search ranks as mokuji search does", async () => {
   await assert.rejects(tiny.search("tokyo", { boost: "absent" }));
 });
 
+test("a filter leaves out documents before ranking", async () => {
+  const tiny = await MokujiIndex.open(await fileSource("tiny"));
+  const filter = (doc) => doc % 2 === 0;
+  // Ranked as without the filter, the odd ones gone.
+  const found = await tiny.search("tokyo chuo", { any: true, filter, limit: 1 });
+  assert.equal(found.matched, 2);
+  assert.deepEqual(found.results.map((x) => [x.doc, x.score.toFixed(3)]), [[0, "0.357"]]);
+  assert.equal((await tiny.search("tokyo chuo", { filter })).matched, 0);
+});
+
 /**
  * Opens a malformed fixture and asks the case's question. Columns are decoded
  * when the file is opened, so an attribute case asks nothing more.

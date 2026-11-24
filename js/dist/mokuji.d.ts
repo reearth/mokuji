@@ -77,6 +77,10 @@ export interface SearchOptions {
     /** An attribute column added to each score as `ln(1 + value)`, a static
      * prior. */
     boost?: string;
+    /** Keep only the documents this accepts, by document ID, before they are
+     * ranked and before any payload is read, so that discarding a document costs
+     * no payload. `matched` then counts what it kept. */
+    filter?: (doc: number) => boolean;
 }
 /** What `search` found, and what deciding it took. */
 export interface SearchResult {

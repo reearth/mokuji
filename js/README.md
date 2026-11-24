@@ -46,6 +46,11 @@ const { results } = await fuzzy.search("和光市", { boost: "municipality" });
 await fuzzy.search("千代田区丸乃内", { any: true, probe: 6, lengthNorm: 0 });
 ```
 
+`filter` keeps only the documents a function accepts, by document ID, before
+ranking and before any payload is read, so that discarding a document costs no
+payload. Numbered by kind, a corpus is filtered by kind with an ID range:
+`{ filter: (doc) => doc < 1200 }`.
+
 The scores agree with `mokuji search`'s and the Python reader's to about
 1e-12, not to the last bit. JavaScript's `Math.log` is not correctly rounded
 (V8 is one unit in the last place off for about one input in seventy), so two

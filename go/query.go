@@ -72,6 +72,7 @@ type searchOptions struct {
 	probe      int
 	lengthNorm float64
 	boost      string
+	filter     func(doc int) bool
 }
 
 // SearchOption changes how Search matches and ranks.
@@ -95,6 +96,18 @@ func LengthNorm(b float64) SearchOption { return func(o *searchOptions) { o.leng
 // Boost names an attribute column added to each score as ln(1 + value), a
 // static prior.
 func Boost(column string) SearchOption { return func(o *searchOptions) { o.boost = column } }
+
+// Filter keeps only the documents keep accepts, before they are ranked and
+// before any payload is read. Matched then counts what it kept.
+//
+// What a caller would otherwise do by asking for more results and discarding
+// some, which costs the payload of every one discarded. A filter costs no
+// request: it sees document IDs, so it can ask anything the caller holds
+// resident about a document — an ID range, when the corpus was numbered by
+// kind, or an attribute column.
+func Filter(keep func(doc int) bool) SearchOption {
+	return func(o *searchOptions) { o.filter = keep }
+}
 
 // Search ranks documents by BM25 over the terms the query becomes.
 //
@@ -194,6 +207,9 @@ func (ix *Index) Search(ctx context.Context, query string, options ...SearchOpti
 		}
 	}
 
+	if o.filter != nil {
+		matched = slices.DeleteFunc(matched, func(doc int) bool { return !o.filter(doc) })
+	}
 	result.Matched = len(matched)
 	ranked := make([]Ranked, len(matched))
 	for i, doc := range matched {
