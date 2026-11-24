@@ -869,6 +869,7 @@ html[data-lang="ja"] .title {
   border: 1px solid var(--rule);
 }
 .card {
+  min-width: 0;
   background: var(--paper);
 }
 .card a {
@@ -940,7 +941,9 @@ html[data-lang="ja"] .card h3 {
 }
 @media (max-width: 560px) {
   .cards {
-    grid-template-columns: 1fr;
+    /* minmax(0, …), as above: a bare 1fr lets the track grow to a figure's
+       min-content width, which Safari takes from the SVG and not the page. */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
