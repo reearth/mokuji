@@ -43,10 +43,10 @@ Two of them need more than that:
 - **crates.io** can only trust a workflow for a crate that exists, so the
   first version is published by hand, with an API token, from a clean checkout
   of the tagged commit: `cargo publish`.
-- **npm**: `js/package.json` is `"private": true` until publishing is
-  decided, and the workflow stops on it. Remove it in the commit that is
-  tagged. A trusted publisher is likewise set on a package that exists, so
+- **npm**: a trusted publisher is likewise set on a package that exists, so
   the first version is `npm publish --access public` by hand, from `js/`.
+  The package carries its own copies of `LICENSE-MIT` and `LICENSE-APACHE`,
+  since npm packs only what is under `js/`.
 
 PyPI accepts a pending publisher for a name that does not exist yet, so its
 first version comes from the workflow.
