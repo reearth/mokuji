@@ -33,17 +33,13 @@ impl Postings {
 /// does not contain, and checking here keeps a corrupt run from producing a
 /// payload lookup far outside the file.
 pub fn decode(run: &[u8], has_freqs: bool, num_docs: u64) -> Result<Postings> {
-    let codec = PostingsCodec::from_byte(*run.first().ok_or(Error::Truncated {
-        expected: 1,
-        found: 0,
-    })?)?;
-    if codec != PostingsCodec::DeltaBitpack {
-        // Registered but not implemented here. Distinguished from an unknown
-        // codec so the message says which of the two it is.
-        return Err(Error::Malformed {
-            detail: "postings codec is not implemented by this reader",
-        });
-    }
+    // Every codec this version defines is implemented, so one that does not
+    // parse is one this reader does not implement (SPEC.md §5.4).
+    let PostingsCodec::DeltaBitpack =
+        PostingsCodec::from_byte(*run.first().ok_or(Error::Truncated {
+            expected: 1,
+            found: 0,
+        })?)?;
 
     let (count, n) = varint::decode(&run[1..])?;
     let count = usize::try_from(count).map_err(|_| Error::Malformed {

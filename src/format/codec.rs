@@ -51,15 +51,14 @@ impl SectionCodec {
 /// Encoding of a single term's postings run (`SPEC.md` §5.4).
 ///
 /// The identifier is carried by the run rather than fixed for the whole file,
-/// so a dense term can use a bitmap without every reader having to implement
-/// one. [`PostingsCodec::DeltaBitpack`] is mandatory for all readers.
+/// so that a later version can add a codec, such as a bitmap for dense terms,
+/// that a file uses only where it pays. [`PostingsCodec::DeltaBitpack`] is the
+/// only one this version defines; value 1 is unassigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PostingsCodec {
     /// Delta-encoded document IDs with bit-packing. Required.
     DeltaBitpack = 0,
-    /// Roaring bitmap. Optional.
-    Roaring = 1,
 }
 
 impl PostingsCodec {
@@ -67,7 +66,6 @@ impl PostingsCodec {
     pub fn from_byte(b: u8) -> Result<Self> {
         Ok(match b {
             0 => PostingsCodec::DeltaBitpack,
-            1 => PostingsCodec::Roaring,
             _ => {
                 return Err(Error::Malformed {
                     detail: "unknown postings codec",
@@ -107,15 +105,20 @@ mod tests {
 
     #[test]
     fn postings_codec_round_trips() {
-        for c in [PostingsCodec::DeltaBitpack, PostingsCodec::Roaring] {
-            assert_eq!(PostingsCodec::from_byte(c as u8).unwrap(), c);
-        }
+        assert_eq!(
+            PostingsCodec::from_byte(0).unwrap(),
+            PostingsCodec::DeltaBitpack
+        );
     }
 
     #[test]
     fn delta_bitpack_is_the_required_codec() {
         assert!(PostingsCodec::DeltaBitpack.is_required());
-        assert!(!PostingsCodec::Roaring.is_required());
+    }
+
+    #[test]
+    fn rejects_the_unassigned_postings_codec() {
+        assert!(PostingsCodec::from_byte(1).is_err());
     }
 }
 

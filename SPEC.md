@@ -303,6 +303,15 @@ file whose `spec_major` it does not implement. A reader MUST accept a file
 whose `spec_minor` is greater than the one it implements, ignoring sections it
 does not recognize.
 
+That is what a later minor version can rely on, and it bounds what one can
+add. It adds only what a reader of an earlier one either ignores and still
+answers correctly — a section, a metadata key, a flag bit, a manifest key — or
+refuses cleanly: a codec value (§5.4, §5.5.1, §5.6), which an earlier reader
+does not implement and MUST therefore reject, rather than guess at, wherever it
+meets one. A change that an earlier reader would misread instead is a new
+`spec_major`. A reserved flag bit is ignored on read (§2), so a flag that a
+minor version defines can only say something a reader may safely not know.
+
 `num_docs` and `sum_doclen` are the global statistics required by BM25.
 The average document length is `sum_doclen / num_docs`, computed by the reader.
 It is stored as two integers rather than as a precomputed float so that the
@@ -567,11 +576,12 @@ entry and beginning with a one-byte codec identifier.
 | Codec | Name | Status |
 |---|---|---|
 | `0` | delta with bit-packing | REQUIRED |
-| `1` | roaring bitmap | OPTIONAL |
 
-Every reader MUST implement codec `0`. Carrying the identifier in the run,
-rather than fixing one codec for the file, lets a dense term use a bitmap
-without requiring every reader to implement one.
+Every reader MUST implement codec `0`, and MUST reject a run whose codec it
+does not implement. Carrying the identifier in the run, rather than fixing one
+codec for the file, lets a later version add one, such as a bitmap for dense
+terms, that a file uses only where it pays. Value `1` is not assigned (Appendix
+A).
 
 #### 5.4.1 Bit-packed groups
 
@@ -657,6 +667,8 @@ section stays resident even for a large corpus.
 | `0` | opaque | REQUIRED |
 | `1` | delta-coded integers | REQUIRED |
 
+A reader MUST reject a payload codec it does not implement.
+
 #### 5.5.2 Codec 0, opaque
 
 A block is:
@@ -718,7 +730,16 @@ file, and never across a run of blocks — compressing more than a reader can
 address would force it to fetch bytes it does not want, which is the thing this
 format exists to avoid.
 
-The codec is recorded per section (§5.2). A compressed unit is:
+The codec is recorded per section (§5.2):
+
+| Codec | Name | Unit | Status |
+|---|---|---|---|
+| `0` | raw | the bytes, as they are | REQUIRED |
+| `1` | deflate | a compressed unit whose payload is a raw deflate stream (RFC 1951), with no zlib or gzip wrapper | REQUIRED |
+| `2` | zstd | a compressed unit whose payload is one Zstandard frame (RFC 8878), using no dictionary | OPTIONAL |
+
+A reader MUST reject a section whose codec it does not implement. A compressed
+unit is:
 
 | Field | Encoding |
 |---|---|
@@ -1291,6 +1312,36 @@ With the magic changed, a 1.0 reader would take a 0.x file for something that
 is not a Mokuji file at all, which reads as corruption, and old files reaching
 new readers is the ordinary case during a move. So a 1.0 reader SHOULD
 recognize `MOKUJIv0` and refuse the file as a 0.x file to be rebuilt.
+
+**A later minor version adds only what an earlier reader ignores or refuses.**
+§5.1 has a reader accept a greater `spec_minor`, so whatever a minor version
+adds has to leave an earlier reader answering correctly or refusing cleanly,
+never misreading. Each thing this version leaves for later fits:
+
+- A dictionary-using compression codec (§5.6.1) is a section codec value and a
+  section that holds the dictionary. An earlier reader ignores the section and
+  refuses the codec, so a publisher who uses it gives up those readers, as one
+  who uses zstd does now.
+- Precomputed postings for frequent term pairs (above) are a section, ignored.
+- A bitmap codec for dense terms is a postings codec value, refused run by run.
+- A bounding box for a segment's region (`MANIFEST.md`) is a manifest key,
+  ignored. A reader that ignores it opens segments it could have skipped, and
+  answers the same.
+- The licenses of an index's sources (above) are a metadata key, tolerated.
+
+None of them needs a flag bit, and none changes how an existing section is
+read. A codec value is the one addition an earlier reader cannot ignore, which
+is why §5.4, §5.5.1 and §5.6 each have a reader reject a codec it does not
+implement rather than leave the case unsaid.
+
+**Postings codec 1 is unassigned.** It was listed as a roaring bitmap,
+optional, without saying which roaring serialization, or where frequencies go:
+a bitmap carries none, and `HAS_FREQS` requires one per document. Nothing
+implemented it, and nothing measured showed a dense term needing it, since a
+run of consecutive documents already packs to groups of width zero (§5.4.1).
+As with flag bit 0, the value is left unassigned rather than reused, so that it
+cannot collide with an implementation that read the earlier draft. A bitmap
+codec can come in a later minor version, defined.
 
 ## Appendix B. A worked example
 

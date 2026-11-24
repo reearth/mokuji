@@ -721,6 +721,7 @@ def load_resident(f):
     for i in range(count):
         entry = table[i * SECTION_ENTRY_LEN : (i + 1) * SECTION_ENTRY_LEN]
         sid = int.from_bytes(entry[0:2], "little")
+        assert entry[2] == 0, "this script reads raw sections only"
         assert previous_id is None or sid > previous_id, "table is not sorted"
         previous_id = sid
         sections[sid] = (
@@ -852,6 +853,7 @@ def render(values, exponent):
 def payload_of(f, resident, doc_id, cache):
     section = resident[SEC_PAYLOAD_OFFSETS]
     codec = section[0]
+    assert codec in (PAYLOAD_OPAQUE, PAYLOAD_DELTA_INTS), "unknown payload codec"
     values_per_doc = section[1]
     exponent = section[2] - 256 if section[2] > 127 else section[2]
     per_block = int.from_bytes(section[4:8], "little")
@@ -1455,6 +1457,26 @@ def malformed_completion_twice(d):
     return set_byte(d, at, 0)
 
 
+def malformed_unassigned_postings_codec(d):
+    # `tokyo`'s run in `names` begins with codec 0; 1 is unassigned.
+    offset, _ = entry_fields(d, "tokyo")["postings"]
+    assert d[offset] == 0
+    return set_byte(d, offset, 1)
+
+
+def malformed_unknown_section_codec(d):
+    # The term blocks are stored raw; codec 3 is not one this version defines.
+    at, _, _ = section_entries(d)[SEC_TERM_BLOCKS]
+    assert d[at + 2] == 0
+    return set_byte(d, at + 2, 3)
+
+
+def malformed_unknown_payload_codec(d):
+    _, at, _ = section_entries(d)[SEC_PAYLOAD_OFFSETS]
+    assert d[at] == PAYLOAD_OPAQUE
+    return set_byte(d, at, 2)
+
+
 def malformed_column_twice(_):
     # Built rather than edited: two columns by one name.
     data, _ = build(
@@ -1489,6 +1511,9 @@ MALFORMED = {
     "completion-past-index": ("names", malformed_completion_past_index),
     "completion-twice": ("names", malformed_completion_twice),
     "column-twice": ("dict", malformed_column_twice),
+    "unassigned-postings-codec": ("names", malformed_unassigned_postings_codec),
+    "unknown-section-codec": ("tiny", malformed_unknown_section_codec),
+    "unknown-payload-codec": ("tiny", malformed_unknown_payload_codec),
 }
 
 

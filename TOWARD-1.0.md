@@ -24,7 +24,6 @@ and what has to be true before it is declared. Each condition can be checked;
 | 2 | A public comment period, closed | Not yet |
 | 3 | Data from another publisher | Not yet |
 | 4 | The I/O bound measured on large real data | Met |
-| 5 | Deferred work fits a minor version | Not yet |
 
 1. **An independent reader.** Someone outside Re:Earth writes a reader from
    `SPEC.md` and `conformance/` alone, and it passes every case, read counts
@@ -49,8 +48,3 @@ and what has to be true before it is declared. Each condition can be checked;
 4. **The I/O bound measured on large real data.** Met: the bound is measured
    on 12,854,245 places (`tools/README.md`), and the measurements are in
    `SPEC.md` §4.1.1 and `MANIFEST.md`.
-
-5. **Deferred work fits a minor version.** Each thing `SPEC.md` leaves for a
-   later version, such as a dictionary-using codec (Appendix A), is shown to
-   be addable without breaking a 1.0 reader. One that cannot be is decided
-   before 1.0 instead.
