@@ -24,7 +24,10 @@ from dataclasses import dataclass, field
 
 from .tokenizers import SPLITTERS, TOKENIZERS
 
-MAGIC = b"MOKUJIv0"
+MAGIC = b"MOKUJI\x00\x00"
+# The magic of files written before it lost its version, which a 0.x reader
+# still reads (SPEC.md Appendix A). Nothing writes it.
+MAGIC_V0 = b"MOKUJIv0"
 HEADER_LEN = 64
 SECTION_ENTRY_LEN = 24
 
@@ -614,7 +617,7 @@ class MokujiIndex:
         # recommends a layout that puts all of it at the head of the file for
         # exactly this.
         prefix = self.read(0, OPEN_PREFIX)
-        if len(prefix) < HEADER_LEN or prefix[:8] != MAGIC:
+        if len(prefix) < HEADER_LEN or prefix[:8] not in (MAGIC, MAGIC_V0):
             raise MokujiError("not a Mokuji file")
         if prefix[8] != 0:
             raise MokujiError(f"unsupported major version {prefix[8]}")

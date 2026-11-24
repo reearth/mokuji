@@ -776,7 +776,7 @@ export class MokujiBuilder {
     ]);
 
     const out = new Out();
-    out.push(encoder.encode("MOKUJIv0"));
+    out.push(encoder.encode("MOKUJI\u0000\u0000"));
     out.byte(0);
     out.byte(SPEC_MINOR);
     let flags = FLAG_HAS_PAYLOAD;

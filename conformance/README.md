@@ -15,11 +15,12 @@ exists to provide, and a bound that is not tested is a bound that drifts.
 | `dict` | A dictionary: one term per record, postings implied throughout, payload as delta-coded integers, every section raw |
 | `dict-deflate` | `dict` again, compressed |
 | `tiny-extra` | `tiny` again, with two sections this version does not define — one in the specification's range, one in the application's |
+| `tiny-v0` | `tiny` again, with the magic `MOKUJIv0` that files carried before it lost its version, which a 0.x reader still reads |
 | `names-delta` | A segment added to `names` later, for the collection below |
 | `names` | A gazetteer for completion: each name one term under `name-list`, and a completions section with an entry for every prefix at least two terms begin with — including the byte prefixes that stop inside a character |
 
 ```
-fixtures/build_fixtures.py   builds tiny, tiny-extra, dict, names and names-delta,
+fixtures/build_fixtures.py   builds tiny, tiny-extra, tiny-v0, dict, names and names-delta,
                              independently of the Rust writer, and collection.json
 fixtures/collection.json     a manifest (MANIFEST.md): names, then names-delta,
                              with one document of names deleted; names-delta

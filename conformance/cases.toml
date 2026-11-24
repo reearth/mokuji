@@ -35,6 +35,14 @@ payloads = ["35.694,139.754", "35.671,139.772", "35.664,139.698"]
 reads = 4 # 1 term block, 1 postings, 2 payload blocks for 3 documents
 
 [[case]]
+name = "the magic that named its version"
+fixture = "tiny-v0"
+query = ["tokyo"]
+docs = [0, 1, 2]
+payloads = ["35.694,139.754", "35.671,139.772", "35.664,139.698"]
+reads = 4 # `tiny` with the magic MOKUJIv0, which a 0.x reader still reads
+
+[[case]]
 name = "intersection"
 fixture = "tiny"
 query = ["tokyo", "chuo"]

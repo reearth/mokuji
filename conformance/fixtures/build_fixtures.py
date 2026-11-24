@@ -23,7 +23,9 @@ import unicodedata
 
 HERE = pathlib.Path(__file__).parent
 
-MAGIC = b"MOKUJIv0"
+MAGIC = b"MOKUJI\x00\x00"
+# The magic before it lost its version, which a 0.x reader still reads.
+MAGIC_V0 = b"MOKUJIv0"
 SPEC_MAJOR, SPEC_MINOR = 0, 1
 HEADER_LEN = 64
 SECTION_ENTRY_LEN = 24
@@ -708,7 +710,7 @@ class CountingFile:
 
 def load_resident(f):
     header = f.read(0, HEADER_LEN)
-    assert header[0:8] == MAGIC
+    assert header[0:8] in (MAGIC, MAGIC_V0)
     assert header[8] == SPEC_MAJOR
     count = int.from_bytes(header[12:16], "little")
     table_offset = int.from_bytes(header[32:40], "little")
@@ -1607,6 +1609,23 @@ def main():
         (HERE / f"{name}.mokuji").write_bytes(data)
         (HERE / f"{name}.hex").write_text(dump)
         print(f"wrote {name}.mokuji ({len(data)} bytes) and {name}.hex")
+
+    # `tiny` with the magic files were written with before it lost its
+    # version, which a 0.x reader still reads (SPEC.md Appendix A). Everything
+    # after the magic is `tiny`'s, so it answers what `tiny` answers.
+    v0 = bytearray((HERE / "tiny.mokuji").read_bytes())
+    v0[0:8] = MAGIC_V0
+    v0 = bytes(v0)
+    tiny = next(spec for spec in FIXTURES if spec["name"] == "tiny")
+    check(tiny, v0)
+    if args.check:
+        if (HERE / "tiny-v0.mokuji").read_bytes() != v0:
+            stale.append("tiny-v0.mokuji")
+        else:
+            print(f"tiny-v0 is current ({len(v0)} bytes)")
+    else:
+        (HERE / "tiny-v0.mokuji").write_bytes(v0)
+        print(f"wrote tiny-v0.mokuji ({len(v0)} bytes)")
 
     # The collection, from the fixtures just built.
     built = {name: (HERE / f"{name}.mokuji").read_bytes() for name, _, _ in COLLECTION}

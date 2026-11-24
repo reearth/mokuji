@@ -14,7 +14,10 @@ import (
 )
 
 const (
-	magic            = "MOKUJIv0"
+	magic = "MOKUJI\x00\x00"
+	// magicV0 is the magic of files written before it lost its version,
+	// which a 0.x reader still reads (SPEC.md Appendix A).
+	magicV0          = "MOKUJIv0"
 	headerLen        = 64
 	sectionEntryLen  = 24
 	flagHasPayload   = 1 << 1
@@ -330,7 +333,7 @@ func (ix *Index) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(prefix) < headerLen || string(prefix[:8]) != magic {
+	if len(prefix) < headerLen || string(prefix[:8]) != magic && string(prefix[:8]) != magicV0 {
 		return malformed("not a Mokuji file")
 	}
 	if prefix[8] != 0 {

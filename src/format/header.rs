@@ -1,7 +1,13 @@
 use crate::format::{Error, Result};
 
-/// Magic bytes at offset 0 of every Mokuji file.
-pub const MAGIC: [u8; 8] = *b"MOKUJIv0";
+/// Magic bytes at offset 0 of every Mokuji file: `MOKUJI` and two zero bytes.
+///
+/// The version is in `spec_major` and `spec_minor` alone (`SPEC.md` §5.1).
+pub const MAGIC: [u8; 8] = *b"MOKUJI\0\0";
+
+/// The magic of the files written before it lost its version, which a 0.x
+/// reader still reads (`SPEC.md` Appendix A). Nothing writes it.
+pub const MAGIC_V0: [u8; 8] = *b"MOKUJIv0";
 
 /// Major specification version implemented by this crate.
 ///
@@ -105,7 +111,7 @@ impl Header {
         }
 
         let magic: [u8; 8] = buf[0..8].try_into().expect("checked length");
-        if magic != MAGIC {
+        if magic != MAGIC && magic != MAGIC_V0 {
             return Err(Error::BadMagic { found: magic });
         }
 
@@ -221,6 +227,14 @@ mod tests {
         let mut buf = sample().encode();
         buf[0] = b'X';
         assert!(matches!(Header::parse(&buf), Err(Error::BadMagic { .. })));
+    }
+
+    #[test]
+    fn reads_the_magic_that_named_its_version() {
+        let mut buf = sample().encode();
+        assert_eq!(&buf[0..8], b"MOKUJI\0\0");
+        buf[0..8].copy_from_slice(&MAGIC_V0);
+        assert_eq!(Header::parse(&buf).unwrap(), sample());
     }
 
     #[test]

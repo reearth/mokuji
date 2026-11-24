@@ -1,12 +1,19 @@
 # Toward 1.0
 
 Mokuji is a draft: `SPEC.md`, `MANIFEST.md` and `TOKENIZERS.md` are version
-0.1 and may still change incompatibly. This file says what 1.0 will promise,
+0.1 and may still change. A file written now is meant to be read at 1.0 all
+the same; the first promise below says how far that holds. This file says what 1.0 will promise,
 and what has to be true before it is declared. Each condition can be checked;
 1.0 is declared when all of them hold, not on a date.
 
 ## What 1.0 promises
 
+- **A file written now is read at 1.0.** A 1.0 reader reads a file with the
+  magic `MOKUJI` and `spec_major` 0 as it reads a 1.0 file, since 1.0 is the
+  last 0.x unchanged. The exception is a problem the comment period finds and
+  cannot fix compatibly: that change raises `spec_minor`, and `SPEC.md` names
+  the files to rebuild. Files with the earlier magic `MOKUJIv0` are rebuilt
+  (`SPEC.md` Appendix A).
 - **A 1.x file is read by every 1.x reader.** After 1.0 the format grows only
   through the extension points it already has: `spec_minor` (§5.1), new
   section IDs (§5.2), flags, and registered codecs and tokenizers. A change

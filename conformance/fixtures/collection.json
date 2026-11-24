@@ -4,7 +4,7 @@
   "segments": [
     {
       "path": "names.mokuji",
-      "content_hash": "sha2-256:d49d99afaa32c53b8a413e573def4d67a5fd9afb1befec16b12ba4076ca6bf83",
+      "content_hash": "sha2-256:9b7e1716f3d8b2a765f14ac8a990213ff5f9c07b4c5b2fc3d568a1862fd3e661",
       "length": 1121,
       "deletes": [
         0
@@ -12,7 +12,7 @@
     },
     {
       "path": "names-delta.mokuji",
-      "content_hash": "sha2-256:14ef2fcff603a6d7a4a7a8be9f1bdecb21cb03408b85bfeabe873afe6cf6f5fa",
+      "content_hash": "sha2-256:12c2165260fc1a4d148369e3317138174fb5882783494190f6f4f2e7bc4dabf7",
       "length": 878,
       "region": {
         "countries": [

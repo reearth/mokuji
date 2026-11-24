@@ -8,7 +8,10 @@
 // It bundles no decompressor. The required codec is raw deflate precisely so
 // that a page can use DecompressionStream and stay this small.
 import { SPLITTERS, TOKENIZERS } from "./tokenizers.js";
-const MAGIC = "MOKUJIv0";
+const MAGIC = "MOKUJI\u0000\u0000";
+/** The magic of files written before it lost its version, which a 0.x reader
+ * still reads (SPEC.md Appendix A). Nothing writes it. */
+const MAGIC_V0 = "MOKUJIv0";
 const HEADER_LEN = 64;
 const SECTION_ENTRY_LEN = 24;
 const FLAG_HAS_PAYLOAD = 1 << 1;
@@ -440,7 +443,8 @@ export class MokujiIndex {
         if (prefix.length < HEADER_LEN)
             throw new Error("not a Mokuji file");
         const view = new DataView(prefix.buffer, prefix.byteOffset);
-        if (utf8.decode(prefix.subarray(0, 8)) !== MAGIC)
+        const magic = utf8.decode(prefix.subarray(0, 8));
+        if (magic !== MAGIC && magic !== MAGIC_V0)
             throw new Error("not a Mokuji file");
         if (prefix[8] !== 0)
             throw new Error(`unsupported major version ${prefix[8]}`);

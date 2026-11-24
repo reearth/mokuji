@@ -15,6 +15,6 @@ mod section;
 
 pub use codec::{unzigzag, zigzag, PayloadCodec, PostingsCodec, SectionCodec};
 pub use error::{Error, Result};
-pub use header::{Flags, Header, HEADER_LEN, MAGIC, SPEC_MAJOR, SPEC_MINOR};
+pub use header::{Flags, Header, HEADER_LEN, MAGIC, MAGIC_V0, SPEC_MAJOR, SPEC_MINOR};
 pub use section::parse_section_table;
 pub use section::{SectionEntry, SectionId, SECTION_ENTRY_LEN};

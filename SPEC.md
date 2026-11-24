@@ -287,7 +287,7 @@ compressor emits, which moves the offset again.
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 8 | `magic` | ASCII `MOKUJIv0` |
+| 0 | 8 | `magic` | ASCII `MOKUJI`, then two zero bytes |
 | 8 | 1 | `spec_major` | 0 for this document |
 | 9 | 1 | `spec_minor` | 1 for this document |
 | 10 | 2 | `flags` | See §5.1.1 |
@@ -299,7 +299,9 @@ compressor emits, which moves the offset again.
 | 44 | 20 | reserved | MUST be zero |
 
 A reader MUST reject a file whose `magic` does not match, and MUST reject a
-file whose `spec_major` it does not implement. A reader MUST accept a file
+file whose `spec_major` it does not implement. A 0.x reader also accepts
+`MOKUJIv0`, the magic files carried before it dropped its version
+(Appendix A); a writer MUST NOT write it. A reader MUST accept a file
 whose `spec_minor` is greater than the one it implements, ignoring sections it
 does not recognize.
 
@@ -1294,24 +1296,34 @@ are recorded as given, so a rebuild with the same values produces the same
 bytes, and a rebuild with today's `retrieved` produces a file that truthfully
 differs.
 
-**At 1.0 the magic drops its version, and 0.x files are rebuilt rather than
-read.** A 0.x file says its version twice, in the magic `MOKUJIv0` and in
-`spec_major`. From 1.0 the magic is `MOKUJI` followed by two zero bytes, and the
-version is in `spec_major` and `spec_minor` alone. The field stays eight bytes,
-so nothing else in the header moves.
+**The magic drops its version before 1.0, so that a file written now is read
+at 1.0.** The first 0.x files said their version twice, in the magic `MOKUJIv0`
+and in `spec_major`. The magic is now `MOKUJI` followed by two zero bytes, and
+the version is in `spec_major` and `spec_minor` alone. The field stays eight
+bytes, so nothing else in the header moves.
 
-A 1.0 reader does not read 0.x files. §5.1 already has a reader reject a major
-it does not implement, and keeping a second layout for a draft would make every
-reader carry it for as long as any 0.x file exists. They are rebuilt instead,
-which is what a draft can offer: every file records the generator that wrote it
-and the source it was derived from (§3.4, §6), so the rebuild can be checked.
-When this was decided, the 0.x files in use were Re:Earth Places' 266, all
-built by pipelines from their sources and most of them rebuilt weekly.
+This was first decided for 1.0 itself, with 1.0 readers refusing every 0.x
+file and 0.x files rebuilt. That asks too much of anyone adopting a draft: a
+file built today would have a known end. Made in 0.x instead, the change leaves
+a file written from here on differing from a 1.0 file only in `spec_major`, and
+that is what lets 1.0 promise to read it:
 
-With the magic changed, a 1.0 reader would take a 0.x file for something that
-is not a Mokuji file at all, which reads as corruption, and old files reaching
-new readers is the ordinary case during a move. So a 1.0 reader SHOULD
-recognize `MOKUJIv0` and refuse the file as a 0.x file to be rebuilt.
+- **A 1.0 reader reads a file with the magic `MOKUJI` and `spec_major` 0 as it
+  reads a 1.0 file.** 1.0 is declared as the layout of the last 0.x, unchanged.
+- **Unless the comment period finds a problem that cannot be fixed
+  compatibly.** Such a change raises `spec_minor`, and SPEC.md then names the
+  files written before it as ones to rebuild. It is the exception, and each
+  one is recorded here.
+- **A file with the magic `MOKUJIv0` is rebuilt.** A 0.x reader still reads it,
+  so the move needs no coordination, but a 1.0 reader does not, and SHOULD
+  recognize the magic and refuse the file as a 0.x file to be rebuilt rather
+  than as something that is not a Mokuji file, which would read as corruption.
+  When this was decided, the files with that magic were Re:Earth Places' 266,
+  all built by pipelines from their sources and most of them rebuilt weekly;
+  every file records the generator that wrote it and the source it was derived
+  from (§3.4, §6), so the rebuild can be checked.
+
+A 0.x writer writes only the new magic.
 
 **A later minor version adds only what an earlier reader ignores or refuses.**
 §5.1 has a reader accept a greater `spec_minor`, so whatever a minor version
@@ -1363,14 +1375,14 @@ query through it, `chuo`.
 **Header**, at offset 0:
 
 ```
-00000000  4d 4f 4b 55 4a 49 76 30 00 01 0e 00 09 00 00 00  |MOKUJIv0........|
+00000000  4d 4f 4b 55 4a 49 00 00 00 01 0e 00 09 00 00 00  |MOKUJI..........|
 00000010  04 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00  |................|
 00000020  40 00 00 00 00 00 00 00 d8 00 00 00 00 00 00 00  |@...............|
 ```
 
-Magic `MOKUJIv0`; version 0.1; flags `0x000e`, so `HAS_PAYLOAD`, `HAS_FREQS`
-and `HAS_POSITIONS`; nine sections; four documents totalling eight tokens; the
-section table is 0xd8 bytes at offset 0x40.
+Magic `MOKUJI` and two zero bytes; version 0.1; flags `0x000e`, so
+`HAS_PAYLOAD`, `HAS_FREQS` and `HAS_POSITIONS`; nine sections; four documents
+totalling eight tokens; the section table is 0xd8 bytes at offset 0x40.
 
 **Term index** (`0x0010`), at offset 600:
 

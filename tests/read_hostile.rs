@@ -144,7 +144,7 @@ fn survives_a_file_of_nothing() {
         exercise(vec![0xff; len]);
     }
     // A valid magic and nothing else is the most tempting input of all.
-    let mut bytes = b"MOKUJIv0".to_vec();
+    let mut bytes = b"MOKUJI\0\0".to_vec();
     bytes.resize(64, 0);
     exercise(bytes);
 }
