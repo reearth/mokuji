@@ -287,8 +287,8 @@
         <div class="formula" aria-label="2k plus m">2<i>k</i>&thinsp;+&thinsp;<i>m</i></div>
         <div class="chapter-body">
           <p>
-            <span lang="en">For a query of <i>k</i> terms returning <i>m</i> documents, a reader makes at most 2<i>k</i> + <i>m</i> range reads, plus one when it opens the file. The bound is in the specification, and the conformance suite checks the count as well as the answers, for every implementation: the Rust crates, the TypeScript and Python readers, and a Python builder written from the specification alone.</span>
-            <span lang="ja"><i>k</i> 語で <i>m</i> 件を返す検索の読み出しは、多くて 2<i>k</i> + <i>m</i> 回。ファイルを開くときにもう1回。この上限は仕様に書いてあり、conformance スイートは答えだけでなく読み出しの回数も確かめます。Rust の実装、TypeScript と Python の reader、仕様だけから書いた Python のビルダー、どれも同じケースに答えます。</span>
+            <span lang="en">For a query of <i>k</i> terms returning <i>m</i> documents, a reader makes at most 2<i>k</i> + <i>m</i> range reads, plus one when it opens the file. The bound is in the specification, and the conformance suite checks the count as well as the answers, for every implementation: the Rust crates, the TypeScript, Python and Go readers, and a Python builder written from the specification alone.</span>
+            <span lang="ja"><i>k</i> 語で <i>m</i> 件を返す検索の読み出しは、多くて 2<i>k</i> + <i>m</i> 回。ファイルを開くときにもう1回。この上限は仕様に書いてあり、conformance スイートは答えだけでなく読み出しの回数も確かめます。Rust の実装、TypeScript・Python・Go の reader、仕様だけから書いた Python のビルダー、どれも同じケースに答えます。</span>
           </p>
           <p class="links">
             <a href="https://github.com/reearth/mokuji/blob/main/SPEC.md">SPEC.md</a>
@@ -379,12 +379,13 @@ bytes:    1474 of 2206580</code></pre>
           </div>
           <div class="way">
             <p class="step-label"><span lang="en">From the library, in the same few lines in each language</span><span lang="ja">ライブラリで（どの言語でも同じ数行）</span></p>
-            <!-- One API in three languages: js/, src/lib.rs, python/. If a
+            <!-- One API in four languages: js/, src/lib.rs, python/, go/. If a
                  name changes in one, change it here and in the others. -->
             <div class="langs" role="tablist" aria-label="Language">
               <button type="button" role="tab" aria-selected="true" data-code="js">JavaScript</button>
               <button type="button" role="tab" aria-selected="false" data-code="rust">Rust</button>
               <button type="button" role="tab" aria-selected="false" data-code="python">Python</button>
+              <button type="button" role="tab" aria-selected="false" data-code="go">Go</button>
             </div>
             <div class="code-tab" data-code="js">
               <pre class="code"><code>import { openAsBlob } from "node:fs";
@@ -406,6 +407,12 @@ let found = index.lookup("1000005", 10).await?;</code></pre>
 
 index = MokujiIndex.open("postal.mokuji")
 found = index.lookup("1000005", 10)</code></pre>
+            </div>
+            <div class="code-tab" data-code="go" hidden>
+              <pre class="code"><code>import mokuji "github.com/reearth/mokuji/go"
+
+index, err := mokuji.OpenFile(ctx, "postal.mokuji")
+found, err := index.Lookup(ctx, "1000005", 10)</code></pre>
             </div>
           </div>
         </div>
@@ -432,6 +439,11 @@ found = index.lookup("1000005", 10)</code></pre>
           <li>
             <span class="install-label">Python</span>
             <code>pip install mokuji</code>
+            <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
+          </li>
+          <li>
+            <span class="install-label">Go</span>
+            <code>go get github.com/reearth/mokuji/go</code>
             <button type="button" class="copy"><span lang="en">Copy</span><span lang="ja">コピー</span></button>
           </li>
           <li>

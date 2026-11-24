@@ -730,7 +730,7 @@ document.querySelectorAll("[data-set-lang]").forEach((a) =>
   }),
 );
 
-// The library's code in three languages, one shown.
+// The library's code in four languages, one shown.
 document.querySelector(".langs")?.addEventListener("click", (e) => {
   const tab = e.target.closest("[data-code]");
   if (!tab) return;
