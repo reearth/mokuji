@@ -64,7 +64,9 @@ between them.
 
 `index.Stats()` is the range requests and bytes queries have cost since
 opening or `ResetStats`, and `index.OnRequest` sees every request.
-`index.Attribution` and `index.License` are the credit the file states.
+`index.Attribution` and `index.License` are the credit the file states, and
+`index.Generator` the writer and every build parameter it records, including
+any a pipeline added to check when it opens the file.
 Queries may run from several goroutines at once.
 
 ### Reading a file on hand

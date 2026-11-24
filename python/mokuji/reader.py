@@ -118,6 +118,17 @@ class TermEntry:
 
 
 @dataclass(frozen=True)
+class Generator:
+    """The writer a file records, and the parameters it was built with (SPEC.md §6)."""
+
+    name: str | None
+    version: str | None
+    # Every build parameter, by name. A pipeline may record its own here,
+    # beside the writer's, and check them when it opens the file.
+    params: dict
+
+
+@dataclass(frozen=True)
 class Provenance:
     """One artifact an index was derived from, as its metadata records it (SPEC.md §6)."""
 
@@ -685,6 +696,13 @@ class MokujiIndex:
         # caller that shows results owes the credit, so it is kept at hand.
         self.license = _text(_field(self.meta, "license"))
         self.attribution = _text(_field(self.meta, "attribution"))
+        generator = _field(self.meta, "generator")
+        params = _field(generator, "params")
+        self.generator = Generator(
+            name=_text(_field(generator, "name")),
+            version=_text(_field(generator, "version")),
+            params={k: v for k, v in params.items() if isinstance(k, str)} if isinstance(params, dict) else {},
+        )
         sources = _field(self.meta, "source")
         self.sources = [
             Provenance(

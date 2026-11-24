@@ -43,6 +43,12 @@ class Metadata(unittest.TestCase):
         self.assertIsNone(source.retrieved)
         self.assertIsNone(source.modified)
 
+    def test_names_what_wrote_a_file_and_how(self):
+        generator = MokujiIndex.open(fixture_source("tiny")).generator
+        self.assertEqual((generator.name, generator.version), ("build_fixtures.py", "0.1"))
+        self.assertEqual(generator.params["terms_per_block"], 2)
+        self.assertEqual(generator.params["payload"], "opaque")
+
     def test_holds_the_tokenizer_the_index_declares(self):
         self.assertEqual(MokujiIndex.open(fixture_source("dict")).tokenizer_id, "identity")
         self.assertEqual(MokujiIndex.open(fixture_source("names")).tokenizer_id, "name-list")

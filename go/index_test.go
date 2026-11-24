@@ -78,6 +78,13 @@ func TestMetadata(t *testing.T) {
 		t.Fatalf("%+v", source)
 	}
 
+	// What wrote it, and how: the writer's parameters, and any a pipeline
+	// added beside them.
+	if g := tiny.Generator; g.Name != "build_fixtures.py" || g.Version != "0.1" ||
+		g.Params["terms_per_block"] != uint64(2) || g.Params["payload"] != "opaque" {
+		t.Fatalf("%+v", g)
+	}
+
 	if id := openFixture(t, "dict").TokenizerID; id != "identity" {
 		t.Fatal(id)
 	}

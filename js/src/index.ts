@@ -9,6 +9,7 @@ export type {
   Column,
   Completion,
   Completions,
+  Generator,
   Hit,
   Manifest,
   ManifestSegment,

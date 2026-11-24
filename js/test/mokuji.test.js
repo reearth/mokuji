@@ -194,6 +194,14 @@ test("names what a file was derived from", async () => {
   assert.equal(source.modified, null);
 });
 
+test("names what wrote a file, and how", async () => {
+  const { generator } = await MokujiIndex.open(await fileSource("tiny"));
+  assert.equal(generator.name, "build_fixtures.py");
+  assert.equal(generator.version, "0.1");
+  assert.equal(generator.params.terms_per_block, 2);
+  assert.equal(generator.params.payload, "opaque");
+});
+
 test("reads a deflated file", async () => {
   // The fixtures the other implementations reproduce byte for byte are stored
   // raw, so without this the browser's decompression is never exercised.

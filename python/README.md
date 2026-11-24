@@ -54,7 +54,9 @@ come out in either order between the two.
 
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost since opening or `reset_stats()` — and `index.attribution` /
-`index.license`, the credit the file states.
+`index.license`, the credit the file states. `index.generator` is the writer
+and every build parameter it records, including any a pipeline added to check
+when it opens the file.
 
 ### Reading a file on hand
 

@@ -100,6 +100,17 @@ type TermEntry struct {
 
 // Provenance is one artifact an index was derived from, as its metadata
 // records it (SPEC.md §6). Absent strings are empty.
+// Generator is the writer a file records, and the parameters it was built
+// with (SPEC.md §6).
+type Generator struct {
+	Name    string
+	Version string
+	// Every build parameter, by name, with values as the metadata decodes
+	// them (see decodeCBOR for the Go types). A pipeline may record its own
+	// here, beside the writer's, and check them when it opens the file.
+	Params map[string]any
+}
+
 type Provenance struct {
 	// `<algorithm>:<lowercase hex>`.
 	ContentHash string
@@ -150,6 +161,8 @@ type Index struct {
 	License     string
 	Attribution string
 	Sources     []Provenance
+	// What wrote the file, and how.
+	Generator Generator
 
 	// Resident sections, nil when the file has none.
 	DocLengths  []uint64
@@ -544,6 +557,19 @@ func (ix *Index) readMeta() {
 	}
 	ix.License = text(field(ix.Meta, "license"))
 	ix.Attribution = text(field(ix.Meta, "attribution"))
+	generator := field(ix.Meta, "generator")
+	ix.Generator = Generator{
+		Name:    text(field(generator, "name")),
+		Version: text(field(generator, "version")),
+		Params:  map[string]any{},
+	}
+	if params, ok := field(generator, "params").(map[any]any); ok {
+		for key, value := range params {
+			if name, ok := key.(string); ok {
+				ix.Generator.Params[name] = value
+			}
+		}
+	}
 	if sources, ok := field(ix.Meta, "source").([]any); ok {
 		for _, s := range sources {
 			ix.Sources = append(ix.Sources, Provenance{

@@ -45,6 +45,15 @@ export interface Postings {
     freqs: number[];
 }
 /** One artifact an index was derived from, as its metadata records it (SPEC.md §6). */
+/** The writer a file records, and the parameters it was built with
+ * (SPEC.md §6). */
+export interface Generator {
+    name: string | null;
+    version: string | null;
+    /** Every build parameter, by name. A pipeline may record its own here,
+     * beside the writer's, and check them when it opens the file. */
+    params: Record<string, CborValue>;
+}
 export interface Provenance {
     /** `<algorithm>:<lowercase hex>`. */
     contentHash: string;
@@ -141,6 +150,8 @@ export declare class MokujiIndex {
     attribution: string | null;
     /** What it was derived from, and when (SPEC.md §6). */
     sources: Provenance[];
+    /** What wrote it, and how. */
+    generator: Generator;
     /** What a query goes through before it is looked up. */
     normalize: Normalize;
     docLengths: number[] | null;

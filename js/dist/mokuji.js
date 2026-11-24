@@ -342,6 +342,8 @@ export class MokujiIndex {
     attribution;
     /** What it was derived from, and when (SPEC.md §6). */
     sources;
+    /** What wrote it, and how. */
+    generator;
     /** What a query goes through before it is looked up. */
     normalize;
     docLengths;
@@ -514,6 +516,15 @@ export class MokujiIndex {
         // page that shows results owes the credit, so it is kept at hand.
         index.license = text(field(index.meta, "license"));
         index.attribution = text(field(index.meta, "attribution"));
+        const generator = field(index.meta, "generator");
+        const params = field(generator, "params");
+        index.generator = {
+            name: text(field(generator, "name")),
+            version: text(field(generator, "version")),
+            params: params !== null && typeof params === "object" && !Array.isArray(params) && !(params instanceof Uint8Array)
+                ? { ...params }
+                : {},
+        };
         const sources = field(index.meta, "source");
         index.sources = (Array.isArray(sources) ? sources : []).map((entry) => ({
             contentHash: text(field(entry, "content_hash")) ?? "",

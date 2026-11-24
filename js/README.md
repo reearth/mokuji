@@ -57,6 +57,8 @@ The scores agree with `mokuji search`'s and the Python reader's to about
 documents whose scores differ by less than that may come out in either order.
 Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
+`index.generator` is the writer and every build parameter it records,
+including any a pipeline added to check when it opens the file.
 
 ### An address typed past its key
 
