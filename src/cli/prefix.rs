@@ -21,6 +21,7 @@ pub fn run(path: &Path, query: &str, limit: usize, resident: bool) -> Result<(),
         &reader,
         OpenOptions {
             resident_dictionary: resident,
+            ..OpenOptions::default()
         },
     ))?;
     let open_reads = reader.reads();

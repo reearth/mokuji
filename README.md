@@ -68,10 +68,11 @@ languages, with the same API.
 
 | | Contents |
 |---|---|
-| `mokuji` (`src/lib.rs`) | Search a file in what a person types: `lookup`, `complete`, `search` |
+| `mokuji` (`src/lib.rs`) | Search a file in what a person types: `lookup`, `complete`, `search`, `rank`; and `MokujiCollection`, a manifest's segments asked as one |
+| `mokuji::query` | Questions of more than one lookup: `lookup_prefix`, which falls back to the term a query runs past, and `locate`, the polygons holding a point in a file of geohash coverings |
 | `mokuji::format` | Byte layout: header, section table, codec identifiers. No I/O |
 | `mokuji::codec` | Integer and string codecs used inside blocks |
-| `mokuji::read` | `RangeReader`, a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
+| `mokuji::read` | `RangeReader` and `BlockingRangeReader`, the two ways to hand the reader bytes (an HTTP client is the caller's: see the crate docs), a `FileReader` that reads a file on disk a range at a time, and the reader for each section |
 | `mokuji::write` | Deterministic writer |
 | `mokuji::meta` | The metadata section, and the canonical CBOR it is written in |
 | `mokuji::tokenize` | The tokenizers registered in `TOKENIZERS.md`, which a writer builds with and a reader searches with |
@@ -310,6 +311,10 @@ python3 -m unittest discover -s python/tests          # the Python reader
 
 CI runs these, with `cargo fmt --check` and `cargo clippy`, the library
 again without the `cli` feature, and a build of `tools/`.
+
+A feature is added to the Rust crate and to the readers in TypeScript, Python
+and Go together, with the same tests in each; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 A `v*` tag releases the command and publishes the packages; see
 [RELEASING.md](RELEASING.md).

@@ -31,6 +31,8 @@ pub enum Error {
     },
     /// A segment file is malformed.
     Format(crate::format::Error),
+    /// A question named a segment past the last one.
+    NoSegment(usize),
 }
 
 impl std::fmt::Display for Error {
@@ -39,6 +41,7 @@ impl std::fmt::Display for Error {
             Error::Manifest(detail) => write!(f, "manifest: {detail}"),
             Error::Segment { path, detail } => write!(f, "segment {path}: {detail}"),
             Error::Format(err) => write!(f, "{err}"),
+            Error::NoSegment(n) => write!(f, "the collection has no segment {n}"),
         }
     }
 }

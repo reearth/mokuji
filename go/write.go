@@ -15,7 +15,6 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"math/bits"
@@ -139,7 +138,15 @@ func (o WriteOptions) Params() map[string]any {
 	return params
 }
 
-func buildError(msg string) error { return errors.New("mokuji: " + msg) }
+// BuildError is what a Builder, or Metadata.Encode, refuses: input out of
+// order, a value the metadata cannot hold, options that make no file.
+type BuildError struct {
+	Msg string
+}
+
+func (e *BuildError) Error() string { return "mokuji: " + e.Msg }
+
+func buildError(msg string) error { return &BuildError{Msg: msg} }
 
 // Builder builds a Mokuji file from documents and a sorted stream of
 // postings.

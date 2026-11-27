@@ -51,6 +51,17 @@ ranking and before any payload is read, so that discarding a document costs no
 payload. Numbered by kind, a corpus is filtered by kind with an ID range:
 `{ filter: (doc) => doc < 1200 }`.
 
+`phrase` asks for the terms at consecutive positions, in the order they were
+typed, in a file that carries positions; it is tested after `filter`, at one
+read per term. `rank` is the half of `search` before any payload: every
+document the terms match, best first, for a caller that decides what to show
+by something of its own.
+
+```ts
+await index.search("tokyo chuo", { phrase: true });
+const { ranked } = await index.rank(["tokyo", "chuo"]); // [{ doc, score }, …]
+```
+
 The scores agree with `mokuji search`'s and the Python reader's to about
 1e-12, not to the last bit. JavaScript's `Math.log` is not correctly rounded
 (V8 is one unit in the last place off for about one input in seventy), so two
@@ -59,6 +70,34 @@ Every result is accompanied by `index.stats` — the range requests and bytes it
 cost — and `index.attribution` / `index.license`, the credit the file states.
 `index.generator` is the writer and every build parameter it records,
 including any a pipeline added to check when it opens the file.
+
+`index.generation`, `index.attrs` (the application-defined additions, or
+null) and `index.tokenizerParams` are read from the metadata as well;
+`decodeCbor` decodes the metadata's encoding for a section of one's own, whose
+identifiers are exported as `SECTION_META` and the rest.
+
+A file, a manifest or a query the reader refuses throws `MokujiError`
+(`NoColumnError`, with its `column`, for a boost the file has no column for);
+the builder throws `BuildError`. Anything else is a bug.
+
+### A collection
+
+`collection.search` is the documents holding every term the query becomes,
+in collection order and unranked, since scores do not compare across
+segments (MANIFEST.md §3.3): `{ terms, matched, hits, payloads }` for the
+first `limit`. `parseManifest` reads a manifest's JSON with the checks
+opening one makes, `within` restricts it to some countries, and
+`manifestToJson` writes it down byte for byte as `mokuji` does.
+
+`JSON.parse` cannot tell everything the Rust reader can. Two manifests it
+refuses read here: an integer written as a float (`"length": 1.0`), and a key
+given twice, of which the last counts. One it reads is refused here: a length
+or generation above 2^53, which a JavaScript number cannot hold exactly.
+
+```ts
+const { hits, payloads } = await collection.search("tokyo", 10);
+const manifest = within(parseManifest(text), ["JP"]);
+```
 
 ### An address typed past its key
 
@@ -109,6 +148,18 @@ const index = await MokujiIndex.open(await openAsBlob("./postal.mokuji"));
 
 ```ts
 const index = await MokujiIndex.open(input.files[0]);
+```
+
+`open` takes options. `residentDictionary` holds the whole term dictionary,
+compressed, at one more read when opening, after which looking a term up
+costs no read. `fetch` stands in for the global one, for headers, credentials
+or a test; `MokujiCollection.open` takes it too.
+
+```ts
+const index = await MokujiIndex.open(url, {
+  residentDictionary: true,
+  fetch: (input, init) => fetch(input, { ...init, credentials: "include" }),
+});
 ```
 
 ### Reading from something else

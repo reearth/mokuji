@@ -1,7 +1,7 @@
 //! Querying a collection as the concatenation of its segments.
 
 use crate::meta::Meta;
-use crate::read::{Index, Payload, RangeReader};
+use crate::read::{Index, OpenOptions, Payload, RangeReader};
 
 use crate::manifest::{Error, Manifest, Result};
 
@@ -49,6 +49,15 @@ impl<R: RangeReader> Collection<R> {
     /// documents it has — and that every segment was tokenized the same way,
     /// since one query has to mean the same thing in all of them.
     pub async fn open(manifest: &Manifest, readers: Vec<R>) -> Result<Self> {
+        Self::open_with(manifest, readers, OpenOptions::default()).await
+    }
+
+    /// [`Collection::open`], opening each segment with `options`.
+    pub async fn open_with(
+        manifest: &Manifest,
+        readers: Vec<R>,
+        options: OpenOptions,
+    ) -> Result<Self> {
         if readers.len() != manifest.segments.len() {
             return Err(Error::Manifest(format!(
                 "{} segments listed and {} readers given",
@@ -70,7 +79,7 @@ impl<R: RangeReader> Collection<R> {
                     segment.length
                 )));
             }
-            let index = Index::open(reader).await?;
+            let index = Index::open_with(reader, options).await?;
             if let Some(&last) = segment.deletes.last() {
                 if last >= index.header().num_docs {
                     return Err(fail(format!(
@@ -201,7 +210,23 @@ impl<R: RangeReader> Collection<R> {
     }
 
     async fn complete_in(&self, segment: usize, prefix: &[u8], need: usize) -> Result<Completion> {
-        let member = &self.members[segment];
+        let (live, from_table) = self.live_in(segment, prefix, need).await?;
+        Ok(Completion {
+            hits: live.into_iter().map(|doc| Hit { segment, doc }).collect(),
+            consulted: vec![(segment, from_table)],
+        })
+    }
+
+    /// One segment's first `need` live documents for `prefix`, and whether
+    /// its completions section answered every time it was asked
+    /// (`MANIFEST.md` §3.2).
+    pub async fn live_in(
+        &self,
+        segment: usize,
+        prefix: &[u8],
+        need: usize,
+    ) -> Result<(Vec<u64>, bool)> {
+        let member = self.members.get(segment).ok_or(Error::NoSegment(segment))?;
         // Asked for what is needed; then, if deletes took some of it, for all
         // the segment's entry lists, which answers at no read when the entry
         // lists more than is needed; then for as many again as there are
@@ -212,7 +237,11 @@ impl<R: RangeReader> Collection<R> {
             .map_or(0, |c| c.docs_per_entry as usize);
         let mut from_table = true;
         let mut live = Vec::new();
-        for ask in [need, listed.max(need), need + member.deletes.len()] {
+        for ask in [
+            need,
+            listed.max(need),
+            need.saturating_add(member.deletes.len()),
+        ] {
             let (docs, table) = member.index.complete(prefix, ask).await?;
             from_table &= table;
             live = docs.iter().copied().filter(|&d| member.live(d)).collect();
@@ -221,14 +250,14 @@ impl<R: RangeReader> Collection<R> {
             }
         }
         live.truncate(need);
-        Ok(Completion {
-            hits: live.into_iter().map(|doc| Hit { segment, doc }).collect(),
-            consulted: vec![(segment, from_table)],
-        })
+        Ok((live, from_table))
     }
 
     /// Payload for hits, one span per segment so that neighbours share a read.
     pub async fn payloads(&self, hits: &[Hit]) -> Result<Vec<Payload>> {
+        if let Some(hit) = hits.iter().find(|h| h.segment >= self.members.len()) {
+            return Err(Error::NoSegment(hit.segment));
+        }
         let mut out: Vec<Option<Payload>> = vec![None; hits.len()];
         for (segment, member) in self.members.iter().enumerate() {
             let mut mine: Vec<(usize, u64)> = hits

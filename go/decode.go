@@ -27,6 +27,30 @@ func malformed(format string, args ...any) error {
 
 var errTruncated = &FormatError{Msg: "truncated"}
 
+// NoColumnError is a query that names an attribute column the file does not
+// carry.
+type NoColumnError struct {
+	Name string
+}
+
+func (e *NoColumnError) Error() string {
+	return fmt.Sprintf("mokuji: this index carries no attribute column called %q", e.Name)
+}
+
+// DecodeCBOR decodes CBOR as the metadata section is read (SPEC.md §6), into
+// the types decodeCBOR below gives. One item, and nothing after it: bytes
+// left over are an error, as they are to the Rust reader.
+func DecodeCBOR(data []byte) (any, error) {
+	value, end, err := decodeCBOR(data, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	if end != len(data) {
+		return nil, malformed("trailing bytes after the CBOR item")
+	}
+	return value, nil
+}
+
 // maxUnit is the largest unit this reader will decompress. SPEC.md §5.6 lets a
 // reader refuse a declared length it is unwilling to allocate, and §8 asks it
 // to: the length is read from the file before any of the unit has been

@@ -29,6 +29,7 @@ fn exercise(bytes: Vec<u8>) {
         &reader,
         OpenOptions {
             resident_dictionary: true,
+            ..OpenOptions::default()
         },
     )) else {
         return;
@@ -38,6 +39,17 @@ fn exercise(bytes: Vec<u8>) {
     let _ = index.meta();
     let _ = block_on(index.search(&[b"chiyoda", b"tokyo"]));
     let _ = block_on(index.search(&[b""]));
+    // A phrase trusts the positions to number the postings' documents, which
+    // a damaged file need not.
+    for (any, terms) in [(false, ["tokyo", "chuo"]), (true, ["chuo", "chuo"])] {
+        let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
+        let options = mokuji::SearchOptions {
+            any,
+            phrase: true,
+            ..mokuji::SearchOptions::default()
+        };
+        let _ = block_on(mokuji::rank(&index, &terms, None, &options));
+    }
 
     if let Ok(matches) = block_on(index.prefix(b"", 1000)) {
         let entries: Vec<_> = matches.iter().map(|(_, entry)| entry.clone()).collect();

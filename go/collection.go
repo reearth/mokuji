@@ -2,7 +2,6 @@ package mokuji
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 )
 
 // Manifest is a collection's manifest (MANIFEST.md §2). Keys it does not
@@ -107,11 +105,11 @@ func OpenCollection(ctx context.Context, location string, options *CollectionOpt
 	if err != nil {
 		return nil, err
 	}
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	manifest, err := ParseManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("mokuji: %s is not a manifest: %w", location, err)
 	}
-	return NewCollection(ctx, &manifest, location, options)
+	return NewCollection(ctx, manifest, location, options)
 }
 
 func fetch(ctx context.Context, location string) ([]byte, error) {
@@ -141,21 +139,14 @@ func NewCollection(ctx context.Context, manifest *Manifest, base string, options
 	if options == nil {
 		options = &CollectionOptions{}
 	}
-	if major, _, _ := strings.Cut(manifest.MokujiManifest, "."); major != "0" {
-		return nil, malformed("manifest version %q is not one this reader implements", manifest.MokujiManifest)
+	// The checks ParseManifest makes, for a manifest that did not come
+	// through it.
+	if err := manifest.check(); err != nil {
+		return nil, err
 	}
 	listed := len(manifest.Segments)
 	if options.Countries != nil {
-		kept := *manifest
-		kept.Segments = nil
-		for _, s := range manifest.Segments {
-			if s.Region == nil || slices.ContainsFunc(s.Region.Countries, func(c string) bool {
-				return slices.Contains(options.Countries, c)
-			}) {
-				kept.Segments = append(kept.Segments, s)
-			}
-		}
-		manifest = &kept
+		manifest = manifest.Within(options.Countries)
 	}
 
 	c := &Collection{Manifest: manifest, ManifestSegments: listed}
@@ -285,9 +276,17 @@ func (c *Collection) Attributions() []string {
 	return out
 }
 
-// liveIn is one segment's first `need` live documents: the entry, then all
-// it lists, then as many again as the segment has deletes (MANIFEST.md
-// §3.2).
+// LiveIn is one segment's first `need` live documents for a prefix already
+// normalized, and whether its completions section answered: the entry, then
+// all it lists, then as many again as the segment has deletes (MANIFEST.md
+// §3.2). `at` is the segment's position in the collection.
+func (c *Collection) LiveIn(ctx context.Context, at int, normalized string, need int) ([]int, bool, error) {
+	if at < 0 || at >= len(c.Segments) {
+		return nil, false, noSegment(at)
+	}
+	return c.liveIn(ctx, at, normalized, need)
+}
+
 func (c *Collection) liveIn(ctx context.Context, at int, normalized string, need int) ([]int, bool, error) {
 	index := c.Segments[at]
 	deleted := c.deletes[at]
@@ -367,6 +366,11 @@ func (c *Collection) Candidates(ctx context.Context, typed string, limit int) (*
 // Payloads is the payload of each hit, one span per segment, in the hits'
 // order.
 func (c *Collection) Payloads(ctx context.Context, hits []Hit) ([]string, error) {
+	for _, h := range hits {
+		if h.Segment < 0 || h.Segment >= len(c.Segments) {
+			return nil, noSegment(h.Segment)
+		}
+	}
 	out := make([]string, len(hits))
 	for at, index := range c.Segments {
 		var mine []int
@@ -392,4 +396,88 @@ func (c *Collection) Payloads(ctx context.Context, hits []Hit) ([]string, error)
 		}
 	}
 	return out, nil
+}
+
+func noSegment(at int) error {
+	return fmt.Errorf("mokuji: the collection has no segment %d", at)
+}
+
+// CollectionSearch is what a collection's search found.
+type CollectionSearch struct {
+	// The terms the query became.
+	Terms []string
+	// How many live documents hold every term, across the collection.
+	Matched int
+	// The first `limit` of them, in collection order, and their payloads.
+	Hits     []Hit
+	Payloads []string
+}
+
+// Search is the live documents holding every term the query becomes, in
+// collection order: segments in the manifest's order, documents in each by
+// ID. The query is split by the collection's tokenizer, as Index.Search
+// splits it.
+//
+// Unranked. Scores from different segments are not comparable, since each
+// segment's statistics are its own (MANIFEST.md §3.3), so a caller that ranks
+// across them does so by a score of its own. Each segment is asked on its
+// own, so the cost is the sum of what each costs.
+func (c *Collection) Search(ctx context.Context, query string, limit int) (*CollectionSearch, error) {
+	terms := []string{query}
+	if len(c.Segments) > 0 {
+		terms = c.Segments[0].Split(query)
+	}
+	out := &CollectionSearch{Terms: terms, Hits: []Hit{}}
+	var all []Hit
+	for at, index := range c.Segments {
+		docs, err := intersection(ctx, index, terms)
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range docs {
+			if !c.deletes[at][doc] {
+				all = append(all, Hit{at, doc})
+			}
+		}
+	}
+	out.Matched = len(all)
+	out.Hits = append(out.Hits, all[:min(max(limit, 0), len(all))]...)
+	var err error
+	if out.Payloads, err = c.Payloads(ctx, out.Hits); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// intersection is the documents of one file holding every term, ascending.
+// The terms are looked up one at a time, in the order typed, as the Rust
+// reader does, so that a term the file lacks, or an intersection that has
+// become empty, ends it before the rest cost anything.
+func intersection(ctx context.Context, index *Index, terms []string) ([]int, error) {
+	var matched []int
+	for i, term := range terms {
+		entry, err := index.Exact(ctx, term)
+		if err != nil {
+			return nil, err
+		}
+		if entry == nil {
+			return nil, nil
+		}
+		run, err := index.PostingsSpan(ctx, []TermEntry{*entry})
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			matched = run[0].Docs
+		} else {
+			matched = slices.DeleteFunc(slices.Clone(matched), func(doc int) bool {
+				_, ok := slices.BinarySearch(run[0].Docs, doc)
+				return !ok
+			})
+		}
+		if len(matched) == 0 {
+			return nil, nil
+		}
+	}
+	return matched, nil
 }

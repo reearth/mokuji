@@ -1,5 +1,8 @@
-export { MokujiIndex, MokujiCollection } from "./mokuji.js";
-export type { CborValue, CollectionCompletion, Column, Completion, Completions, Generator, Hit, Manifest, ManifestSegment, Postings, Provenance, RequestInfo, SearchOptions, SearchResult, Source, Stats, TermEntry, } from "./mokuji.js";
+export { MokujiIndex, MokujiCollection, SECTION_COMPLETIONS, SECTION_DOC_ATTRIBUTES, SECTION_DOC_LENGTHS, SECTION_META, SECTION_PAYLOAD, SECTION_PAYLOAD_OFFSETS, SECTION_POSITIONS, SECTION_POSTINGS, SECTION_TERM_BLOCKS, SECTION_TERM_BLOCK_OFFSETS, SECTION_TERM_INDEX, decodeCbor, } from "./mokuji.js";
+export { BuildError, MokujiError, NoColumnError } from "./errors.js";
+export { MANIFEST_VERSION, checkManifest, manifestToJson, parseManifest, within } from "./manifest.js";
+export type { Manifest, ManifestSegment } from "./manifest.js";
+export type { CborValue, CollectionCompletion, CollectionSearch, Column, Completion, Completions, Generator, Hit, OpenOptions, Postings, Provenance, Ranking, RequestInfo, SearchOptions, SearchResult, Source, Stats, TermEntry, } from "./mokuji.js";
 export { contains, decodeRings, fieldsOf, geohash, locate, lookupPrefix, precisionsOf, scaleOf, } from "./query.js";
 export type { Located, Polygon, PrefixHit, PrefixMatch, Rings } from "./query.js";
 export { SPLITTERS, TOKENIZERS, bigram, jaAddress, nameList } from "./tokenizers.js";

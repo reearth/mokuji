@@ -232,24 +232,7 @@ pub fn run(
 
     // Recorded only when there are any: an empty list is noise in a record
     // whose whole job is to be exact.
-    let mut params = vec![
-        (
-            "terms_per_block",
-            Value::Uint(options.terms_per_block as u64),
-        ),
-        (
-            "docs_per_payload_block",
-            Value::Uint(u64::from(options.docs_per_payload_block)),
-        ),
-        ("has_freqs", Value::Uint(u64::from(options.has_freqs))),
-        ("payload", Value::Text(describe(options.payload))),
-        ("doc_lengths", Value::Uint(u64::from(options.doc_lengths))),
-        ("positions", Value::Uint(u64::from(options.positions))),
-        (
-            "inline_postings",
-            Value::Uint(options.inline_postings as u64),
-        ),
-    ];
+    let mut params = options.recorded_params();
     if !declared.is_empty() {
         params.push((
             "attributes",
@@ -264,25 +247,12 @@ pub fn run(
     if let Some(name) = order_by {
         params.push(("order_by", Value::Text(name.to_string())));
     }
-    if let Some(c) = options.completions {
-        // Which documents an entry lists is this writer's choice, and the
-        // file has to say what it was: the smallest document IDs, which rank
-        // by whatever the documents were numbered by.
-        params.push((
-            "completions",
-            Value::Text(format!(
-                "{},{},{} by document order",
-                c.min_terms, c.max_span, c.docs_per_entry
-            )),
-        ));
-    }
-
     let meta = Meta {
         generation,
         sources,
         generator: Generator {
-            name: "mokuji".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
+            name: crate::write::GENERATOR_NAME.into(),
+            version: crate::write::VERSION.into(),
             // Everything the writer branches on. SPEC.md §3.4 requires these
             // to be sufficient, with the source hash, to rebuild the file.
             params: cbor_map(params),
@@ -347,21 +317,6 @@ pub fn run(
         }
     }
     Ok(())
-}
-
-/// How the payload encoding is recorded in the metadata.
-///
-/// A reader does not need this — the payload offsets section declares the codec
-/// — but a rebuild does. And where the scale is a decision about precision, as
-/// it is for coordinates, recording it turns a shortened copy into one that
-/// says it was shortened.
-fn describe(payload: PayloadEncoding) -> String {
-    match payload {
-        PayloadEncoding::Opaque => "opaque".to_string(),
-        PayloadEncoding::Ints { scale_exponent, .. } => {
-            format!("ints:{}", scale_exponent.unsigned_abs())
-        }
-    }
 }
 
 /// The documents in term order, if this corpus is a dictionary.

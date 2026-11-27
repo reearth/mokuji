@@ -521,10 +521,12 @@ func TestACollectionOpenedByPathChecksLengths(t *testing.T) {
 }
 
 func TestACollectionRejectsASegmentOfAnotherLength(t *testing.T) {
-	manifest := Manifest{MokujiManifest: "0.1", Segments: []ManifestSegment{{Path: "names.mokuji", Length: 1}}}
+	manifest := Manifest{MokujiManifest: "0.1", Segments: []ManifestSegment{
+		{Path: "names.mokuji", ContentHash: "sha2-256:" + strings.Repeat("0", 64), Length: 1},
+	}}
 	_, err := NewCollection(context.Background(), &manifest, filepath.Join(fixtures, "collection.json"), nil)
 	var format *FormatError
-	if !errors.As(err, &format) {
+	if !errors.As(err, &format) || !strings.Contains(err.Error(), "not the 1 the manifest says") {
 		t.Fatalf("got %v", err)
 	}
 }

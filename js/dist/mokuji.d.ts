@@ -1,4 +1,16 @@
+import { type Manifest } from "./manifest.js";
 import { type Normalize } from "./tokenizers.js";
+export declare const SECTION_META: 1;
+export declare const SECTION_TERM_INDEX: 16;
+export declare const SECTION_TERM_BLOCKS: 17;
+export declare const SECTION_TERM_BLOCK_OFFSETS: 18;
+export declare const SECTION_COMPLETIONS: 19;
+export declare const SECTION_POSTINGS: 32;
+export declare const SECTION_PAYLOAD: 48;
+export declare const SECTION_PAYLOAD_OFFSETS: 49;
+export declare const SECTION_DOC_LENGTHS: 50;
+export declare const SECTION_DOC_ATTRIBUTES: 51;
+export declare const SECTION_POSITIONS: 96;
 /**
  * Where a file's bytes come from: anything that returns a range of them.
  *
@@ -10,6 +22,17 @@ import { type Normalize } from "./tokenizers.js";
  */
 export interface Source {
     read(offset: number, length: number): Promise<Uint8Array> | Uint8Array;
+}
+/** How to open a file. */
+export interface OpenOptions {
+    /** Hold the whole term dictionary, compressed, and decompress one block per
+     * lookup instead of fetching it: one more read when opening, the
+     * dictionary's stored size in memory, and no read for a term lookup after
+     * (SPEC.md §4.2). */
+    residentDictionary?: boolean;
+    /** What fetches a URL in place of the global `fetch`: to add headers or
+     * credentials, or to stand in for a server in a test. */
+    fetch?: typeof fetch;
 }
 /** What a query cost, so a page can show it rather than claim it. */
 export interface Stats {
@@ -90,6 +113,27 @@ export interface SearchOptions {
      * ranked and before any payload is read, so that discarding a document costs
      * no payload. `matched` then counts what it kept. */
     filter?: (doc: number) => boolean;
+    /** Require the terms at consecutive positions, in the order they were
+     * typed; the file must carry positions. Tested after `filter`, at one read
+     * per term whose postings were read. */
+    phrase?: boolean;
+}
+/** Every document a set of terms matches, best first, and what finding them
+ * read: the half of a search before any payload. */
+export interface Ranking {
+    /** Best first; null scores when the file carries no document lengths, in
+     * document order. */
+    ranked: {
+        doc: number;
+        score: number | null;
+    }[];
+    /** The terms whose postings were read, with how many documents each names. */
+    probed: {
+        term: string;
+        docFreq: number;
+    }[];
+    /** Terms present but not read, because `probe` left them out. */
+    skipped: number;
 }
 /** What `search` found, and what deciding it took. */
 export interface SearchResult {
@@ -122,8 +166,10 @@ interface Section {
     offset: number;
     length: number;
 }
-/** The metadata section's CBOR, decoded; exported for the tests. */
-export declare const decodeCbor: (bytes: Uint8Array) => CborValue;
+/** One CBOR item, decoded as the metadata section is (the types `CborValue`
+ * names), with nothing after it: bytes left over are refused, as the Rust and
+ * Python decoders refuse them. */
+export declare function decodeCbor(bytes: Uint8Array): CborValue;
 /** One open Mokuji file: its resident set held, everything else read on demand. */
 export declare class MokujiIndex {
     /** Everything a query costs, so the page can show it rather than claim it. */
@@ -137,13 +183,28 @@ export declare class MokujiIndex {
     onRequest: ((request: RequestInfo) => void) | null;
     /** The file's length, once a response has said. */
     fileLength: number | undefined;
+    /** What fetches a URL; the global `fetch` unless `open` was given one. */
+    private readonly fetchUrl;
+    /** The whole term blocks section and where it starts, when it is held
+     * rather than fetched (`residentDictionary`). */
+    private heldTermBlocks;
     flags: number;
     numDocs: number;
     sumDoclen: number;
     sections: Map<number, Section>;
     /** The metadata section, decoded (SPEC.md §6). */
     meta: CborValue;
+    /** Which state of the index this is: a new index is a new generation. */
+    generation: number;
+    /** The application-defined additions (`attrs`), or null when there are none. */
+    attrs: {
+        [key: string]: CborValue;
+    } | null;
     tokenizerId: string;
+    /** The tokenizer's parameters, empty when the file records none. */
+    tokenizerParams: {
+        [key: string]: CborValue;
+    };
     /** The index's license, as an SPDX expression, if it states one. */
     license: string | null;
     /** The credit its results carry, if it states one. */
@@ -168,7 +229,7 @@ export declare class MokujiIndex {
      * @param source a URL, a `Blob`, or a `Source` returning bytes — which is
      * what lets the same reader be tested against a file on disk.
      */
-    constructor(source: string | Source | Blob);
+    constructor(source: string | Source | Blob, options?: OpenOptions);
     resetStats(): void;
     /**
      * `length` bytes at `offset`. A range that runs past the end of the file is
@@ -180,7 +241,7 @@ export declare class MokujiIndex {
     private fetchRange;
     unit(bytes: Uint8Array, codec: number): Promise<Uint8Array>;
     private section;
-    static open(source: string | Source | Blob): Promise<MokujiIndex>;
+    static open(source: string | Source | Blob, options?: OpenOptions): Promise<MokujiIndex>;
     /** Where block `i` of section `id` is, from that section's offsets, which
      * are checked to lie within it before they are used (SPEC.md §8). */
     private offsetPair;
@@ -196,6 +257,9 @@ export declare class MokujiIndex {
     /** Several dictionary blocks, decoded, a request for each run of neighbours. */
     termBlocks(ordinals: Iterable<number>): Promise<Map<number, TermEntry[]>>;
     termBlock(ordinal: number): Promise<TermEntry[]>;
+    /** A block of the held dictionary, which `offsetPair` has already checked
+     * lies within the section. */
+    private heldBlock;
     private decodeTermBlock;
     /** One named column of per-document numbers, or undefined.
      *
@@ -265,6 +329,17 @@ export declare class MokujiIndex {
      * `limit`.
      */
     search(query: string, options?: SearchOptions): Promise<SearchResult>;
+    /** Every document `terms` match, best first, without reading any payload:
+     * the half of `search` before it, for a caller that decides what to show
+     * by something of its own. `terms` are already split by the file's
+     * tokenizer; `limit` is not used. */
+    rank(terms: string[], options?: SearchOptions): Promise<Ranking>;
+    /** The documents in which the terms read occur at consecutive positions, in
+     * the order they were typed: some position `p` at which each term, typed at
+     * `at` in the query, occurs at `p + at`. A document lacking one of them —
+     * possible in a union — is not a phrase. One read per term, a term asked
+     * twice read once. */
+    private phrased;
     /** The first `limit` documents for what has been typed.
      *
      * From the completions section when the prefix has an entry that reaches
@@ -301,26 +376,20 @@ export interface Completion {
     payloads: string[];
     requestsBeforePayload: number;
 }
-/** One segment of a collection, as the manifest lists it (MANIFEST.md §2). */
-export interface ManifestSegment {
-    path: string;
-    content_hash: string;
-    length: number;
-    deletes?: number[];
-    region?: {
-        countries: string[];
-    };
-}
-/** A collection's manifest (MANIFEST.md §2). */
-export interface Manifest {
-    mokuji_manifest: string;
-    generation: number;
-    segments: ManifestSegment[];
-}
 /** One document of a collection: its segment, and its ID there. */
 export interface Hit {
     segment: number;
     doc: number;
+}
+/** What a collection's search found: in collection order, unranked. */
+export interface CollectionSearch {
+    /** The terms the query became. */
+    terms: string[];
+    /** Every live document holding all of them. */
+    matched: number;
+    /** The first `limit`, segment by segment, each in document order. */
+    hits: Hit[];
+    payloads: string[];
 }
 /** What a collection's completion found, and how. */
 export interface CollectionCompletion {
@@ -347,10 +416,13 @@ export declare class MokujiCollection {
     /**
      * Opens the manifest at `url` and every segment it names, at once: they are
      * independent, so opening them costs one round trip however many there are.
-     * `sourceFor(url)` may supply a byte source instead of fetching.
+     * `sourceFor(url)` may supply a byte source instead of fetching, and
+     * `fetch` what fetches the manifest and the segments in place of the global
+     * one. The manifest is checked as `parseManifest` checks it.
      */
-    static open(url: string | Manifest, sourceFor?: (url: string) => string | Source | Blob, { countries }?: {
+    static open(url: string | Manifest, sourceFor?: (url: string) => string | Source | Blob, { countries, fetch: fetchUrl }?: {
         countries?: string[] | null;
+        fetch?: typeof fetch;
     }): Promise<MokujiCollection>;
     resetStats(): void;
     /** Requests and bytes, summed; and the most requests any one segment made. */
@@ -369,6 +441,17 @@ export declare class MokujiCollection {
     /** Every segment's own first `limit`, asked at once, for a caller that
      * ranks across segments by a score of its own (MANIFEST.md §3.3). */
     candidates(typed: string, limit?: number): Promise<CollectionCompletion>;
+    /**
+     * The live documents holding every term the query becomes, in collection
+     * order, and the payload of the first `limit`. Unranked: scores are not
+     * comparable across segments (MANIFEST.md §3.3), so order is the
+     * collection's. Each segment is asked on its own, at what a search of it
+     * alone costs, and the segments at once.
+     */
+    search(query: string, limit?: number): Promise<CollectionSearch>;
+    /** Refuses a segment the collection does not have, rather than reading
+     * past its list or answering nothing for it. */
+    private segmentAt;
     /** Payload for hits, one span per segment, in the hits' order. */
     payloads(hits: Hit[]): Promise<string[]>;
     /** Each segment's credit, once each, for a page that shows results. */

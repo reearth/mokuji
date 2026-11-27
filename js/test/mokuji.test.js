@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { MokujiCollection, MokujiIndex, bigram, jaAddress, nameList } from "../dist/index.js";
+import { MokujiCollection, MokujiError, MokujiIndex, bigram, jaAddress, nameList } from "../dist/index.js";
 
 const CONFORMANCE = fileURLToPath(new URL("../../conformance/", import.meta.url));
 
@@ -443,7 +443,7 @@ for (const testCase of tables.malformed ?? []) {
     // Refused with the reader's own error (SPEC.md §8). A TypeError or a
     // RangeError is the reader tripping over the file rather than refusing it.
     await assert.rejects(askMalformed(testCase), (error) => {
-      assert.ok(error instanceof Error, `${testCase.rule}: threw ${error}`);
+      assert.ok(error instanceof MokujiError, `${testCase.rule}: threw ${error}`);
       assert.ok(
         !(error instanceof TypeError || error instanceof RangeError || error instanceof ReferenceError),
         `${testCase.rule}: ${error.name}: ${error.message}`,

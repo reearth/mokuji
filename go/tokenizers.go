@@ -79,6 +79,18 @@ func KnownTokenizer(id string) bool {
 	return ok
 }
 
+// Normalize is what a query goes through, before it is looked up as a
+// prefix, for the tokenizer id names: what Index.Normalize does for an index
+// that records it. False for an id this reader does not know, with text
+// returned as typed.
+func Normalize(tokenizerID, text string) (string, bool) {
+	t, ok := tokenizers[tokenizerID]
+	if !ok {
+		return text, false
+	}
+	return t.normalize(text), true
+}
+
 func isWhiteSpace(r rune) bool { return unicode.Is(unicode.White_Space, r) }
 
 // isAlphanumeric is `\p{Alphabetic}` or `\p{N}`, what `bigram` keeps.
