@@ -2,7 +2,6 @@ package mokuji
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -73,6 +72,7 @@ type searchOptions struct {
 	lengthNorm float64
 	boost      string
 	filter     func(doc int) bool
+	phrase     bool
 }
 
 // SearchOption changes how Search matches and ranks.
@@ -109,6 +109,44 @@ func Filter(keep func(doc int) bool) SearchOption {
 	return func(o *searchOptions) { o.filter = keep }
 }
 
+// Phrase requires the terms at consecutive positions, in the order they were
+// typed; the file must carry positions.
+//
+// Tested after Filter, and only on the terms whose postings were read: with
+// Probe, the terms left out are not required, but the ones read keep their
+// places in the query. A document lacking a term read fails, with Any too.
+// Each term's positions are read whole, one request per term, once any
+// document survives the match and the filter; when none does, nothing is.
+func Phrase() SearchOption { return func(o *searchOptions) { o.phrase = true } }
+
+func searchDefaults(options []SearchOption) searchOptions {
+	o := searchOptions{limit: 10, probe: -1, lengthNorm: 0.75}
+	for _, option := range options {
+		option(&o)
+	}
+	return o
+}
+
+// RankedDoc is one document Rank matched, with its score when
+// Ranking.Scored.
+type RankedDoc struct {
+	Doc   int
+	Score float64
+}
+
+// Ranking is every document a set of terms matches, best first, and what
+// finding them read: the half of a search before any payload.
+type Ranking struct {
+	Ranked []RankedDoc
+	// The terms whose postings were read.
+	Probed []Probed
+	// Terms present but not read, because the probe left them out.
+	Skipped int
+	// Whether the documents carry scores. An index without document lengths
+	// cannot be ranked, and its documents come in document order.
+	Scored bool
+}
+
 // Search ranks documents by BM25 over the terms the query becomes.
 //
 // The same ranking as `mokuji search` and the other readers:
@@ -121,18 +159,61 @@ func Filter(keep func(doc int) bool) SearchOption {
 // term whose postings are stored as a run, then the payload of the first
 // `limit`.
 func (ix *Index) Search(ctx context.Context, query string, options ...SearchOption) (*SearchResult, error) {
-	o := searchOptions{limit: 10, probe: -1, lengthNorm: 0.75}
-	for _, option := range options {
-		option(&o)
-	}
+	o := searchDefaults(options)
 	terms := ix.Split(query)
+	ranking, err := ix.rank(ctx, terms, o)
+	if err != nil {
+		return nil, err
+	}
+	result := &SearchResult{
+		Terms:   terms,
+		Probed:  ranking.Probed,
+		Skipped: ranking.Skipped,
+		Matched: len(ranking.Ranked),
+		Scored:  ranking.Scored,
+		Results: []Ranked{},
+	}
+	shown := ranking.Ranked[:min(max(o.limit, 0), len(ranking.Ranked))]
+	wanted := make([]int, len(shown))
+	for i, r := range shown {
+		wanted[i] = r.Doc
+	}
+	slices.Sort(wanted)
+	payloads, err := ix.PayloadSpan(ctx, wanted)
+	if err != nil {
+		return nil, err
+	}
+	byDoc := make(map[int]string, len(wanted))
+	for i, doc := range wanted {
+		byDoc[doc] = payloads[i]
+	}
+	for _, r := range shown {
+		result.Results = append(result.Results, Ranked{Doc: r.Doc, Score: r.Score, Payload: byDoc[r.Doc]})
+	}
+	return result, nil
+}
+
+// Rank matches and ranks terms, already split by the file's tokenizer
+// (Index.Split), as Search does, and reads no payload; Limit is ignored. What
+// a caller that decides for itself which payloads to fetch, or that reports
+// what each half of a search cost, builds on.
+func (ix *Index) Rank(ctx context.Context, terms []string, options ...SearchOption) (*Ranking, error) {
+	return ix.rank(ctx, terms, searchDefaults(options))
+}
+
+func (ix *Index) rank(ctx context.Context, terms []string, o searchOptions) (*Ranking, error) {
 	var column *Column
 	if o.boost != "" {
 		if column = ix.Column(o.boost); column == nil {
-			return nil, fmt.Errorf("mokuji: this index carries no attribute column called %q", o.boost)
+			return nil, &NoColumnError{Name: o.boost}
 		}
 	}
-	result := &SearchResult{Terms: terms, Probed: []Probed{}, Results: []Ranked{}}
+	if o.phrase && ix.Flags&flagHasPositions == 0 {
+		return nil, malformed("this index carries no positions, so it cannot test a phrase")
+	}
+	// Scored stays false on the early returns, as Search has always said for
+	// a query that matched nothing before it reached the scoring.
+	result := &Ranking{Ranked: []RankedDoc{}, Probed: []Probed{}}
 	if len(terms) == 0 {
 		return result, nil
 	}
@@ -144,11 +225,13 @@ func (ix *Index) Search(ctx context.Context, query string, options ...SearchOpti
 	type found struct {
 		term  string
 		entry *TermEntry
+		// Where the term is in the query, which a phrase holds it to.
+		at int
 	}
 	var present []found
 	for i, entry := range entries {
 		if entry != nil {
-			present = append(present, found{terms[i], entry})
+			present = append(present, found{terms[i], entry, i})
 		} else if !o.any {
 			// A term nobody wrote down cannot be in an intersection.
 			return result, nil
@@ -210,8 +293,62 @@ func (ix *Index) Search(ctx context.Context, query string, options ...SearchOpti
 	if o.filter != nil {
 		matched = slices.DeleteFunc(matched, func(doc int) bool { return !o.filter(doc) })
 	}
-	result.Matched = len(matched)
-	ranked := make([]Ranked, len(matched))
+	if o.phrase && len(matched) > 0 {
+		// One further read per term, and only here. A term typed twice is
+		// one run of positions, held to both its places.
+		places := make([][][]uint64, len(present))
+		read := map[string][][]uint64{}
+		for i, p := range present {
+			if got, ok := read[p.term]; ok {
+				places[i] = got
+				continue
+			}
+			got, err := ix.Positions(ctx, p.entry, runs[i])
+			if err != nil {
+				return nil, err
+			}
+			// One row per document the postings name, or the rows cannot be
+			// matched to documents at all.
+			if len(got) != len(runs[i].Docs) {
+				return nil, malformed("positions disagree with the postings")
+			}
+			read[p.term], places[i] = got, got
+		}
+		at := func(i, doc int) ([]uint64, bool) {
+			j, ok := slices.BinarySearch(runs[i].Docs, doc)
+			if !ok {
+				return nil, false
+			}
+			return places[i][j], true
+		}
+		matched = slices.DeleteFunc(matched, func(doc int) bool {
+			first, ok := at(0, doc)
+			if !ok {
+				return true
+			}
+			for _, start := range first {
+				// Where the query's first term would be, whether or not it
+				// was read: every term read has to be that far from it.
+				origin := int64(start) - int64(present[0].at)
+				all := true
+				for i := 1; i < len(present) && all; i++ {
+					want := origin + int64(present[i].at)
+					got, ok := at(i, doc)
+					if !ok || want < 0 {
+						all = false
+						break
+					}
+					_, all = slices.BinarySearch(got, uint64(want))
+				}
+				if all {
+					return false
+				}
+			}
+			return true
+		})
+	}
+
+	ranked := make([]RankedDoc, len(matched))
 	for i, doc := range matched {
 		ranked[i].Doc = doc
 	}
@@ -267,25 +404,7 @@ func (ix *Index) Search(ctx context.Context, query string, options ...SearchOpti
 			return ranked[i].Doc < ranked[j].Doc
 		})
 	}
-
-	shown := ranked[:min(max(o.limit, 0), len(ranked))]
-	wanted := make([]int, len(shown))
-	for i, r := range shown {
-		wanted[i] = r.Doc
-	}
-	slices.Sort(wanted)
-	payloads, err := ix.PayloadSpan(ctx, wanted)
-	if err != nil {
-		return nil, err
-	}
-	byDoc := make(map[int]string, len(wanted))
-	for i, doc := range wanted {
-		byDoc[doc] = payloads[i]
-	}
-	for i := range shown {
-		shown[i].Payload = byDoc[shown[i].Doc]
-	}
-	result.Results = shown
+	result.Ranked = ranked
 	return result, nil
 }
 

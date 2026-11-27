@@ -1,5 +1,5 @@
-# What the tests share: where the conformance suite is, and a source over a
-# fixture held in memory, so the reader can be run without a file or a server.
+# What the tests share: where the conformance suite is, and a fixture held in
+# memory, so the reader can be run without a file or a server.
 
 import sys
 import tomllib
@@ -9,6 +9,10 @@ from pathlib import Path
 # installing it: `python3 -m unittest discover -s python/tests`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# A fixture held in memory is read through the reader's own source, as any
+# caller's would be.
+from mokuji import BytesSource  # noqa: E402
+
 CONFORMANCE = Path(__file__).resolve().parents[2] / "conformance"
 FIXTURES = CONFORMANCE / "fixtures"
 REPOSITORY = CONFORMANCE.parent
@@ -16,17 +20,6 @@ REPOSITORY = CONFORMANCE.parent
 
 def fixture_bytes(name):
     return (FIXTURES / f"{name}.mokuji").read_bytes()
-
-
-class BytesSource:
-    """A byte source over bytes in memory, which counts nothing itself: the
-    reader's own count is what the cases check."""
-
-    def __init__(self, data):
-        self.data = data
-
-    def read(self, offset, length):
-        return self.data[offset : offset + length]
 
 
 def fixture_source(name):

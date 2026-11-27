@@ -18,3 +18,9 @@
 mod builder;
 
 pub use builder::{Builder, Column, Completions, Options, PayloadEncoding};
+
+/// The name this writer records as `generator.name` (`SPEC.md` §6).
+pub const GENERATOR_NAME: &str = "mokuji";
+
+/// The version this writer records as `generator.version`: the crate's.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

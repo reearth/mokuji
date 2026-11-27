@@ -8,6 +8,8 @@
 // It bundles no decompressor. The required codec is raw deflate precisely so
 // that a page can use DecompressionStream and stay this small.
 
+import { MokujiError, NoColumnError } from "./errors.js";
+import { checkManifest, parseManifest, within, type Manifest } from "./manifest.js";
 import { SPLITTERS, TOKENIZERS, type Normalize } from "./tokenizers.js";
 
 const MAGIC = "MOKUJI\u0000\u0000";
@@ -40,6 +42,20 @@ const SECTION = {
   POSITIONS: 0x0060,
 } as const;
 
+// Section identifiers (SPEC.md §5), for a caller that reads a section of its
+// own or writes one. The same names the Go module exports.
+export const SECTION_META = SECTION.META;
+export const SECTION_TERM_INDEX = SECTION.TERM_INDEX;
+export const SECTION_TERM_BLOCKS = SECTION.TERM_BLOCKS;
+export const SECTION_TERM_BLOCK_OFFSETS = SECTION.TERM_BLOCK_OFFSETS;
+export const SECTION_COMPLETIONS = SECTION.COMPLETIONS;
+export const SECTION_POSTINGS = SECTION.POSTINGS;
+export const SECTION_PAYLOAD = SECTION.PAYLOAD;
+export const SECTION_PAYLOAD_OFFSETS = SECTION.PAYLOAD_OFFSETS;
+export const SECTION_DOC_LENGTHS = SECTION.DOC_LENGTHS;
+export const SECTION_DOC_ATTRIBUTES = SECTION.DOC_ATTRIBUTES;
+export const SECTION_POSITIONS = SECTION.POSITIONS;
+
 const CODEC_RAW = 0;
 const CODEC_DEFLATE = 1;
 
@@ -64,6 +80,18 @@ export interface Source {
 /** Whether `source` is a Blob, in a runtime that has them (every current one). */
 function isBlob(source: unknown): source is Blob {
   return typeof Blob !== "undefined" && source instanceof Blob;
+}
+
+/** How to open a file. */
+export interface OpenOptions {
+  /** Hold the whole term dictionary, compressed, and decompress one block per
+   * lookup instead of fetching it: one more read when opening, the
+   * dictionary's stored size in memory, and no read for a term lookup after
+   * (SPEC.md §4.2). */
+  residentDictionary?: boolean;
+  /** What fetches a URL in place of the global `fetch`: to add headers or
+   * credentials, or to stand in for a server in a test. */
+  fetch?: typeof fetch;
 }
 
 /** What a query cost, so a page can show it rather than claim it. */
@@ -158,6 +186,22 @@ export interface SearchOptions {
    * ranked and before any payload is read, so that discarding a document costs
    * no payload. `matched` then counts what it kept. */
   filter?: (doc: number) => boolean;
+  /** Require the terms at consecutive positions, in the order they were
+   * typed; the file must carry positions. Tested after `filter`, at one read
+   * per term whose postings were read. */
+  phrase?: boolean;
+}
+
+/** Every document a set of terms matches, best first, and what finding them
+ * read: the half of a search before any payload. */
+export interface Ranking {
+  /** Best first; null scores when the file carries no document lengths, in
+   * document order. */
+  ranked: { doc: number; score: number | null }[];
+  /** The terms whose postings were read, with how many documents each names. */
+  probed: { term: string; docFreq: number }[];
+  /** Terms present but not read, because `probe` left them out. */
+  skipped: number;
 }
 
 /** What `search` found, and what deciding it took. */
@@ -219,8 +263,19 @@ const encoder = new TextEncoder();
 // not check that the encoding is canonical; a page wants to know where a file
 // came from, and checking that it was written correctly is `mokuji verify`'s
 // job.
-function cbor(bytes: Uint8Array, pos = 0): [CborValue, number] {
-  const view = new DataView(bytes.buffer, bytes.byteOffset);
+//
+// The section is untrusted (SPEC.md §8): every read is checked against the
+// bytes there are, and a declared length or count against what the rest of
+// the section could hold — each item takes at least a byte — before anything
+// is sized by it, so that a few bytes cannot ask for gigabytes. Nesting is
+// bounded as the Python reader bounds it.
+function cbor(bytes: Uint8Array, pos = 0, depth = 0): [CborValue, number] {
+  if (depth > 64) throw new MokujiError("metadata is nested too deeply");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+  const need = (n: number) => {
+    if (pos + n > bytes.length) throw new MokujiError("truncated metadata");
+  };
+  need(1);
   const initial = bytes[pos]!;
   const major = initial >> 5;
   const small = initial & 0x1f;
@@ -230,45 +285,62 @@ function cbor(bytes: Uint8Array, pos = 0): [CborValue, number] {
     if (small === 20) return [false, pos + 1];
     if (small === 21) return [true, pos + 1];
     if (small === 22 || small === 23) return [null, pos + 1];
-    if (small === 25) return [float16(view.getUint16(pos + 1)), pos + 3];
-    if (small === 26) return [view.getFloat32(pos + 1), pos + 5];
-    if (small === 27) return [view.getFloat64(pos + 1), pos + 9];
     if (small < 24) return [null, pos + 1];
-    if (small === 24) return [null, pos + 2];
-    throw new Error("metadata uses a reserved or indefinite CBOR simple value");
+    if (small === 24) {
+      need(2);
+      return [null, pos + 2];
+    }
+    if (small === 25) {
+      need(3);
+      return [float16(view.getUint16(pos + 1)), pos + 3];
+    }
+    if (small === 26) {
+      need(5);
+      return [view.getFloat32(pos + 1), pos + 5];
+    }
+    if (small === 27) {
+      need(9);
+      return [view.getFloat64(pos + 1), pos + 9];
+    }
+    throw new MokujiError("metadata uses a reserved or indefinite CBOR simple value");
   }
 
   let argument: number;
   if (small < 24) [argument, pos] = [small, pos + 1];
-  else if (small === 24) [argument, pos] = [bytes[pos + 1]!, pos + 2];
-  else if (small === 25) [argument, pos] = [view.getUint16(pos + 1), pos + 3];
-  else if (small === 26) [argument, pos] = [view.getUint32(pos + 1), pos + 5];
-  else if (small === 27) [argument, pos] = [Number(view.getBigUint64(pos + 1)), pos + 9];
-  else throw new Error("metadata uses an indefinite or reserved length");
+  else if (small === 24) (need(2), ([argument, pos] = [bytes[pos + 1]!, pos + 2]));
+  else if (small === 25) (need(3), ([argument, pos] = [view.getUint16(pos + 1), pos + 3]));
+  else if (small === 26) (need(5), ([argument, pos] = [view.getUint32(pos + 1), pos + 5]));
+  else if (small === 27) (need(9), ([argument, pos] = [Number(view.getBigUint64(pos + 1)), pos + 9]));
+  else throw new MokujiError("metadata uses an indefinite or reserved length");
 
+  const left = bytes.length - pos;
   switch (major) {
     case 0:
       return [argument, pos];
     case 1:
       return [-1 - argument, pos];
     case 2:
+      if (argument > left) throw new MokujiError("truncated metadata");
       return [bytes.slice(pos, pos + argument), pos + argument];
     case 3:
+      if (argument > left) throw new MokujiError("truncated metadata");
       return [utf8.decode(bytes.subarray(pos, pos + argument)), pos + argument];
     case 4: {
+      if (argument > left) throw new MokujiError("truncated metadata");
       const items: CborValue[] = [];
       for (let i = 0; i < argument; i++) {
-        const [item, next] = cbor(bytes, pos);
+        const [item, next] = cbor(bytes, pos, depth + 1);
         items.push(item);
         pos = next;
       }
       return [items, pos];
     }
     case 5: {
+      if (argument * 2 > left) throw new MokujiError("truncated metadata");
       const map: { [key: string]: CborValue } = {};
       for (let i = 0; i < argument; i++) {
-        const [key, afterKey] = cbor(bytes, pos);
-        const [value, afterValue] = cbor(bytes, afterKey);
+        const [key, afterKey] = cbor(bytes, pos, depth + 1);
+        const [value, afterValue] = cbor(bytes, afterKey, depth + 1);
         map[String(key)] = value;
         pos = afterValue;
       }
@@ -276,7 +348,7 @@ function cbor(bytes: Uint8Array, pos = 0): [CborValue, number] {
     }
     default:
       // 6: a tag, whose meaning this reader does not need; the value it tags.
-      return cbor(bytes, pos);
+      return cbor(bytes, pos, depth + 1);
   }
 }
 
@@ -290,8 +362,15 @@ function float16(bits: number): number {
   return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
 }
 
-/** The metadata section's CBOR, decoded; exported for the tests. */
-export const decodeCbor = (bytes: Uint8Array): CborValue => cbor(bytes)[0];
+/** One CBOR item, decoded as the metadata section is (the types `CborValue`
+ * names), with nothing after it: bytes left over are refused, as the Rust and
+ * Python decoders refuse them. */
+export function decodeCbor(bytes: Uint8Array): CborValue {
+  if (bytes.length === 0) throw new MokujiError("no CBOR item");
+  const [value, end] = cbor(bytes);
+  if (end !== bytes.length) throw new MokujiError("trailing bytes after the CBOR item");
+  return value;
+}
 
 class Cursor {
   constructor(
@@ -304,7 +383,7 @@ class Cursor {
     let shift = 1;
     for (;;) {
       const byte = this.bytes[this.pos++];
-      if (byte === undefined) throw new Error("truncated varint");
+      if (byte === undefined) throw new MokujiError("truncated varint");
       value += (byte & 0x7f) * shift;
       if ((byte & 0x80) === 0) return value;
       shift *= 128;
@@ -315,7 +394,7 @@ class Cursor {
   key(previous: Uint8Array): Uint8Array {
     const shared = this.varint();
     const length = this.varint();
-    if (shared > previous.length) throw new Error("shared prefix too long");
+    if (shared > previous.length) throw new MokujiError("shared prefix too long");
     const out = new Uint8Array(shared + length);
     out.set(previous.subarray(0, shared));
     out.set(this.bytes.subarray(this.pos, this.pos + length), shared);
@@ -330,7 +409,7 @@ class Cursor {
       // Values wider than a double can hold exactly would need BigInt. No
       // Mokuji file in practice has them, and pretending otherwise would be
       // worse than saying so.
-      throw new Error(`bit width ${width} exceeds what this reader supports`);
+      throw new MokujiError(`bit width ${width} exceeds what this reader supports`);
     }
     const out = new Array<number>(count);
     for (let i = 0; i < count; i++) {
@@ -381,7 +460,7 @@ async function inflate(unit: Uint8Array): Promise<Uint8Array> {
     .stream()
     .pipeThrough(new DecompressionStream("deflate-raw"));
   const out = new Uint8Array(await new Response(stream).arrayBuffer());
-  if (out.length !== length) throw new Error("unit does not match its declared length");
+  if (out.length !== length) throw new MokujiError("unit does not match its declared length");
   return out;
 }
 
@@ -395,31 +474,31 @@ function decodeCompletions(bytes: Uint8Array, numDocs: number): Completions {
   const maxSpan = cursor.varint();
   const docsPerEntry = cursor.varint();
   const count = cursor.varint();
-  if (docsPerEntry === 0) throw new Error("a completion entry lists no documents");
+  if (docsPerEntry === 0) throw new MokujiError("a completion entry lists no documents");
   const entries = new Map<string, number[]>();
   let previous: Uint8Array = new Uint8Array(0);
   for (let i = 0; i < count; i++) {
     const key = cursor.key(previous);
     if (key.length === 0 || (i > 0 && compare(key, previous) <= 0)) {
-      throw new Error("completion prefixes are empty or out of order");
+      throw new MokujiError("completion prefixes are empty or out of order");
     }
     previous = key;
     const n = cursor.varint();
-    if (n === 0 || n > docsPerEntry) throw new Error("a completion lists too few or too many");
+    if (n === 0 || n > docsPerEntry) throw new MokujiError("a completion lists too few or too many");
     const docs: number[] = [];
     const seen = new Set<number>();
     let last = 0;
     for (let j = 0; j < n; j++) {
       last += unzigzag(cursor.varint());
       if (last < 0 || last >= numDocs || seen.has(last)) {
-        throw new Error("a completion lists a document outside the index, or twice");
+        throw new MokujiError("a completion lists a document outside the index, or twice");
       }
       seen.add(last);
       docs.push(last);
     }
     entries.set(byteKey(key), docs);
   }
-  if (cursor.pos !== bytes.length) throw new Error("trailing bytes in the completions section");
+  if (cursor.pos !== bytes.length) throw new MokujiError("trailing bytes in the completions section");
   return { minTerms, maxSpan, docsPerEntry, entries };
 }
 
@@ -434,7 +513,7 @@ function decodeColumns(bytes: Uint8Array, numDocs: number): Map<string, Column> 
     cursor.pos += length;
     const raw = bytes[cursor.pos++]!;
     if (headers.some(([taken]) => taken === name)) {
-      throw new Error("two attribute columns share a name");
+      throw new MokujiError("two attribute columns share a name");
     }
     headers.push([name, raw > 127 ? raw - 256 : raw]);
   }
@@ -443,7 +522,7 @@ function decodeColumns(bytes: Uint8Array, numDocs: number): Map<string, Column> 
     columns.set(name, { name, scaleExponent, values: cursor.values(numDocs).map(unzigzag) });
   }
   if (cursor.pos !== bytes.length) {
-    throw new Error("trailing bytes in the document attributes section");
+    throw new MokujiError("trailing bytes in the document attributes section");
   }
   return columns;
 }
@@ -451,10 +530,11 @@ function decodeColumns(bytes: Uint8Array, numDocs: number): Map<string, Column> 
 const text = (value: CborValue | undefined): string | null =>
   typeof value === "string" ? value : null;
 
+const isMap = (value: CborValue | undefined): value is { [key: string]: CborValue } =>
+  value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array);
+
 const field = (value: CborValue | undefined, key: string): CborValue | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array)
-    ? value[key]
-    : undefined;
+  isMap(value) ? value[key] : undefined;
 
 // --- a file ---------------------------------------------------------------
 
@@ -471,6 +551,11 @@ export class MokujiIndex {
   onRequest: ((request: RequestInfo) => void) | null = null;
   /** The file's length, once a response has said. */
   fileLength: number | undefined;
+  /** What fetches a URL; the global `fetch` unless `open` was given one. */
+  private readonly fetchUrl: typeof fetch | undefined;
+  /** The whole term blocks section and where it starts, when it is held
+   * rather than fetched (`residentDictionary`). */
+  private heldTermBlocks: { offset: number; bytes: Uint8Array } | null = null;
 
   flags!: number;
   numDocs!: number;
@@ -478,7 +563,13 @@ export class MokujiIndex {
   sections!: Map<number, Section>;
   /** The metadata section, decoded (SPEC.md §6). */
   meta!: CborValue;
+  /** Which state of the index this is: a new index is a new generation. */
+  generation!: number;
+  /** The application-defined additions (`attrs`), or null when there are none. */
+  attrs!: { [key: string]: CborValue } | null;
   tokenizerId!: string;
+  /** The tokenizer's parameters, empty when the file records none. */
+  tokenizerParams!: { [key: string]: CborValue };
   /** The index's license, as an SPDX expression, if it states one. */
   license!: string | null;
   /** The credit its results carry, if it states one. */
@@ -505,7 +596,8 @@ export class MokujiIndex {
    * @param source a URL, a `Blob`, or a `Source` returning bytes — which is
    * what lets the same reader be tested against a file on disk.
    */
-  constructor(source: string | Source | Blob) {
+  constructor(source: string | Source | Blob, options: OpenOptions = {}) {
+    this.fetchUrl = options.fetch;
     if (isBlob(source)) {
       // A slice of a file-backed Blob reads that range and no more, so a
       // file of gigabytes costs what a query touches, as over HTTP.
@@ -532,11 +624,11 @@ export class MokujiIndex {
   async read(offset: number, length: number, upTo = false): Promise<Uint8Array> {
     if (length === 0) return new Uint8Array(0);
     if (!upTo && this.fileLength !== undefined && offset + length > this.fileLength) {
-      throw new Error(`${length} bytes at ${offset} lie past the end of the file`);
+      throw new MokujiError(`${length} bytes at ${offset} lie past the end of the file`);
     }
     const bytes = await this.fetchRange(offset, length);
     if (!upTo && bytes.length !== length) {
-      throw new Error(`${length} bytes at ${offset} lie past the end of the file`);
+      throw new MokujiError(`${length} bytes at ${offset} lie past the end of the file`);
     }
     return bytes;
   }
@@ -550,11 +642,12 @@ export class MokujiIndex {
       return bytes;
     }
 
-    const response = await fetch(this.source, {
+    const fetchUrl = this.fetchUrl ?? globalThis.fetch;
+    const response = await fetchUrl(this.source, {
       headers: { Range: `bytes=${offset}-${offset + length - 1}` },
     });
     if (response.status !== 206) {
-      throw new Error(
+      throw new MokujiError(
         `the server ignored the Range header (status ${response.status}); ` +
           `Mokuji needs range requests to be honoured`,
       );
@@ -573,32 +666,32 @@ export class MokujiIndex {
   async unit(bytes: Uint8Array, codec: number): Promise<Uint8Array> {
     if (codec === CODEC_RAW) return bytes;
     if (codec === CODEC_DEFLATE) return inflate(bytes);
-    throw new Error(`codec ${codec} is registered but not implemented here`);
+    throw new MokujiError(`codec ${codec} is registered but not implemented here`);
   }
 
   private section(id: number): Section {
     const section = this.sections.get(id);
-    if (!section) throw new Error(`section ${id} is missing`);
+    if (!section) throw new MokujiError(`section ${id} is missing`);
     return section;
   }
 
-  static async open(source: string | Source | Blob): Promise<MokujiIndex> {
-    const index = new MokujiIndex(source);
+  static async open(source: string | Source | Blob, options: OpenOptions = {}): Promise<MokujiIndex> {
+    const index = new MokujiIndex(source, options);
     // One request for the resident set, optimistically. SPEC.md §5 recommends
     // a layout that puts all of it at the head of the file for exactly this.
     const prefix = await index.read(0, OPEN_PREFIX, true);
     // Fewer bytes than asked for is the whole file.
     if (prefix.length < OPEN_PREFIX) index.fileLength ??= prefix.length;
-    if (prefix.length < HEADER_LEN) throw new Error("not a Mokuji file");
+    if (prefix.length < HEADER_LEN) throw new MokujiError("not a Mokuji file");
 
     const view = new DataView(prefix.buffer, prefix.byteOffset);
     const magic = utf8.decode(prefix.subarray(0, 8));
-    if (magic !== MAGIC && magic !== MAGIC_V0) throw new Error("not a Mokuji file");
-    if (prefix[8] !== 0) throw new Error(`unsupported major version ${prefix[8]}`);
+    if (magic !== MAGIC && magic !== MAGIC_V0) throw new MokujiError("not a Mokuji file");
+    if (prefix[8] !== 0) throw new MokujiError(`unsupported major version ${prefix[8]}`);
 
     index.flags = view.getUint16(10, true);
     if (index.flags & FLAG_HAS_POSITIONS && !(index.flags & FLAG_HAS_FREQS)) {
-      throw new Error("positions are flagged without frequencies");
+      throw new MokujiError("positions are flagged without frequencies");
     }
     index.numDocs = Number(view.getBigUint64(16, true));
     index.sumDoclen = Number(view.getBigUint64(24, true));
@@ -608,7 +701,7 @@ export class MokujiIndex {
     const count = view.getUint32(12, true);
     // Checked before the count sizes anything (SPEC.md §8).
     if (tableLength !== count * SECTION_ENTRY_LEN) {
-      throw new Error("the section table length disagrees with its count");
+      throw new MokujiError("the section table length disagrees with its count");
     }
     const table =
       tableOffset + tableLength <= prefix.length
@@ -662,8 +755,16 @@ export class MokujiIndex {
       return index.unit(span.subarray(section.offset, section.offset + section.length), section.codec);
     };
 
-    index.meta = cbor(await resident(SECTION.META))[0];
+    // One item and nothing after it, as the Rust reader requires: bytes past
+    // the item are a section that says more than it can be read as.
+    index.meta = decodeCbor(await resident(SECTION.META));
     index.tokenizerId = text(field(field(index.meta, "tokenizer"), "id")) ?? "identity";
+    const generation = field(index.meta, "generation");
+    index.generation = Number.isSafeInteger(generation) && (generation as number) >= 0 ? (generation as number) : 0;
+    const attrs = field(index.meta, "attrs");
+    index.attrs = isMap(attrs) ? { ...attrs } : null;
+    const tokenizerParams = field(field(index.meta, "tokenizer"), "params");
+    index.tokenizerParams = isMap(tokenizerParams) ? { ...tokenizerParams } : {};
     // The index's license and the credit its results carry (SPEC.md §6). A
     // page that shows results owes the credit, so it is kept at hand.
     index.license = text(field(index.meta, "license"));
@@ -722,10 +823,20 @@ export class MokujiIndex {
       const key = cursor.key(previous);
       // The block search would silently pick the wrong block (SPEC.md §5.3.2).
       if (i > 0 && compare(previous, key) >= 0) {
-        throw new Error("the term index is not strictly increasing");
+        throw new MokujiError("the term index is not strictly increasing");
       }
       previous = key;
       index.boundaries.push(previous);
+    }
+
+    if (options.residentDictionary) {
+      // One read, of the section as stored: each block is still decompressed
+      // on its own when it is looked in, so what is held is the compressed
+      // size.
+      const section = index.section(SECTION.TERM_BLOCKS);
+      // As the Rust reader bounds it: one read, of a length a range read can ask for.
+      if (section.length > 0xffffffff) throw new MokujiError("the term dictionary is too large to hold");
+      index.heldTermBlocks = { offset: section.offset, bytes: await index.read(section.offset, section.length) };
     }
     return index;
   }
@@ -733,13 +844,13 @@ export class MokujiIndex {
   /** Where block `i` of section `id` is, from that section's offsets, which
    * are checked to lie within it before they are used (SPEC.md §8). */
   private offsetPair(table: Uint8Array, base: number, i: number, id: number): [number, number] {
-    if (base + i * 8 + 16 > table.length) throw new Error(`block ${i} has no offset`);
+    if (base + i * 8 + 16 > table.length) throw new MokujiError(`block ${i} has no offset`);
     const view = new DataView(table.buffer, table.byteOffset);
     const start = Number(view.getBigUint64(base + i * 8, true));
     const end = Number(view.getBigUint64(base + i * 8 + 8, true));
     const section = this.section(id);
     if (start > end || start < section.offset || end > section.offset + section.length) {
-      throw new Error(`block ${i} lies outside its section`);
+      throw new MokujiError(`block ${i} lies outside its section`);
     }
     return [start, end - start];
   }
@@ -780,7 +891,11 @@ export class MokujiIndex {
 
   /** Several dictionary blocks, decoded, a request for each run of neighbours. */
   async termBlocks(ordinals: Iterable<number>): Promise<Map<number, TermEntry[]>> {
-    const raw = await this.blockRuns(ordinals, (i) => this.offsetPair(this.termBlockOffsets, 0, i, SECTION.TERM_BLOCKS));
+    const locate = (i: number) => this.offsetPair(this.termBlockOffsets, 0, i, SECTION.TERM_BLOCKS);
+    const held = this.heldTermBlocks;
+    const raw = held
+      ? new Map([...new Set(ordinals)].map((i) => [i, this.heldBlock(held, locate(i))] as const))
+      : await this.blockRuns(ordinals, locate);
     const out = new Map<number, TermEntry[]>();
     for (const [ordinal, bytes] of raw) out.set(ordinal, await this.decodeTermBlock(bytes));
     return out;
@@ -788,7 +903,14 @@ export class MokujiIndex {
 
   async termBlock(ordinal: number): Promise<TermEntry[]> {
     const [offset, length] = this.offsetPair(this.termBlockOffsets, 0, ordinal, SECTION.TERM_BLOCKS);
-    return this.decodeTermBlock(await this.read(offset, length));
+    const held = this.heldTermBlocks;
+    return this.decodeTermBlock(held ? this.heldBlock(held, [offset, length]) : await this.read(offset, length));
+  }
+
+  /** A block of the held dictionary, which `offsetPair` has already checked
+   * lies within the section. */
+  private heldBlock(held: { offset: number; bytes: Uint8Array }, [offset, length]: [number, number]): Uint8Array {
+    return held.bytes.subarray(offset - held.offset, offset - held.offset + length);
   }
 
   private async decodeTermBlock(raw: Uint8Array): Promise<TermEntry[]> {
@@ -823,11 +945,11 @@ export class MokujiIndex {
       if (stored === IMPLIED) {
         expected = termId + 1;
       } else if (stored === INLINE) {
-        if (docFreq === 0) throw new Error("inline postings name no document");
+        if (docFreq === 0) throw new MokujiError("inline postings name no document");
         const docs = [expected + unzigzag(cursor.varint())];
         for (let j = 1; j < docFreq; j++) docs.push(docs[j - 1]! + cursor.varint() + 1);
         if (docs[0]! < 0 || docs[docs.length - 1]! >= this.numDocs) {
-          throw new Error("inline postings name a missing document");
+          throw new MokujiError("inline postings name a missing document");
         }
         const freqs = docs.map(() => (hasFreqs ? cursor.varint() + 1 : 1));
         entry.inline = { docs, freqs };
@@ -877,7 +999,7 @@ export class MokujiIndex {
         }),
       );
     }
-    if (cursor.pos !== run.length) throw new Error("trailing bytes in positions run");
+    if (cursor.pos !== run.length) throw new MokujiError("trailing bytes in positions run");
     return out;
   }
 
@@ -1018,8 +1140,8 @@ export class MokujiIndex {
   // or implied — the term names one document, whose ID is the term's own, once.
   implied(entry: TermEntry): Postings {
     if (entry.inline) return entry.inline;
-    if (entry.docFreq !== 1) throw new Error("implied postings need a doc_freq of 1");
-    if (entry.termId >= this.numDocs) throw new Error("implied postings name a missing document");
+    if (entry.docFreq !== 1) throw new MokujiError("implied postings need a doc_freq of 1");
+    if (entry.termId >= this.numDocs) throw new MokujiError("implied postings name a missing document");
     return { docs: [entry.termId], freqs: [1] };
   }
 
@@ -1043,7 +1165,7 @@ export class MokujiIndex {
       if (entry.postingsLength === 0) return this.implied(entry);
       const at = entry.postingsOffset - start;
       const cursor = new Cursor(span!.subarray(at, at + entry.postingsLength));
-      if (cursor.bytes[cursor.pos++] !== 0) throw new Error("unsupported postings codec");
+      if (cursor.bytes[cursor.pos++] !== 0) throw new MokujiError("unsupported postings codec");
       const count = cursor.varint();
       const docs: number[] = [];
       let current: number | null = null;
@@ -1091,7 +1213,7 @@ export class MokujiIndex {
       const cursor = new Cursor(cached);
       const count = cursor.varint();
       const index = doc % perBlock;
-      if (index >= count) throw new Error("payload block is shorter than expected");
+      if (index >= count) throw new MokujiError("payload block is shorter than expected");
 
       if (codec === PAYLOAD_OPAQUE) {
         for (let i = 0; i < count; i++) {
@@ -1115,7 +1237,7 @@ export class MokujiIndex {
         }
         out.push(values.map((v) => scaled(v, exponent)).join(","));
       } else {
-        throw new Error(`payload codec ${codec} is not implemented here`);
+        throw new MokujiError(`payload codec ${codec} is not implemented here`);
       }
     }
     return out;
@@ -1133,21 +1255,42 @@ export class MokujiIndex {
    * `limit`.
    */
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult> {
-    const { limit = 10, any = false, probe, lengthNorm = 0.75, boost, filter } = options;
     const split = SPLITTERS[this.tokenizerId] ?? ((q: string) => [q]);
     const terms = split(query);
+    const { ranked, probed, skipped } = await this.rank(terms, options);
+    const shown = ranked.slice(0, options.limit ?? 10);
+    const ascending = shown.map((r) => r.doc).sort((a, b) => a - b);
+    const payloads = await this.payloadSpan(ascending);
+    const byDoc = new Map(ascending.map((doc, i) => [doc, payloads[i]!]));
+    return {
+      terms,
+      probed,
+      skipped,
+      matched: ranked.length,
+      results: shown.map((r) => ({ ...r, payload: byDoc.get(r.doc)! })),
+    };
+  }
+
+  /** Every document `terms` match, best first, without reading any payload:
+   * the half of `search` before it, for a caller that decides what to show
+   * by something of its own. `terms` are already split by the file's
+   * tokenizer; `limit` is not used. */
+  async rank(terms: string[], options: SearchOptions = {}): Promise<Ranking> {
+    const { any = false, probe, lengthNorm = 0.75, boost, filter, phrase = false } = options;
     const column = boost === undefined ? undefined : this.column(boost);
-    if (boost !== undefined && !column) {
-      throw new Error(`this index carries no attribute column called '${boost}'`);
+    if (boost !== undefined && !column) throw new NoColumnError(boost);
+    if (phrase && !(this.flags & FLAG_HAS_POSITIONS)) {
+      throw new MokujiError("this index carries no positions, so it cannot test a phrase");
     }
-    const none: SearchResult = { terms, probed: [], skipped: 0, matched: 0, results: [] };
+    const none: Ranking = { ranked: [], probed: [], skipped: 0 };
     if (terms.length === 0) return none;
 
     const found = await this.exactMany(terms);
-    let present: { term: string; entry: TermEntry }[] = [];
+    // Each with its place in the query, which a phrase is tested against.
+    let present: { term: string; at: number; entry: TermEntry }[] = [];
     for (let i = 0; i < terms.length; i++) {
       const entry = found[i];
-      if (entry) present.push({ term: terms[i]!, entry });
+      if (entry) present.push({ term: terms[i]!, at: i, entry });
       // A term nobody wrote down cannot be in an intersection.
       else if (!any) return none;
     }
@@ -1179,6 +1322,7 @@ export class MokujiIndex {
       matched = runs[0]!.docs.filter((doc) => rest.every((s) => s.has(doc)));
     }
     if (filter) matched = matched.filter(filter);
+    if (phrase && matched.length > 0) matched = await this.phrased(matched, present, runs);
 
     let ranked: { doc: number; score: number | null }[];
     if (!this.docLengths) {
@@ -1205,19 +1349,40 @@ export class MokujiIndex {
       });
       ranked.sort((x, y) => y.score! - x.score! || x.doc - y.doc);
     }
+    return { ranked, probed, skipped };
+  }
 
-    const shown = ranked.slice(0, limit);
-    const payloads = await this.payloadSpan(shown.map((r) => r.doc).sort((a, b) => a - b));
-    const byDoc = new Map(
-      shown.map((r) => r.doc).sort((a, b) => a - b).map((doc, i) => [doc, payloads[i]!]),
+  /** The documents in which the terms read occur at consecutive positions, in
+   * the order they were typed: some position `p` at which each term, typed at
+   * `at` in the query, occurs at `p + at`. A document lacking one of them —
+   * possible in a union — is not a phrase. One read per term, a term asked
+   * twice read once. */
+  private async phrased(
+    matched: number[],
+    present: { term: string; at: number; entry: TermEntry }[],
+    runs: Postings[],
+  ): Promise<number[]> {
+    const read = new Map<string, Promise<number[][]>>();
+    const places = await Promise.all(
+      present.map(({ term, entry }, i) => {
+        if (!read.has(term)) read.set(term, this.positions(entry, runs[i]!));
+        return read.get(term)!;
+      }),
     );
-    return {
-      terms,
-      probed,
-      skipped,
-      matched: matched.length,
-      results: shown.map((r) => ({ ...r, payload: byDoc.get(r.doc)! })),
-    };
+    // A row per document the postings name, or the file contradicts itself.
+    places.forEach((rows, i) => {
+      if (rows.length !== runs[i]!.docs.length) throw new MokujiError("positions disagree with the postings");
+    });
+    const where = runs.map((r) => new Map(r.docs.map((doc, i) => [doc, i])));
+    return matched.filter((doc) => {
+      const at = present.map((_, i) => {
+        const row = where[i]!.get(doc);
+        return row === undefined ? null : new Set(places[i]![row]);
+      });
+      if (at.some((p) => p === null)) return false;
+      const first = present[0]!.at;
+      return [...at[0]!].some((q) => present.every(({ at: k }, i) => at[i]!.has(q - first + k)));
+    });
   }
 
   /** The first `limit` documents for what has been typed.
@@ -1291,26 +1456,21 @@ export interface Completion {
 
 // --- a collection ---------------------------------------------------------
 
-/** One segment of a collection, as the manifest lists it (MANIFEST.md §2). */
-export interface ManifestSegment {
-  path: string;
-  content_hash: string;
-  length: number;
-  deletes?: number[];
-  region?: { countries: string[] };
-}
-
-/** A collection's manifest (MANIFEST.md §2). */
-export interface Manifest {
-  mokuji_manifest: string;
-  generation: number;
-  segments: ManifestSegment[];
-}
-
 /** One document of a collection: its segment, and its ID there. */
 export interface Hit {
   segment: number;
   doc: number;
+}
+
+/** What a collection's search found: in collection order, unranked. */
+export interface CollectionSearch {
+  /** The terms the query became. */
+  terms: string[];
+  /** Every live document holding all of them. */
+  matched: number;
+  /** The first `limit`, segment by segment, each in document order. */
+  hits: Hit[];
+  payloads: string[];
 }
 
 /** What a collection's completion found, and how. */
@@ -1341,40 +1501,40 @@ export class MokujiCollection {
   /**
    * Opens the manifest at `url` and every segment it names, at once: they are
    * independent, so opening them costs one round trip however many there are.
-   * `sourceFor(url)` may supply a byte source instead of fetching.
+   * `sourceFor(url)` may supply a byte source instead of fetching, and
+   * `fetch` what fetches the manifest and the segments in place of the global
+   * one. The manifest is checked as `parseManifest` checks it.
    */
   static async open(
     url: string | Manifest,
     sourceFor: (url: string) => string | Source | Blob = (u) => u,
-    { countries = null }: { countries?: string[] | null } = {},
+    { countries = null, fetch: fetchUrl }: { countries?: string[] | null; fetch?: typeof fetch } = {},
   ): Promise<MokujiCollection> {
-    let manifest: Manifest =
-      typeof url === "string" ? ((await (await fetch(url, { cache: "no-store" })).json()) as Manifest) : url;
+    let manifest: Manifest;
+    if (typeof url === "string") {
+      const response = await (fetchUrl ?? globalThis.fetch)(url, { cache: "no-store" });
+      if (!response.ok) throw new MokujiError(`manifest: ${url} answered ${response.status}`);
+      manifest = parseManifest(await response.text());
+    } else {
+      manifest = checkManifest(url);
+    }
     const listed = manifest.segments.length;
     // About a place: only the segments whose region includes it, and those
     // with none (MANIFEST.md §7). The others are never opened.
-    if (countries) {
-      manifest = {
-        ...manifest,
-        segments: manifest.segments.filter(
-          (s) => !s.region || s.region.countries.some((c) => countries.includes(c)),
-        ),
-      };
-    }
-    if (String(manifest.mokuji_manifest ?? "").split(".")[0] !== "0") {
-      throw new Error(`manifest version ${manifest.mokuji_manifest} is not one this reader implements`);
-    }
+    if (countries) manifest = within(manifest, countries);
     const here = (globalThis as { location?: { href: string } }).location?.href;
     const base = typeof url === "string" ? new URL(url, here) : null;
     const segments = await Promise.all(
       manifest.segments.map(async (s) => {
-        const index = await MokujiIndex.open(sourceFor(base ? new URL(s.path, base).href : s.path));
+        const index = await MokujiIndex.open(sourceFor(base ? new URL(s.path, base).href : s.path), {
+          fetch: fetchUrl,
+        });
         if (index.fileLength !== undefined && index.fileLength !== s.length) {
-          throw new Error(`${s.path} is ${index.fileLength} bytes, not the ${s.length} the manifest says`);
+          throw new MokujiError(`${s.path} is ${index.fileLength} bytes, not the ${s.length} the manifest says`);
         }
         const deletes = s.deletes ?? [];
         if (deletes.some((d, i) => d >= index.numDocs || (i > 0 && d <= deletes[i - 1]!))) {
-          throw new Error(`${s.path} has deletes that are out of order or out of range`);
+          throw new MokujiError(`${s.path} has deletes that are out of order or out of range`);
         }
         return index;
       }),
@@ -1382,7 +1542,7 @@ export class MokujiCollection {
     const tokenizer = JSON.stringify(field(segments[0]?.meta, "tokenizer"));
     for (const [i, index] of segments.entries()) {
       if (JSON.stringify(field(index.meta, "tokenizer")) !== tokenizer) {
-        throw new Error(`${manifest.segments[i]!.path} was tokenized differently from the first segment`);
+        throw new MokujiError(`${manifest.segments[i]!.path} was tokenized differently from the first segment`);
       }
     }
     const collection = new MokujiCollection(manifest, segments);
@@ -1411,6 +1571,7 @@ export class MokujiCollection {
   /** One segment's first `need` live documents: the entry, then all it
    * lists, then as many again as the segment has deletes (MANIFEST.md §3.2). */
   async liveIn(at: number, normalized: string, need: number): Promise<{ live: number[]; fromTable: boolean }> {
+    this.segmentAt(at);
     const index = this.segments[at]!;
     const deleted = this.deletes[at]!;
     const listed = index.completions?.docsPerEntry ?? 0;
@@ -1455,8 +1616,51 @@ export class MokujiCollection {
     };
   }
 
+  /**
+   * The live documents holding every term the query becomes, in collection
+   * order, and the payload of the first `limit`. Unranked: scores are not
+   * comparable across segments (MANIFEST.md §3.3), so order is the
+   * collection's. Each segment is asked on its own, at what a search of it
+   * alone costs, and the segments at once.
+   */
+  async search(query: string, limit = 10): Promise<CollectionSearch> {
+    const first = this.segments[0];
+    // With no segment there is no tokenizer to ask, and the query is one term.
+    const split = (first && SPLITTERS[first.tokenizerId]) ?? ((q: string) => [q]);
+    const terms = split(query);
+    const lists = await Promise.all(
+      this.segments.map(async (index, at): Promise<Hit[]> => {
+        // One term at a time, in the order typed, as the Rust reader asks: a
+        // term the segment never wrote down, or an intersection already
+        // empty, ends the segment without reading the rest.
+        let matched: number[] | null = null;
+        for (const term of terms) {
+          const entry = await index.exact(term);
+          if (!entry) return [];
+          const docs = new Set((await index.postingsSpan([entry]))[0]!.docs);
+          matched = matched === null ? [...docs] : matched.filter((doc) => docs.has(doc));
+          if (matched.length === 0) return [];
+        }
+        const deleted = this.deletes[at]!;
+        return (matched ?? []).filter((doc) => !deleted.has(doc)).map((doc) => ({ segment: at, doc }));
+      }),
+    );
+    const all = lists.flat();
+    const hits = all.slice(0, limit);
+    return { terms, matched: all.length, hits, payloads: await this.payloads(hits) };
+  }
+
+  /** Refuses a segment the collection does not have, rather than reading
+   * past its list or answering nothing for it. */
+  private segmentAt(at: number): void {
+    if (!Number.isInteger(at) || at < 0 || at >= this.segments.length) {
+      throw new MokujiError(`the collection has no segment ${at}`);
+    }
+  }
+
   /** Payload for hits, one span per segment, in the hits' order. */
   async payloads(hits: Hit[]): Promise<string[]> {
+    for (const hit of hits) this.segmentAt(hit.segment);
     const out = new Array<string>(hits.length);
     await Promise.all(
       this.segments.map(async (index, at) => {

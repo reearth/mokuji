@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use mokuji::format::{parse_section_table, Header, SectionId};
-use mokuji::read::{block_on::block_on, CountingReader, Index, SliceReader};
+use mokuji::read::{block_on::block_on, CountingReader, Index, OpenOptions, SliceReader};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -83,6 +83,12 @@ fn load(fixture: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
+/// Block by block: the counts the cases state assume a request per block.
+const UNCOALESCED: OpenOptions = OpenOptions {
+    resident_dictionary: false,
+    coalesce: false,
+};
+
 fn suite() -> Suite {
     let path = conformance_dir().join("cases.toml");
     let text = std::fs::read_to_string(&path)
@@ -97,7 +103,7 @@ fn every_case_returns_the_expected_result_within_the_expected_reads() {
 
     for case in &suite.case {
         let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
-        let index = block_on(Index::open(&reader)).expect(&case.name);
+        let index = block_on(Index::open_with(&reader, UNCOALESCED)).expect(&case.name);
         // Opening is accounted for separately: SPEC.md §4 charges the resident
         // set to a cold start, not to a query.
         reader.reset();
@@ -172,7 +178,7 @@ fn every_completion_comes_from_where_the_case_says_within_its_reads() {
 
     for case in &suite.completion {
         let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
-        let index = block_on(Index::open(&reader)).expect(&case.name);
+        let index = block_on(Index::open_with(&reader, UNCOALESCED)).expect(&case.name);
         reader.reset();
 
         let (docs, from_table) =
@@ -191,6 +197,39 @@ fn every_completion_comes_from_where_the_case_says_within_its_reads() {
             assert_eq!(before_payload, 0, "{}: an entry costs no read", case.name);
         }
         assert_eq!(reader.reads(), case.reads, "{}: read count", case.name);
+    }
+}
+
+#[test]
+fn coalescing_never_costs_more_than_the_cases_say() {
+    // Reading neighbouring blocks as one can only lower the count, and must
+    // not change an answer.
+    let suite = suite();
+    for case in &suite.case {
+        let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
+        let index = block_on(Index::open(&reader)).expect(&case.name);
+        assert!(index.coalesce());
+        reader.reset();
+        let query: Vec<&[u8]> = case.query.iter().map(|t| t.as_bytes()).collect();
+        let matches = block_on(index.search(&query)).expect(&case.name);
+        let docs: Vec<u64> = matches.iter().map(|m| m.doc).collect();
+        assert_eq!(docs, case.docs, "{}: documents", case.name);
+        assert!(reader.reads() <= case.reads, "{}: read count", case.name);
+    }
+    for case in &suite.completion {
+        let reader = CountingReader::new(SliceReader::new(load(&case.fixture)));
+        let index = block_on(Index::open(&reader)).expect(&case.name);
+        reader.reset();
+        let (docs, _) =
+            block_on(index.complete(case.prefix.as_bytes(), case.limit)).expect(&case.name);
+        let payloads: Vec<String> = block_on(index.payload_span(&docs))
+            .expect(&case.name)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(docs, case.docs, "{}: documents", case.name);
+        assert_eq!(payloads, case.payloads, "{}: payloads", case.name);
+        assert!(reader.reads() <= case.reads, "{}: read count", case.name);
     }
 }
 

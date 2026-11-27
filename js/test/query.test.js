@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   MokujiBuilder,
+  MokujiError,
   MokujiIndex,
   contains,
   decodeRings,
@@ -65,6 +66,7 @@ test("decodeRings closes each ring; contains is even-odd, so a hole is outside",
   assert.ok(contains(rings, 1, 1));
   assert.ok(!contains(rings, 5, 5));
   assert.ok(!contains(rings, 11, 5));
+  assert.throws(() => decodeRings("0,x", 1), /not integers/);
 });
 
 /** Rings as delta-int-1e5: the first vertex, then differences, unclosed. */
@@ -130,7 +132,7 @@ test("locate: the polygons holding a point, named by the file's fields", async (
 
 test("locate: a file that does not say how it was built is refused", async () => {
   const dict = await fixture("dict");
-  await assert.rejects(locate(dict, 35.68, 139.76), /geohash precisions/);
+  await assert.rejects(locate(dict, 35.68, 139.76), (e) => e instanceof MokujiError && /geohash precisions/.test(e.message));
   // Unless the caller says.
   const found = await locate(dict, 35.68, 139.76, { precisions: [5], scale: 1e5 });
   assert.deepEqual(found.inside, []);

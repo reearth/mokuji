@@ -117,7 +117,7 @@ fn head(major: u8, value: u64, out: &mut Vec<u8>) {
 
 /// Decodes one value, which must consume the whole buffer.
 pub fn decode(buf: &[u8]) -> Result<Value> {
-    let (value, pos) = read(buf, 0)?;
+    let (value, pos) = read(buf, 0, 0)?;
     if pos != buf.len() {
         return Err(Error::Malformed {
             detail: "trailing bytes after the metadata value",
@@ -126,7 +126,17 @@ pub fn decode(buf: &[u8]) -> Result<Value> {
     Ok(value)
 }
 
-fn read(buf: &[u8], pos: usize) -> Result<(Value, usize)> {
+/// How deep arrays and maps may nest. Each level is a frame of recursion,
+/// so without a bound a section of nested one-element arrays, a byte each,
+/// overflows the stack; the other readers refuse past the same depth.
+const MAX_DEPTH: usize = 64;
+
+fn read(buf: &[u8], pos: usize, depth: usize) -> Result<(Value, usize)> {
+    if depth > MAX_DEPTH {
+        return Err(Error::Malformed {
+            detail: "metadata is nested too deeply",
+        });
+    }
     let initial = *buf.get(pos).ok_or(Error::Truncated {
         expected: pos + 1,
         found: buf.len(),
@@ -152,7 +162,7 @@ fn read(buf: &[u8], pos: usize) -> Result<(Value, usize)> {
             let mut items = Vec::with_capacity(len.min(64));
             let mut pos = pos;
             for _ in 0..len {
-                let (item, next) = read(buf, pos)?;
+                let (item, next) = read(buf, pos, depth + 1)?;
                 items.push(item);
                 pos = next;
             }
@@ -164,8 +174,8 @@ fn read(buf: &[u8], pos: usize) -> Result<(Value, usize)> {
             let mut pos = pos;
             let mut previous: Option<Vec<u8>> = None;
             for _ in 0..len {
-                let (key, next) = read(buf, pos)?;
-                let (value, next) = read(buf, next)?;
+                let (key, next) = read(buf, pos, depth + 1)?;
+                let (value, next) = read(buf, next, depth + 1)?;
                 // Canonical order is checked, not restored: a reader that
                 // silently sorted would accept two encodings of one map and
                 // make a byte-identical rebuild unverifiable.
@@ -243,6 +253,26 @@ fn length(argument: u64) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_nesting_deeper_than_the_other_readers_do() {
+        // 64 arrays around a value put it at depth 64, which is allowed; one
+        // more is not, and a hundred would be stack enough to matter.
+        let nested = |levels: usize| {
+            let mut bytes = vec![0x81; levels];
+            bytes.push(0x00);
+            bytes
+        };
+        assert!(decode(&nested(64)).is_ok());
+        for levels in [65, 100, 100_000] {
+            assert_eq!(
+                decode(&nested(levels)),
+                Err(Error::Malformed {
+                    detail: "metadata is nested too deeply"
+                })
+            );
+        }
+    }
 
     fn round_trip(value: Value) {
         let encoded = encode(&value);

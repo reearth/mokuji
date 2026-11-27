@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::format::Result;
 
@@ -23,10 +23,31 @@ pub struct ReadStats {
 /// Only successful reads are counted. A failed read fetched nothing the caller
 /// can use, and counting it would let an implementation hide requests behind
 /// deliberate failures.
-#[derive(Debug)]
 pub struct CountingReader<R> {
     inner: R,
     stats: Cell<ReadStats>,
+    on_request: RefCell<Option<OnRequest>>,
+}
+
+/// One range read, as [`CountingReader::set_on_request`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestInfo {
+    /// Where it began.
+    pub offset: u64,
+    /// The bytes it returned.
+    pub length: u64,
+}
+
+type OnRequest = Box<dyn Fn(RequestInfo) + Send>;
+
+impl<R: std::fmt::Debug> std::fmt::Debug for CountingReader<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CountingReader")
+            .field("inner", &self.inner)
+            .field("stats", &self.stats.get())
+            .field("on_request", &self.on_request.borrow().is_some())
+            .finish()
+    }
 }
 
 impl<R> CountingReader<R> {
@@ -35,7 +56,15 @@ impl<R> CountingReader<R> {
         CountingReader {
             inner,
             stats: Cell::new(ReadStats::default()),
+            on_request: RefCell::new(None),
         }
+    }
+
+    /// Calls `f` after every successful read with what it read, so a caller
+    /// can show the requests themselves rather than a count of them; `None`
+    /// stops.
+    pub fn set_on_request(&self, f: Option<Box<dyn Fn(RequestInfo) + Send>>) {
+        *self.on_request.borrow_mut() = f;
     }
 
     /// What has been observed so far.
@@ -73,6 +102,12 @@ impl<R: RangeReader> RangeReader for CountingReader<R> {
         stats.reads += 1;
         stats.bytes += bytes.len() as u64;
         self.stats.set(stats);
+        if let Some(f) = self.on_request.borrow().as_ref() {
+            f(RequestInfo {
+                offset,
+                length: bytes.len() as u64,
+            });
+        }
         Ok(bytes)
     }
 }
@@ -107,6 +142,23 @@ mod tests {
         block_on(r.read_range(0, 4)).unwrap();
         r.reset();
         assert_eq!(r.reads(), 0);
+    }
+
+    #[test]
+    fn reports_every_request() {
+        let r = reader();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        r.set_on_request(Some(Box::new(move |info| log.lock().unwrap().push(info))));
+        block_on(r.read_range(2, 3)).unwrap();
+        assert!(block_on(r.read_range(9, 4)).is_err());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![RequestInfo {
+                offset: 2,
+                length: 3
+            }]
+        );
     }
 
     #[test]

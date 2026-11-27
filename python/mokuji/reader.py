@@ -70,7 +70,16 @@ MAX_UNIT = 1 << 30
 
 
 class MokujiError(ValueError):
-    """A file that is not one this reader can read, or that is malformed."""
+    """A file that is not one this reader can read, or that is malformed; or a
+    query the file cannot answer."""
+
+
+class NoColumnError(MokujiError):
+    """A query named an attribute column the file does not carry."""
+
+    def __init__(self, column):
+        super().__init__(f"this index carries no attribute column called '{column}'")
+        self.column = column
 
 
 # --- results ----------------------------------------------------------------
@@ -202,6 +211,25 @@ class Ranked:
     payload: str
 
 
+@dataclass(frozen=True)
+class Scored:
+    doc: int
+    # None when the index carries no document lengths, so cannot be ranked.
+    score: float | None
+
+
+@dataclass
+class Ranking:
+    """What `rank` found: every document matched, best first, and what
+    finding them read."""
+
+    ranked: list
+    # The terms whose postings were read, with how many documents each names.
+    probed: list
+    # Terms present but not read, because `probe` left them out.
+    skipped: int
+
+
 @dataclass
 class SearchResult:
     """What `search` found, and what deciding it took."""
@@ -293,6 +321,23 @@ class HttpSource:
                 if total.isdigit():
                     self.size = int(total)
             return response.read()
+
+
+class BytesSource:
+    """A file held in memory, read a range at a time as any other source is.
+
+    The bytes are copied when the source is made, so a caller may reuse its
+    buffer. Each range is a slice of what is already held, so a query costs no
+    I/O; the requests and bytes it would have cost over a network are still
+    counted.
+    """
+
+    def __init__(self, data):
+        self.data = bytes(data)
+        self.size = len(self.data)
+
+    def read(self, offset, length):
+        return self.data[offset : offset + length]
 
 
 def _is_url(source):
@@ -421,6 +466,8 @@ def _cbor(data, pos=0, depth=0):
         if small < 24:
             return small, pos
         if small == 24:
+            if pos >= len(data):
+                raise MokujiError("truncated metadata")
             return data[pos], pos + 1
         formats = {25: (">e", 2), 26: (">f", 4), 27: (">d", 8)}
         if small not in formats:
@@ -450,6 +497,10 @@ def _cbor(data, pos=0, depth=0):
             raise MokujiError("truncated metadata")
         raw = bytes(data[pos : pos + argument])
         return (raw if major == 2 else raw.decode("utf-8", "replace")), pos + argument
+    # Every item takes a byte at least, and a map entry two, so a count the
+    # bytes left cannot hold is refused before anything is decoded for it.
+    if major in (4, 5) and argument * (major - 3) > len(data) - pos:
+        raise MokujiError("truncated metadata")
     if major == 4:
         items = []
         for _ in range(argument):
@@ -519,6 +570,15 @@ def _decode_columns(data, num_docs):
     return columns
 
 
+def decode_cbor(data):
+    """One CBOR item (RFC 8949), decoded as the metadata section is: maps as
+    dicts, arrays as lists, byte strings as bytes, text as str."""
+    value, end = _cbor(bytes(data))
+    if end != len(data):
+        raise MokujiError("trailing bytes after the metadata value")
+    return value
+
+
 def _text(value):
     return value if isinstance(value, str) else None
 
@@ -545,6 +605,9 @@ class MokujiIndex:
         Use `MokujiIndex.open`, which also reads the resident set.
         """
         self._owned = None
+        # The whole term blocks section as stored, with its offset, when the
+        # dictionary is held rather than fetched.
+        self._term_blocks = None
         if _is_url(source):
             self.source = HttpSource(source)
         elif isinstance(source, (str, os.PathLike)):
@@ -612,12 +675,24 @@ class MokujiIndex:
         return section
 
     @classmethod
-    def open(cls, source):
+    def open(cls, source, *, resident_dictionary=False):
         """Opens `source` and reads its resident set, in one request when the
-        file is laid out as SPEC.md §5 recommends."""
+        file is laid out as SPEC.md §5 recommends.
+
+        `resident_dictionary` holds the whole term dictionary as stored, at one
+        more read now and its stored size in memory, and makes a term lookup
+        cost no read at all: each block is decompressed from what is held
+        (SPEC.md §4.2). Which to choose is a deployment question, not one the
+        format answers.
+        """
         index = cls(source)
         try:
             index._open()
+            if resident_dictionary:
+                section = index._section(TERM_BLOCKS)
+                if section.length > 0xFFFFFFFF:
+                    raise MokujiError("the term dictionary is too large to hold")
+                index._term_blocks = (section.offset, index._read_exact(section.offset, section.length))
         except BaseException:
             index.close()
             raise
@@ -690,8 +765,19 @@ class MokujiIndex:
             section = self._section(section_id)
             return self._unit(span[section.offset : section.offset + section.length], section.codec)
 
-        self.meta = _cbor(resident(META))[0]
+        self.meta = decode_cbor(resident(META))
         self.tokenizer_id = _text(_field(_field(self.meta, "tokenizer"), "id")) or "identity"
+        tokenizer_params = _field(_field(self.meta, "tokenizer"), "params")
+        # The tokenizer's parameters, and the application's own additions
+        # (SPEC.md §6): a file of geohash coverings says in `attrs` how it was
+        # built, and a reader acts on that rather than on an agreement.
+        self.tokenizer_params = tokenizer_params if isinstance(tokenizer_params, dict) else {}
+        attrs = _field(self.meta, "attrs")
+        self.attrs = attrs if isinstance(attrs, dict) else None
+        generation = _field(self.meta, "generation")
+        self.generation = (
+            generation if isinstance(generation, int) and not isinstance(generation, bool) and generation >= 0 else 0
+        )
         # The index's license and the credit its results carry (SPEC.md §6). A
         # caller that shows results owes the credit, so it is kept at hand.
         self.license = _text(_field(self.meta, "license"))
@@ -811,12 +897,22 @@ class MokujiIndex:
                 out[ordinal] = data[offset - start : offset - start + length]
         return out
 
+    def _held_term_block(self, ordinal):
+        start, held = self._term_blocks
+        offset, length = self._term_block_location(ordinal)
+        return held[offset - start : offset - start + length]
+
     def term_blocks(self, ordinals):
         """Several dictionary blocks, decoded, a request for each run of neighbours."""
-        raw = self._block_runs(ordinals, self._term_block_location)
+        if self._term_blocks is not None:
+            raw = {ordinal: self._held_term_block(ordinal) for ordinal in set(ordinals)}
+        else:
+            raw = self._block_runs(ordinals, self._term_block_location)
         return {ordinal: self._decode_term_block(data) for ordinal, data in raw.items()}
 
     def term_block(self, ordinal):
+        if self._term_blocks is not None:
+            return self._decode_term_block(self._held_term_block(ordinal))
         offset, length = self._term_block_location(ordinal)
         return self._decode_term_block(self._read_exact(offset, length))
 
@@ -1166,7 +1262,7 @@ class MokujiIndex:
     # --- queries ------------------------------------------------------------
 
     def search(
-        self, query, *, limit=10, any=False, probe=None, length_norm=0.75, boost=None, filter=None
+        self, query, *, limit=10, any=False, probe=None, length_norm=0.75, boost=None, filter=None, phrase=False
     ):
         """Documents ranked by BM25 over the terms the query becomes.
 
@@ -1184,42 +1280,70 @@ class MokujiIndex:
         prior. `filter` keeps only the documents it returns true for, by
         document ID, before they are ranked and before any payload is read, so
         that discarding a document costs no payload; `matched` counts what it
-        kept.
+        kept. `phrase` keeps only the documents where the terms read occur at
+        consecutive positions, in the order they were typed; the file must
+        carry positions.
 
         One request per run of dictionary blocks the terms fall in, then one
-        per term whose postings are stored as a run, then the payload of the
-        first `limit`.
+        per term whose postings are stored as a run, then, for a phrase, one
+        per term for its positions, then the payload of the first `limit`.
         """
         split = SPLITTERS.get(self.tokenizer_id, lambda q: [q])
         terms = split(query)
+        ranking = self.rank(
+            terms, any=any, probe=probe, length_norm=length_norm, boost=boost, filter=filter, phrase=phrase
+        )
+        shown = ranking.ranked[:limit]
+        wanted = sorted(r.doc for r in shown)
+        by_doc = dict(zip(wanted, self.payload_span(wanted)))
+        return SearchResult(
+            terms=terms,
+            probed=ranking.probed,
+            skipped=ranking.skipped,
+            matched=len(ranking.ranked),
+            results=[Ranked(r.doc, r.score, by_doc[r.doc]) for r in shown],
+        )
+
+    def rank(
+        self, terms, *, any=False, probe=None, length_norm=0.75, boost=None, filter=None, phrase=False, limit=None
+    ):
+        """Every document `terms` match, best first, and what finding them read:
+        the half of `search` before any payload. `terms` are already split by
+        the file's tokenizer; the options are `search`'s, and `limit`, which
+        only decides how many payloads `search` reads, is ignored.
+        """
         column = None if boost is None else self.column(boost)
         if boost is not None and column is None:
-            raise ValueError(f"this index carries no attribute column called '{boost}'")
+            raise NoColumnError(boost)
+        if phrase and not self.flags & FLAG_HAS_POSITIONS:
+            raise MokujiError("this index carries no positions, so it cannot test a phrase")
         if not terms:
-            return SearchResult(terms, [], 0, 0, [])
+            return Ranking([], [], 0)
 
+        # Each with its place in the query, which a phrase is tested against:
+        # probing reorders the terms, and the order typed is what a phrase is.
         present = []
-        for term, entry in zip(terms, self.exact_many(terms)):
+        for at, (term, entry) in enumerate(zip(terms, self.exact_many(terms))):
             if entry is not None:
-                present.append((term, entry))
+                present.append((at, term, entry))
             elif not any:
                 # A term nobody wrote down cannot be in an intersection.
-                return SearchResult(terms, [], 0, 0, [])
+                return Ranking([], [], 0)
         if not present:
-            return SearchResult(terms, [], 0, 0, [])
+            return Ranking([], [], 0)
 
         # Rarest first: a term matching few documents says the most about which
         # ones, and costs the least to say it. Stable, as the CLI's sort is.
         skipped = 0
         if probe is not None:
-            present.sort(key=lambda p: p[1].doc_freq)
+            present.sort(key=lambda p: p[2].doc_freq)
             skipped = max(0, len(present) - probe)
             present = present[:probe]
-        probed = [Probed(term, entry.doc_freq) for term, entry in present]
+        probed = [Probed(term, entry.doc_freq) for _, term, entry in present]
         if not present:
             # Every term was left out, so there is nothing to match against.
-            return SearchResult(terms, probed, skipped, 0, [])
-        runs = [self.postings_span([entry])[0] for _, entry in present]
+            return Ranking([], probed, skipped)
+        runs = [self.postings_span([entry])[0] for _, _, entry in present]
 
         if any:
             matched = sorted({doc for run in runs for doc in run.docs})
@@ -1228,47 +1352,63 @@ class MokujiIndex:
             matched = [doc for doc in runs[0].docs if all(doc in s for s in rest)]
         if filter is not None:
             matched = [doc for doc in matched if filter(doc)]
+        if phrase and matched:
+            matched = self._phrase(present, runs, matched)
 
         if self.doc_lengths is None:
-            ranked = [(doc, None) for doc in matched]
-        else:
-            n = self.num_docs
-            avgdl = max(1 if n == 0 else self.sum_doclen / n, 1)
-            k1 = 1.2
-            b = length_norm
-            at = [dict(zip(run.docs, run.freqs)) for run in runs]
-            ranked = []
-            for doc in matched:
-                dl = self.doc_lengths[doc] if doc < len(self.doc_lengths) else 0
-                score = 0
-                # The same operations in the same order as the TypeScript
-                # reader and the CLI. `math.log` is the platform's, as Rust's
-                # `ln` is; V8's differs from it in the last place for about
-                # one argument in seventy, which moves an order only between
-                # scores that close.
-                for (_, entry), freqs in zip(present, at):
-                    tf = freqs.get(doc)
-                    if tf is None:
-                        continue
-                    df = entry.doc_freq
-                    idf = math.log((n - df + 0.5) / (df + 0.5) + 1)
-                    score += (idf * (tf * (k1 + 1))) / (tf + k1 * (1 - b + (b * dl) / avgdl))
-                if column is not None:
-                    value = column.values[doc] if doc < len(column.values) else 0
-                    score += math.log(1 + max(value, 0))
-                ranked.append((doc, score))
-            ranked.sort(key=lambda r: (-r[1], r[0]))
+            return Ranking([Scored(doc, None) for doc in matched], probed, skipped)
+        n = self.num_docs
+        avgdl = max(1 if n == 0 else self.sum_doclen / n, 1)
+        k1 = 1.2
+        b = length_norm
+        at = [dict(zip(run.docs, run.freqs)) for run in runs]
+        ranked = []
+        for doc in matched:
+            dl = self.doc_lengths[doc] if doc < len(self.doc_lengths) else 0
+            score = 0
+            # The same operations in the same order as the TypeScript reader
+            # and the CLI. `math.log` is the platform's, as Rust's `ln` is;
+            # V8's differs from it in the last place for about one argument in
+            # seventy, which moves an order only between scores that close.
+            for (_, _, entry), freqs in zip(present, at):
+                tf = freqs.get(doc)
+                if tf is None:
+                    continue
+                df = entry.doc_freq
+                idf = math.log((n - df + 0.5) / (df + 0.5) + 1)
+                score += (idf * (tf * (k1 + 1))) / (tf + k1 * (1 - b + (b * dl) / avgdl))
+            if column is not None:
+                value = column.values[doc] if doc < len(column.values) else 0
+                score += math.log(1 + max(value, 0))
+            ranked.append(Scored(doc, score))
+        ranked.sort(key=lambda r: (-r.score, r.doc))
+        return Ranking(ranked, probed, skipped)
 
-        shown = ranked[:limit]
-        wanted = sorted(doc for doc, _ in shown)
-        by_doc = dict(zip(wanted, self.payload_span(wanted)))
-        return SearchResult(
-            terms=terms,
-            probed=probed,
-            skipped=skipped,
-            matched=len(matched),
-            results=[Ranked(doc, score, by_doc[doc]) for doc, score in shown],
-        )
+    def _phrase(self, present, runs, matched):
+        """The documents of `matched` where every term read occurs at its place
+        in the query from one starting position: one read per term, for its
+        positions, and only here."""
+        places = []
+        # A term typed twice is one term in the file, so its positions are
+        # read once and tested at each of its places.
+        read = {}
+        for (at, _, entry), run in zip(present, runs):
+            if entry.term not in read:
+                per_doc = self.positions(entry, run)
+                if len(per_doc) != len(run.docs):
+                    raise MokujiError("positions disagree with the postings")
+                read[entry.term] = {doc: set(p) for doc, p in zip(run.docs, per_doc)}
+            places.append((at, read[entry.term]))
+        kept = []
+        for doc in matched:
+            # A document lacking a term cannot hold the phrase, which is what
+            # `any` leaves possible.
+            if not all(doc in by_doc for _, by_doc in places):
+                continue
+            first, by_first = places[0]
+            if any(all(start - first + at in by_doc[doc] for at, by_doc in places) for start in by_first[doc]):
+                kept.append(doc)
+        return kept
 
     def complete(self, typed, limit=10):
         """The first `limit` documents for what has been typed.
@@ -1356,6 +1496,162 @@ class CollectionStats:
     round_trips: int = 0
 
 
+@dataclass
+class CollectionSearch:
+    """What a collection's search found: every live document holding every
+    term, in collection order, and the first `limit` with their payload."""
+
+    terms: list
+    matched: int
+    hits: list
+    payloads: list
+
+
+# --- manifests ----------------------------------------------------------------
+
+# The version of MANIFEST.md this reader implements.
+MANIFEST_VERSION = "0.1"
+
+
+def _is_uint(value):
+    # A u64, as the Rust crate reads it: JSON has no bound, so one is set here.
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 0xFFFFFFFFFFFFFFFF
+
+
+def _content_hash_ok(text):
+    algorithm, colon, digest = text.partition(":")
+    return bool(colon and algorithm and digest) and all(c in "0123456789abcdef" for c in digest)
+
+
+def check_manifest(value):
+    """A manifest already decoded from JSON, checked as `parse_manifest` checks
+    it, with only the keys MANIFEST.md defines: `deletes` always a list, and
+    `region` None when the segment states none.
+
+    Unknown keys are dropped, as they are ignored in a file's metadata: a later
+    version may add one, and a reader of this one still reads the rest.
+    """
+
+    def manifest_error(detail):
+        return MokujiError(f"manifest: {detail}")
+
+    if not isinstance(value, dict):
+        raise manifest_error("not a JSON object")
+    version = value.get("mokuji_manifest")
+    generation = value.get("generation")
+    segments = value.get("segments")
+    if not isinstance(version, str):
+        raise manifest_error("mokuji_manifest is not text")
+    if not _is_uint(generation):
+        raise manifest_error("generation is not an unsigned integer")
+    if not isinstance(segments, list):
+        raise manifest_error("segments is not a list")
+    if version.split(".")[0] != MANIFEST_VERSION.split(".")[0]:
+        raise manifest_error(f"version {version} is not one this reader implements")
+    if not segments:
+        raise manifest_error("a collection has no segments")
+    out = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise manifest_error("a segment is not a JSON object")
+        path = segment.get("path")
+        content_hash = segment.get("content_hash")
+        length = segment.get("length")
+        deletes = segment.get("deletes", [])
+        region = segment.get("region")
+        if not isinstance(path, str) or not isinstance(content_hash, str) or not _is_uint(length):
+            raise manifest_error("a segment needs a path, a content_hash and a length")
+        if not isinstance(deletes, list) or not all(_is_uint(d) for d in deletes):
+            raise manifest_error("a segment's deletes are not unsigned integers")
+        if region is not None and not (
+            isinstance(region, dict)
+            and isinstance(region.get("countries"), list)
+            and all(isinstance(c, str) for c in region["countries"])
+        ):
+            raise manifest_error("a segment's region is not a list of countries")
+
+        def segment_error(detail):
+            return MokujiError(f"segment {path}: {detail}")
+
+        if not path:
+            raise manifest_error("a segment has no path")
+        if not _content_hash_ok(content_hash):
+            raise segment_error("content_hash is not <algorithm>:<hex>")
+        if any(b <= a for a, b in zip(deletes, deletes[1:])):
+            raise segment_error("deletes are not strictly increasing")
+        if region is not None:
+            countries = region["countries"]
+            if not countries:
+                raise segment_error("a region names no country")
+            for code in countries:
+                if len(code) != 2 or not all("A" <= c <= "Z" for c in code):
+                    raise segment_error("a region's countries are ISO 3166-1 alpha-2 codes")
+            if len(set(countries)) != len(countries):
+                raise segment_error("a region names a country twice")
+            region = {"countries": list(countries)}
+        out.append(
+            {"path": path, "content_hash": content_hash, "length": length, "deletes": list(deletes), "region": region}
+        )
+    return {"mokuji_manifest": version, "generation": generation, "segments": out}
+
+
+def parse_manifest(text):
+    """Parses and checks a manifest (MANIFEST.md §2), as the Rust crate's
+    `Manifest::parse` does, refusing what it refuses."""
+    def unique(pairs):
+        keys = [key for key, _ in pairs]
+        if len(set(keys)) != len(keys):
+            raise MokujiError("manifest: a key appears twice in one object")
+        return dict(pairs)
+
+    try:
+        value = json.loads(text, object_pairs_hook=unique)
+    except MokujiError:
+        raise
+    except ValueError as e:
+        raise MokujiError(f"manifest: {e}") from None
+    return check_manifest(value)
+
+
+def within(manifest, countries):
+    """The collection within these countries: every segment whose region
+    includes one of them, and every segment with no region, in the same order
+    and with the same deletes (MANIFEST.md §7).
+
+    Restricting keeps collection order, so a restricted collection answers as
+    the whole one would with the other regions' documents deleted.
+    """
+    return {
+        **manifest,
+        "segments": [
+            s
+            for s in manifest["segments"]
+            if not s.get("region") or any(c in countries for c in s["region"]["countries"])
+        ],
+    }
+
+
+def manifest_to_json(manifest):
+    """The manifest as JSON, one key order and one layout, so that the same
+    collection is always written down the same way: the bytes the Rust crate's
+    `Manifest::to_json` writes, an empty `deletes` and an absent `region` left
+    out, and a newline at the end."""
+    segments = []
+    for s in manifest["segments"]:
+        segment = {"path": s["path"], "content_hash": s["content_hash"], "length": s["length"]}
+        if s.get("deletes"):
+            segment["deletes"] = list(s["deletes"])
+        if s.get("region") is not None:
+            segment["region"] = {"countries": list(s["region"]["countries"])}
+        segments.append(segment)
+    document = {
+        "mokuji_manifest": manifest["mokuji_manifest"],
+        "generation": manifest["generation"],
+        "segments": segments,
+    }
+    return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+
+
 def _fetch_json(url):
     request = urllib.request.Request(url, headers={"User-Agent": "mokuji-python", "Cache-Control": "no-cache"})
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -1392,18 +1688,10 @@ class MokujiCollection:
             else:
                 with open(base, encoding="utf-8") as f:
                     manifest = json.load(f)
+        manifest = check_manifest(manifest)
         listed = len(manifest["segments"])
-        if str(manifest.get("mokuji_manifest", "")).split(".")[0] != "0":
-            raise MokujiError(f"manifest version {manifest.get('mokuji_manifest')} is not one this reader implements")
         if countries is not None:
-            manifest = {
-                **manifest,
-                "segments": [
-                    s
-                    for s in manifest["segments"]
-                    if not s.get("region") or any(c in countries for c in s["region"]["countries"])
-                ],
-            }
+            manifest = within(manifest, countries)
 
         def locate(path):
             if base is None:
@@ -1469,6 +1757,8 @@ class MokujiCollection:
         """One segment's first `need` live documents: the entry, then all it
         lists, then as many again as the segment has deletes (MANIFEST.md
         §3.2). Returns (live, from_table)."""
+        if not 0 <= at < len(self.segments):
+            raise MokujiError(f"the collection has no segment {at}")
         index = self.segments[at]
         deleted = self.deletes[at]
         listed = index.completions.docs_per_entry if index.completions else 0
@@ -1513,6 +1803,9 @@ class MokujiCollection:
 
     def payloads(self, hits):
         """Payload for hits, one span per segment, in the hits' order."""
+        for hit in hits:
+            if not 0 <= hit.segment < len(self.segments):
+                raise MokujiError(f"the collection has no segment {hit.segment}")
         out = [None] * len(hits)
         for at, index in enumerate(self.segments):
             mine = sorted(((h.doc, i) for i, h in enumerate(hits) if h.segment == at))
@@ -1521,6 +1814,41 @@ class MokujiCollection:
             for (_, i), payload in zip(mine, index.payload_span(doc for doc, _ in mine)):
                 out[i] = payload
         return out
+
+    def search(self, query, limit=10):
+        """The live documents holding every term the query becomes, in
+        collection order: segments in manifest order, documents in each
+        segment's. No ranking, which would need a score the segments share.
+
+        Each segment is asked on its own, a term at a time, and a segment that
+        lacks a term or has nothing left of the intersection is asked no
+        further, as the Rust crate's `Collection::search` does. `matched` counts
+        every live document; the first `limit` come with their payload.
+        """
+        if not self.segments:
+            return CollectionSearch([query], 0, [], [])
+        split = SPLITTERS.get(self.segments[0].tokenizer_id, lambda q: [q])
+        terms = split(query)
+        hits = []
+        for at, index in enumerate(self.segments):
+            matched = None
+            for term in terms:
+                entry = index.exact(term)
+                if entry is None:
+                    matched = []
+                    break
+                docs = index.postings_span([entry])[0].docs
+                if matched is None:
+                    matched = docs
+                else:
+                    holding = set(docs)
+                    matched = [d for d in matched if d in holding]
+                if not matched:
+                    break
+            deleted = self.deletes[at]
+            hits.extend(Hit(at, doc) for doc in (matched or []) if doc not in deleted)
+        shown = hits[:limit]
+        return CollectionSearch(terms, len(hits), shown, self.payloads(shown))
 
     @property
     def attributions(self):

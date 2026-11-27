@@ -21,10 +21,10 @@ mod slice;
 pub mod term;
 
 pub use completions::Completions;
-pub use counting::{CountingReader, ReadStats};
+pub use counting::{CountingReader, ReadStats, RequestInfo};
 pub use file::FileReader;
 pub use index::{Column, Index, Match, OpenOptions, Payload};
 pub use postings::Postings;
-pub use reader::RangeReader;
+pub use reader::{Blocking, BlockingRangeReader, RangeReader};
 pub use slice::SliceReader;
 pub use term::{BlockShape, TermEntry, TermIndex};

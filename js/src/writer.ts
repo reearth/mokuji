@@ -11,6 +11,7 @@
 // `generator.version` in the metadata are for: a rebuild is checkable against
 // the writer that made it — and, here, on the runtime that ran it.
 
+import { BuildError } from "./errors.js";
 import type { Column } from "./mokuji.js";
 import { SPLITTERS } from "./tokenizers.js";
 
@@ -301,10 +302,10 @@ function writeCbor(value: CborInput, out: Out): void {
   if (typeof value === "boolean") value = value ? 1 : 0;
   if (typeof value === "number" || typeof value === "bigint") {
     if (typeof value === "number" && !Number.isSafeInteger(value)) {
-      throw new Error("metadata holds only integers, and a number past 2^53 as a bigint");
+      throw new BuildError("metadata holds only integers, and a number past 2^53 as a bigint");
     }
     const v = BigInt(value);
-    if (v < 0n || v > MASK64) throw new Error("metadata holds only non-negative integers of 64 bits");
+    if (v < 0n || v > MASK64) throw new BuildError("metadata holds only non-negative integers of 64 bits");
     cborHead(out, 0, v);
   } else if (typeof value === "string") {
     const raw = encoder.encode(value);
@@ -322,7 +323,7 @@ function writeCbor(value: CborInput, out: Out): void {
       out.push(v);
     }
   } else {
-    throw new Error(`metadata cannot hold ${String(value)}`);
+    throw new BuildError(`metadata cannot hold ${String(value)}`);
   }
 }
 
@@ -366,7 +367,7 @@ export function encodeMetadata(meta: Metadata): Uint8Array {
   const root: Record<string, CborInput> = {
     generation: meta.generation ?? 1,
     source: meta.sources.map((s) => {
-      if (!s.contentHash) throw new Error("a source has no content hash");
+      if (!s.contentHash) throw new BuildError("a source has no content hash");
       const entry: Record<string, CborInput> = { content_hash: s.contentHash };
       if (s.uri) entry.uri = s.uri;
       if (s.retrieved) entry.retrieved = s.retrieved;
@@ -393,7 +394,7 @@ export function encodeMetadata(meta: Metadata): Uint8Array {
  */
 export function split(tokenizerId: string, text: string): string[] {
   const splitter = SPLITTERS[tokenizerId];
-  if (!splitter) throw new Error(`unknown tokenizer '${tokenizerId}'`);
+  if (!splitter) throw new BuildError(`unknown tokenizer '${tokenizerId}'`);
   return splitter(text);
 }
 
@@ -443,25 +444,25 @@ export class MokujiBuilder {
 
   constructor(options: WriteOptions = {}) {
     const o = resolve(options);
-    if (!(o.termsPerBlock >= 1) || !(o.docsPerPayloadBlock >= 1)) throw new Error("block sizes must be non-zero");
+    if (!(o.termsPerBlock >= 1) || !(o.docsPerPayloadBlock >= 1)) throw new BuildError("block sizes must be non-zero");
     // A positions run says nothing about where one document's positions end
     // and the next begin; the frequency is that boundary.
     if (o.positions && !o.hasFreqs) {
-      throw new Error("positions need frequencies, which say how many belong to each document");
+      throw new BuildError("positions need frequencies, which say how many belong to each document");
     }
-    if (o.inlinePostings < 0) throw new Error("an inline postings bound cannot be negative");
+    if (o.inlinePostings < 0) throw new BuildError("an inline postings bound cannot be negative");
     if (o.ints) {
       const { valuesPerDoc, scaleExponent } = o.ints;
       if (!(valuesPerDoc >= 0 && valuesPerDoc <= 255 && scaleExponent >= -128 && scaleExponent <= 127)) {
-        throw new Error("ints are a byte of values per document and a signed byte of scale");
+        throw new BuildError("ints are a byte of values per document and a signed byte of scale");
       }
     }
     const c = o.completions;
     if (c) {
-      if (!(c.docsPerEntry >= 1)) throw new Error("a completion entry lists at least one document");
+      if (!(c.docsPerEntry >= 1)) throw new BuildError("a completion entry lists at least one document");
       // Both zero would be a table with no rule for what goes in it.
       if (c.minTerms === 0 && c.maxSpan === 0) {
-        throw new Error("completions need a term count or a postings size to cover");
+        throw new BuildError("completions need a term count or a postings size to cover");
       }
     }
     this.options = o;
@@ -474,16 +475,16 @@ export class MokujiBuilder {
 
   /** Appends a document whose payload is opaque bytes, or text written as UTF-8, returning its ID. */
   addDocument(payload: string | Uint8Array): number {
-    if (this.options.ints) throw new Error("this index encodes payload as integers");
+    if (this.options.ints) throw new BuildError("this index encodes payload as integers");
     this.payloads.push(typeof payload === "string" ? encoder.encode(payload) : payload.slice());
     return this.documents - 1;
   }
 
   /** Appends a document whose payload is a fixed row of integers, returning its ID. */
   addDocumentValues(values: readonly Int[]): number {
-    if (!this.options.ints) throw new Error("this index encodes payload as opaque bytes");
+    if (!this.options.ints) throw new BuildError("this index encodes payload as opaque bytes");
     if (values.length !== this.options.ints.valuesPerDoc) {
-      throw new Error("a document carries the wrong number of values");
+      throw new BuildError("a document carries the wrong number of values");
     }
     this.rows.push(values.map(toI64));
     return this.documents - 1;
@@ -492,10 +493,10 @@ export class MokujiBuilder {
   /** Adds a column of per-document numbers (SPEC.md §5.8), checked at `finish` against the document count. */
   addColumn(column: Column): void {
     if (!(column.scaleExponent >= -128 && column.scaleExponent <= 127)) {
-      throw new Error("a column's scale exponent does not fit a signed byte");
+      throw new BuildError("a column's scale exponent does not fit a signed byte");
     }
     if (this.columns.some((c) => c.name === column.name)) {
-      throw new Error("two document attribute columns share a name");
+      throw new BuildError("two document attribute columns share a name");
     }
     column.values.forEach(toI64);
     this.columns.push({ ...column, values: column.values.slice() });
@@ -507,19 +508,19 @@ export class MokujiBuilder {
    */
   addPosting(term: string | Uint8Array, doc: number, freq = 1): void {
     const key = bytesOf(term);
-    if (!(Number.isSafeInteger(freq) && freq >= 1)) throw new Error("a posting with zero frequency is not a posting");
+    if (!(Number.isSafeInteger(freq) && freq >= 1)) throw new BuildError("a posting with zero frequency is not a posting");
     if (!(Number.isInteger(doc) && doc >= 0 && doc < this.documents)) {
-      throw new Error("posting refers to a document that was never added");
+      throw new BuildError("posting refers to a document that was never added");
     }
     const open = this.open;
     const order = open ? compareBytes(key, open.term) : 1;
     if (open && order === 0) {
-      if (doc <= open.docs[open.docs.length - 1]!) throw new Error("documents within a term are not ascending");
+      if (doc <= open.docs[open.docs.length - 1]!) throw new BuildError("documents within a term are not ascending");
       open.docs.push(doc);
       open.freqs.push(freq);
       open.positions.push(null);
     } else if (open && order < 0) {
-      throw new Error("terms are not ascending");
+      throw new BuildError("terms are not ascending");
     } else {
       this.closeTerm();
       this.open = { term: key.slice(), docs: [doc], freqs: [freq], positions: [null] };
@@ -533,9 +534,9 @@ export class MokujiBuilder {
 
   /** Records that `term` occurs in `doc` at exactly these ascending positions. */
   addPostingAt(term: string | Uint8Array, doc: number, positions: readonly number[]): void {
-    if (positions.length === 0) throw new Error("a posting with no positions is not a posting");
+    if (positions.length === 0) throw new BuildError("a posting with no positions is not a posting");
     for (let i = 1; i < positions.length; i++) {
-      if (positions[i]! <= positions[i - 1]!) throw new Error("positions within a document are not ascending");
+      if (positions[i]! <= positions[i - 1]!) throw new BuildError("positions within a document are not ascending");
     }
     this.addPosting(term, doc, positions.length);
     this.open!.positions[this.open!.positions.length - 1] = positions.slice();
@@ -547,7 +548,7 @@ export class MokujiBuilder {
    */
   addSection(id: number, bytes: Uint8Array): void {
     if (!(Number.isInteger(id) && id >= SECTION_APPLICATION_MIN && id <= 0xffff)) {
-      throw new Error("a section this specification defines cannot be supplied by an application");
+      throw new BuildError("a section this specification defines cannot be supplied by an application");
     }
     this.sections.set(id, bytes.slice());
   }
@@ -649,7 +650,7 @@ export class MokujiBuilder {
    */
   async finish(meta: Uint8Array): Promise<Uint8Array> {
     this.closeTerm();
-    if (this.terms.length === 0) throw new Error("an index with no terms cannot be built");
+    if (this.terms.length === 0) throw new BuildError("an index with no terms cannot be built");
     this.inlinePostings();
     const o = this.options;
     const chunks: Term[][] = [];
@@ -709,7 +710,7 @@ export class MokujiBuilder {
       out.varint(this.columns.length);
       for (const column of this.columns) {
         if (column.values.length !== this.documents) {
-          throw new Error("a document attribute column does not have one value per document");
+          throw new BuildError("a document attribute column does not have one value per document");
         }
         const name = encoder.encode(column.name);
         out.varint(name.length);
@@ -882,10 +883,10 @@ export class MokujiBuilder {
 /** An integer as an i64, checked: a number must be safe, a bigint within 64 bits. */
 function toI64(value: Int): bigint {
   if (typeof value === "number" && !Number.isSafeInteger(value)) {
-    throw new Error("a value is not an integer; one past 2^53 is given as a bigint");
+    throw new BuildError("a value is not an integer; one past 2^53 is given as a bigint");
   }
   const v = BigInt(value);
-  if (BigInt.asIntN(64, v) !== v) throw new Error("a value does not fit 64 bits");
+  if (BigInt.asIntN(64, v) !== v) throw new BuildError("a value does not fit 64 bits");
   return v;
 }
 

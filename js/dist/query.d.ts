@@ -37,7 +37,8 @@ export declare function fieldsOf(index: MokujiIndex): string[] | null;
 export type Rings = [number, number][][];
 /** Rings as `geometry=delta-int-1e…` writes them: `;` between rings, each the
  * first vertex then the difference from the vertex before, in integers of
- * 1/`scale` degree, without the closing vertex, which is put back. */
+ * 1/`scale` degree, without the closing vertex, which is put back. Throws
+ * for values that are not integers. */
 export declare function decodeRings(text: string, scale: number): Rings;
 /** Whether (x, y) is inside, even-odd over every ring, so a hole is one. */
 export declare function contains(rings: Rings, x: number, y: number): boolean;

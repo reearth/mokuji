@@ -163,6 +163,15 @@ type Index struct {
 	Sources     []Provenance
 	// What wrote the file, and how.
 	Generator Generator
+	// The file's generation (SPEC.md §6): a new index is a new generation,
+	// not an edit.
+	Generation uint64
+	// The tokenizer's parameters, empty when the file states none.
+	TokenizerParams map[string]any
+	// The application-defined additions, nil when the file has none. What
+	// they mean is the application's: demo/reverse records how a file of
+	// geohash coverings was built here, and Locate reads it.
+	Attrs map[string]any
 
 	// Resident sections, nil when the file has none.
 	DocLengths  []uint64
@@ -189,12 +198,15 @@ type Index struct {
 	tokenize tokenizer
 
 	termBlockOffsets []byte
-	payloadOffsets   []byte
-	payloadCodec     byte
-	valuesPerDoc     int
-	scaleExponent    int
-	docsPerBlock     int
-	payloadBlocks    int
+	// The term blocks section, as stored, when OpenOptions held it.
+	termBlocks     []byte
+	residentTerms  bool
+	payloadOffsets []byte
+	payloadCodec   byte
+	valuesPerDoc   int
+	scaleExponent  int
+	docsPerBlock   int
+	payloadBlocks  int
 
 	mu    sync.Mutex
 	stats Stats
@@ -204,9 +216,39 @@ type Index struct {
 // file is laid out as SPEC.md §5 recommends. The caller keeps ownership of
 // src.
 func Open(ctx context.Context, src Source) (*Index, error) {
+	return OpenWith(ctx, src, OpenOptions{})
+}
+
+// OpenOptions say how much of a file to hold rather than fetch. The format
+// supports either without changing: blocks are independently decodable and
+// the offsets that locate them are resident either way. Which to use is a
+// deployment question (SPEC.md §4.2).
+type OpenOptions struct {
+	// Hold the whole term dictionary, as stored, and decode one block per
+	// lookup instead of fetching it. One more request at open, and the
+	// dictionary's stored size in memory; a term lookup then costs no
+	// request at all.
+	ResidentDictionary bool
+}
+
+// OpenWith is Open, holding what options say.
+func OpenWith(ctx context.Context, src Source, options OpenOptions) (*Index, error) {
 	ix := &Index{source: src, Coalesce: true}
 	if err := ix.open(ctx); err != nil {
 		return nil, err
+	}
+	if options.ResidentDictionary {
+		s := ix.Sections[SectionTermBlocks]
+		// The bound the Rust reader holds it to, which keeps every reader's
+		// answer to one file the same.
+		if s.Length > math.MaxUint32 {
+			return nil, malformed("the term dictionary is too large to hold")
+		}
+		data, err := ix.readExact(ctx, s.Offset, s.Length)
+		if err != nil {
+			return nil, err
+		}
+		ix.termBlocks, ix.residentTerms = data, true
 	}
 	return ix, nil
 }
@@ -455,8 +497,13 @@ func (ix *Index) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if ix.Meta, _, err = decodeCBOR(meta, 0, 0); err != nil {
+	var end int
+	if ix.Meta, end, err = decodeCBOR(meta, 0, 0); err != nil {
 		return err
+	}
+	// One item and nothing after it, as the Rust reader requires.
+	if end != len(meta) {
+		return malformed("trailing bytes after the metadata")
 	}
 	ix.readMeta()
 
@@ -561,15 +608,17 @@ func (ix *Index) readMeta() {
 	ix.Generator = Generator{
 		Name:    text(field(generator, "name")),
 		Version: text(field(generator, "version")),
-		Params:  map[string]any{},
+		Params:  textKeys(field(generator, "params")),
 	}
-	if params, ok := field(generator, "params").(map[any]any); ok {
-		for key, value := range params {
-			if name, ok := key.(string); ok {
-				ix.Generator.Params[name] = value
-			}
-		}
+	if ix.Generator.Params == nil {
+		ix.Generator.Params = map[string]any{}
 	}
+	ix.Generation, _ = field(ix.Meta, "generation").(uint64)
+	ix.TokenizerParams = textKeys(field(field(ix.Meta, "tokenizer"), "params"))
+	if ix.TokenizerParams == nil {
+		ix.TokenizerParams = map[string]any{}
+	}
+	ix.Attrs = textKeys(field(ix.Meta, "attrs"))
 	if sources, ok := field(ix.Meta, "source").([]any); ok {
 		for _, s := range sources {
 			ix.Sources = append(ix.Sources, Provenance{
@@ -583,6 +632,22 @@ func (ix *Index) readMeta() {
 	// A tokenizer this reader does not know leaves the file readable, just
 	// not reachable by an unnormalized query: it is used as typed.
 	ix.tokenize = tokenizers[ix.TokenizerID]
+}
+
+// textKeys is a decoded map's entries under text keys, nil when v is not a
+// map. Values stay as decoded, a nested map included.
+func textKeys(v any) map[string]any {
+	m, ok := v.(map[any]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		if name, ok := key.(string); ok {
+			out[name] = value
+		}
+	}
+	return out
 }
 
 func text(v any) string {
@@ -804,8 +869,16 @@ func (ix *Index) blockRuns(ctx context.Context, ordinals []int, locate func(int)
 // TermBlocks reads several dictionary blocks, decoded, a request for each run
 // of neighbours.
 func (ix *Index) TermBlocks(ctx context.Context, ordinals []int) (map[int][]TermEntry, error) {
-	raw, err := ix.blockRuns(ctx, ordinals, ix.termBlockLocation)
-	if err != nil {
+	var raw map[int][]byte
+	var err error
+	if ix.residentTerms {
+		raw = make(map[int][]byte, len(ordinals))
+		for _, ordinal := range ordinals {
+			if raw[ordinal], err = ix.heldTermBlock(ordinal); err != nil {
+				return nil, err
+			}
+		}
+	} else if raw, err = ix.blockRuns(ctx, ordinals, ix.termBlockLocation); err != nil {
 		return nil, err
 	}
 	out := make(map[int][]TermEntry, len(raw))
@@ -819,6 +892,13 @@ func (ix *Index) TermBlocks(ctx context.Context, ordinals []int) (map[int][]Term
 
 // TermBlock reads one dictionary block, decoded.
 func (ix *Index) TermBlock(ctx context.Context, ordinal int) ([]TermEntry, error) {
+	if ix.residentTerms {
+		data, err := ix.heldTermBlock(ordinal)
+		if err != nil {
+			return nil, err
+		}
+		return ix.decodeTermBlock(data)
+	}
 	offset, length, err := ix.termBlockLocation(ordinal)
 	if err != nil {
 		return nil, err
@@ -828,6 +908,20 @@ func (ix *Index) TermBlock(ctx context.Context, ordinal int) ([]TermEntry, error
 		return nil, err
 	}
 	return ix.decodeTermBlock(data)
+}
+
+// heldTermBlock is one dictionary block, as stored, from the section held in
+// memory.
+func (ix *Index) heldTermBlock(ordinal int) ([]byte, error) {
+	offset, length, err := ix.termBlockLocation(ordinal)
+	if err != nil {
+		return nil, err
+	}
+	at := offset - ix.Sections[SectionTermBlocks].Offset
+	if at+length > uint64(len(ix.termBlocks)) {
+		return nil, malformed("block %d lies outside its section", ordinal)
+	}
+	return ix.termBlocks[at : at+length], nil
 }
 
 func (ix *Index) decodeTermBlock(raw []byte) ([]TermEntry, error) {

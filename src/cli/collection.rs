@@ -34,13 +34,14 @@ pub fn read(path: &Path) -> Result<Manifest, Error> {
 
 /// Where a segment the manifest names is, on disk.
 pub fn locate(manifest: &Path, segment: &Segment) -> PathBuf {
-    manifest
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(&segment.path)
+    Manifest::segment_path(manifest, segment)
 }
 
 /// Opens every segment, each through its own counting reader.
+///
+/// Not [`crate::MokujiCollection::open_file`]: the commands report what each
+/// segment cost and work on one segment at a time, so they hold the readers
+/// themselves and ask the byte-level collection.
 pub fn open(path: &Path, manifest: &Manifest) -> Result<Vec<CountingReader<FileReader>>, Error> {
     manifest
         .segments

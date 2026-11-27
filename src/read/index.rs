@@ -203,7 +203,7 @@ pub struct Match {
 /// The format supports both without changing: blocks are independently
 /// decodable and the offsets that locate them are resident either way. Which to
 /// use is a deployment question — see `SPEC.md` §4.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpenOptions {
     /// Hold the whole term dictionary, compressed, and decompress one block per
     /// lookup instead of fetching it.
@@ -212,6 +212,20 @@ pub struct OpenOptions {
     /// 864 KB for 1,744,962 Tokyo addresses — and makes a term lookup cost no
     /// range read at all.
     pub resident_dictionary: bool,
+    /// Read neighbouring blocks in one request (`SPEC.md` §4 allows it: the
+    /// count can only fall). On by default, as in the other readers; the
+    /// conformance tests turn it off to check the count the cases state,
+    /// block by block.
+    pub coalesce: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        OpenOptions {
+            resident_dictionary: false,
+            coalesce: true,
+        }
+    }
 }
 
 /// An open Mokuji file.
@@ -233,6 +247,7 @@ pub struct Index<R> {
     payload_codec: SectionCodec,
     /// The whole term blocks section, if it is being held rather than fetched.
     term_blocks: Option<(u64, Vec<u8>)>,
+    coalesce: bool,
 }
 
 impl<R: RangeReader> Index<R> {
@@ -400,12 +415,23 @@ impl<R: RangeReader> Index<R> {
             term_blocks_codec,
             payload_codec,
             term_blocks,
+            coalesce: options.coalesce,
             doc_lengths,
             columns,
             completions,
             sections,
             reader,
         })
+    }
+
+    /// Whether neighbouring blocks are read in one request.
+    pub fn coalesce(&self) -> bool {
+        self.coalesce
+    }
+
+    /// Turns reading neighbouring blocks in one request on or off.
+    pub fn set_coalesce(&mut self, on: bool) {
+        self.coalesce = on;
     }
 
     /// What the file is read through, so a caller can ask a `CountingReader`
@@ -555,6 +581,76 @@ impl<R: RangeReader> Index<R> {
         decode_unit(self.term_blocks_codec, bytes)
     }
 
+    /// Reads several term blocks, decoded, keyed by ordinal: a request for
+    /// each run of neighbouring blocks, or none when the dictionary is held.
+    pub async fn read_term_blocks(&self, ordinals: &[u32]) -> Result<BTreeMap<u32, Vec<u8>>> {
+        let mut out = BTreeMap::new();
+        if self.term_blocks.is_some() {
+            for &ordinal in ordinals {
+                if let std::collections::btree_map::Entry::Vacant(slot) = out.entry(ordinal) {
+                    slot.insert(self.read_term_block(ordinal).await?);
+                }
+            }
+            return Ok(out);
+        }
+        let block_count = TermIndex::new(&self.term_index)?.block_count();
+        let wanted: Vec<u64> = ordinals.iter().map(|&o| u64::from(o)).collect();
+        let raw = self
+            .block_runs(&wanted, |o| self.term_block_bounds(o as u32, block_count))
+            .await?;
+        for (ordinal, bytes) in raw {
+            out.insert(ordinal as u32, decode_unit(self.term_blocks_codec, bytes)?);
+        }
+        Ok(out)
+    }
+
+    /// Reads blocks as stored, a request for each run of neighbours.
+    ///
+    /// Blocks are laid end to end, so ordinals that follow one another are
+    /// one contiguous range of the file, and reading them as one costs a
+    /// single request where reading them apart costs one each.
+    async fn block_runs(
+        &self,
+        ordinals: &[u64],
+        bounds: impl Fn(u64) -> Result<(u64, u32)>,
+    ) -> Result<BTreeMap<u64, Vec<u8>>> {
+        let mut sorted = ordinals.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut runs: Vec<Vec<u64>> = Vec::new();
+        for ordinal in sorted {
+            match runs.last_mut() {
+                Some(run) if self.coalesce && run.last() == Some(&(ordinal - 1)) => {
+                    run.push(ordinal);
+                }
+                _ => runs.push(vec![ordinal]),
+            }
+        }
+        let disorder = || Error::Malformed {
+            detail: "blocks are not laid out in order",
+        };
+        let mut out = BTreeMap::new();
+        for run in runs {
+            let (start, _) = bounds(run[0])?;
+            let (last_offset, last_len) = bounds(*run.last().expect("not empty"))?;
+            let end = last_offset
+                .checked_add(u64::from(last_len))
+                .ok_or_else(disorder)?;
+            let len = end.checked_sub(start).ok_or_else(disorder)?;
+            let len = u32::try_from(len).map_err(|_| Error::Malformed {
+                detail: "a run of blocks is implausibly long",
+            })?;
+            let bytes = self.reader.read_range(start, len).await?;
+            for ordinal in run {
+                let (offset, len) = bounds(ordinal)?;
+                let at = offset.checked_sub(start).ok_or_else(disorder)? as usize;
+                let block = bytes.get(at..at + len as usize).ok_or_else(disorder)?;
+                out.insert(ordinal, block.to_vec());
+            }
+        }
+        Ok(out)
+    }
+
     /// Reads one document's payload.
     ///
     /// Each call reads a block. A query goes through [`Index::search`] instead,
@@ -574,8 +670,9 @@ impl<R: RangeReader> Index<R> {
         find_in_block(&block, term, self.block_shape())
     }
 
-    /// Looks several terms up, at one range read per dictionary block they
-    /// fall in.
+    /// Looks several terms up, at most one range read per run of neighbouring
+    /// dictionary blocks they fall in (one per block with coalescing off),
+    /// and none for a held dictionary.
     ///
     /// Worth having separately from `lookup` because a term entry carries
     /// `doc_freq`, and a reader that wants to know how expensive a term is
@@ -589,12 +686,8 @@ impl<R: RangeReader> Index<R> {
             ordinals.push(index.locate(term)?);
         }
 
-        let mut blocks: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-        for ordinal in ordinals.iter().flatten() {
-            if !blocks.contains_key(ordinal) {
-                blocks.insert(*ordinal, self.read_term_block(*ordinal).await?);
-            }
-        }
+        let wanted: Vec<u32> = ordinals.iter().flatten().copied().collect();
+        let blocks = self.read_term_blocks(&wanted).await?;
 
         let mut found = Vec::with_capacity(terms.len());
         for (term, ordinal) in terms.iter().zip(&ordinals) {
@@ -683,6 +776,9 @@ impl<R: RangeReader> Index<R> {
     pub async fn prefix(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, TermEntry)>> {
         let index = TermIndex::new(&self.term_index)?;
         let boundaries = index.keys()?;
+        if nothing_begins_with(&boundaries, prefix) {
+            return Ok(Vec::new());
+        }
         // A prefix sorts at or before the first term it matches, so the block
         // that would contain the prefix itself is where the range starts.
         let start = index.locate(prefix)?.unwrap_or(0);
@@ -708,6 +804,95 @@ impl<R: RangeReader> Index<R> {
                     // Terms ascend, so the first non-matching key after a match
                     // ends the range; nothing later can rejoin it.
                     return Ok(out);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Terms beginning with each of several prefixes, every one of them.
+    ///
+    /// Which blocks each prefix spans is answerable from the resident index,
+    /// so all of them are known before any is read, and they are fetched
+    /// together: a request for each run of neighbouring blocks, however many
+    /// prefixes fall in it. This is what a query over an area needs — the
+    /// cells covering it are many short prefixes, mostly in blocks next to
+    /// one another — where [`Index::prefix`], which walks one prefix a block at
+    /// a time, would make a request per block per prefix.
+    pub async fn prefix_many(&self, prefixes: &[&[u8]]) -> Result<Vec<Vec<(Vec<u8>, TermEntry)>>> {
+        let index = TermIndex::new(&self.term_index)?;
+        let boundaries = index.keys()?;
+        let mut spans = Vec::with_capacity(prefixes.len());
+        let mut ordinals = Vec::new();
+        for prefix in prefixes {
+            if nothing_begins_with(&boundaries, prefix) {
+                spans.push(None);
+                continue;
+            }
+            let start = index.locate(prefix)?.unwrap_or(0);
+            let mut end = start;
+            while (end + 1) < index.block_count()
+                && boundaries[end as usize + 1].starts_with(prefix)
+            {
+                end += 1;
+            }
+            ordinals.extend(start..=end);
+            spans.push(Some((start, end)));
+        }
+        let blocks = self.read_term_blocks(&ordinals).await?;
+        let mut out = Vec::with_capacity(prefixes.len());
+        for (prefix, span) in prefixes.iter().zip(spans) {
+            let mut found = Vec::new();
+            if let Some((start, end)) = span {
+                for ordinal in start..=end {
+                    for (key, entry) in term::decode_block(&blocks[&ordinal], self.block_shape())? {
+                        if key.starts_with(prefix) {
+                            found.push((key, entry));
+                        }
+                    }
+                }
+            }
+            out.push(found);
+        }
+        Ok(out)
+    }
+
+    /// Terms from `low` to `high`, both inclusive, in order, at most `limit`
+    /// of them; a `limit` of zero means all, as for [`Index::prefix`].
+    ///
+    /// The same walk as `prefix`, with a different test for where it stops:
+    /// the dictionary is sorted, so a range of keys is a run of neighbouring
+    /// entries, and whether the run continues past a block is answerable from
+    /// the resident index alone. A range that ends before the first term
+    /// costs no read.
+    pub async fn range(
+        &self,
+        low: &[u8],
+        high: &[u8],
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, TermEntry)>> {
+        let index = TermIndex::new(&self.term_index)?;
+        let boundaries = index.keys()?;
+        let mut out = Vec::new();
+        match boundaries.first() {
+            Some(first) if high >= first.as_slice() => {}
+            _ => return Ok(out),
+        }
+        let start = index.locate(low)?.unwrap_or(0);
+        for ordinal in start..index.block_count() {
+            if ordinal > start && boundaries[ordinal as usize].as_slice() > high {
+                break;
+            }
+            let block = self.read_term_block(ordinal).await?;
+            for (key, entry) in term::decode_block(&block, self.block_shape())? {
+                if key.as_slice() > high {
+                    return Ok(out);
+                }
+                if key.as_slice() >= low {
+                    out.push((key, entry));
+                    if out.len() == limit {
+                        return Ok(out);
+                    }
                 }
             }
         }
@@ -810,17 +995,33 @@ impl<R: RangeReader> Index<R> {
             .collect()
     }
 
-    /// Fetches payload for documents given in ascending order.
+    /// Fetches payload for documents, in the order given.
     ///
-    /// Blocks are shared between adjacent documents, so this costs one read per
-    /// distinct block rather than one per document.
+    /// Blocks are shared between documents, so this costs at most one read per
+    /// run of neighbouring blocks the documents fall in (one per distinct
+    /// block with coalescing off), rather than one per document.
     pub async fn payload_span(&self, docs: &[u64]) -> Result<Vec<Payload>> {
-        let mut cache = PayloadCache::default();
-        let mut out = Vec::with_capacity(docs.len());
-        for &doc in docs {
-            out.push(self.payload(doc, &mut cache).await?);
+        if !self.header.flags.contains(Flags::HAS_PAYLOAD) {
+            return Ok(vec![Payload::Opaque(Vec::new()); docs.len()]);
         }
-        Ok(out)
+        let layout = self.payload_layout()?;
+        let mut ordinals = Vec::with_capacity(docs.len());
+        for &doc in docs {
+            ordinals.push(layout.ordinal(doc)?);
+        }
+        // Every block the documents fall in, a request for each run of
+        // neighbours, so the order the documents come in costs nothing.
+        let raw = self
+            .block_runs(&ordinals, |o| bounds(&self.payload_offsets, 12, o as usize))
+            .await?;
+        let mut blocks = BTreeMap::new();
+        for (ordinal, bytes) in raw {
+            blocks.insert(ordinal, decode_unit(self.payload_codec, bytes)?);
+        }
+        docs.iter()
+            .zip(ordinals)
+            .map(|(&doc, ordinal)| layout.entry(&blocks[&ordinal], doc))
+            .collect()
     }
 
     /// Intersects `terms` and returns the matching documents with their payload.
@@ -863,50 +1064,45 @@ impl<R: RangeReader> Index<R> {
         if !self.header.flags.contains(Flags::HAS_PAYLOAD) {
             return Ok(Payload::Opaque(Vec::new()));
         }
-        let section = &self.payload_offsets;
-        let head = section.get(0..12).ok_or(Error::Malformed {
+        let layout = self.payload_layout()?;
+        let ordinal = layout.ordinal(doc)?;
+
+        // Results are visited in document ID order and payload is stored in
+        // that order, so documents sharing a block share a read. This is the
+        // difference between m and m' in SPEC.md §4.
+        if cache.ordinal != Some(ordinal) {
+            let (offset, len) = bounds(&self.payload_offsets, 12, ordinal as usize)?;
+            let bytes = self.reader.read_range(offset, len).await?;
+            cache.block = decode_unit(self.payload_codec, bytes)?;
+            cache.ordinal = Some(ordinal);
+        }
+        layout.entry(&cache.block, doc)
+    }
+
+    /// The payload offsets section's header.
+    fn payload_layout(&self) -> Result<PayloadLayout> {
+        let head = self.payload_offsets.get(0..12).ok_or(Error::Malformed {
             detail: "payload offsets section is too short",
         })?;
         let codec = PayloadCodec::from_byte(head[0])?;
-        let values_per_doc = head[1];
-        let scale_exponent = head[2] as i8;
         if head[3] != 0 {
             return Err(Error::Malformed {
                 detail: "reserved payload offset bytes are non-zero",
             });
         }
         let per_block = u64::from(u32::from_le_bytes(head[4..8].try_into().expect("length")));
-        let block_count = u32::from_le_bytes(head[8..12].try_into().expect("length"));
         if per_block == 0 {
             return Err(Error::Malformed {
                 detail: "payload block size is zero",
             });
         }
-
-        let ordinal = doc / per_block;
-        let index = doc % per_block;
-        if ordinal >= u64::from(block_count) {
-            return Err(Error::Malformed {
-                detail: "document has no payload block",
-            });
-        }
-
-        // Results are visited in document ID order and payload is stored in
-        // that order, so documents sharing a block share a read. This is the
-        // difference between m and m' in SPEC.md §4.
-        if cache.ordinal != Some(ordinal) {
-            let (offset, len) = bounds(section, 12, ordinal as usize)?;
-            let bytes = self.reader.read_range(offset, len).await?;
-            cache.block = decode_unit(self.payload_codec, bytes)?;
-            cache.ordinal = Some(ordinal);
-        }
-        match codec {
-            PayloadCodec::Opaque => Ok(Payload::Opaque(opaque_entry(&cache.block, index)?)),
-            PayloadCodec::DeltaInts => Ok(Payload::Ints {
-                values: int_entry(&cache.block, index, values_per_doc)?,
-                scale_exponent,
-            }),
-        }
+        Ok(PayloadLayout {
+            codec,
+            values_per_doc: head[1],
+            scale_exponent: head[2] as i8,
+            per_block,
+            block_count: u32::from_le_bytes(head[8..12].try_into().expect("length")),
+        })
     }
 
     fn term_block_bounds(&self, ordinal: u32, block_count: u32) -> Result<(u64, u32)> {
@@ -921,6 +1117,51 @@ impl<R: RangeReader> Index<R> {
             });
         }
         bounds(&self.term_block_offsets, 0, ordinal as usize)
+    }
+}
+
+/// How payload is laid out, from the payload offsets section's header.
+struct PayloadLayout {
+    codec: PayloadCodec,
+    values_per_doc: u8,
+    scale_exponent: i8,
+    per_block: u64,
+    block_count: u32,
+}
+
+impl PayloadLayout {
+    /// The block a document's payload is in.
+    fn ordinal(&self, doc: u64) -> Result<u64> {
+        let ordinal = doc / self.per_block;
+        if ordinal >= u64::from(self.block_count) {
+            return Err(Error::Malformed {
+                detail: "document has no payload block",
+            });
+        }
+        Ok(ordinal)
+    }
+
+    /// A document's payload, from its block, decoded.
+    fn entry(&self, block: &[u8], doc: u64) -> Result<Payload> {
+        let index = doc % self.per_block;
+        match self.codec {
+            PayloadCodec::Opaque => Ok(Payload::Opaque(opaque_entry(block, index)?)),
+            PayloadCodec::DeltaInts => Ok(Payload::Ints {
+                values: int_entry(block, index, self.values_per_doc)?,
+                scale_exponent: self.scale_exponent,
+            }),
+        }
+    }
+}
+
+/// Whether, from the resident index alone, no term can begin with `prefix`.
+/// The first boundary key is the smallest term; when it sorts after the
+/// prefix without beginning with it, every term does, and none can begin with
+/// it either.
+fn nothing_begins_with(boundaries: &[Vec<u8>], prefix: &[u8]) -> bool {
+    match boundaries.first() {
+        None => true,
+        Some(first) => prefix < first.as_slice() && !first.starts_with(prefix),
     }
 }
 

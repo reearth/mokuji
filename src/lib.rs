@@ -4,8 +4,8 @@
 //! The layer above [`read`], which reads sections and takes terms as
 //! bytes already normalized. This one puts what was typed through the
 //! tokenizer the file records, as a person's query has to be, and answers in
-//! the same shape as the TypeScript reader (`mokuji`) and the Python
-//! one, so that the three read alike:
+//! the same shape as the TypeScript, Python and Go readers, so that the four
+//! read alike:
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), mokuji::Error> {
@@ -19,16 +19,94 @@
 //! The methods are `async` because a range may be fetched over a network. A
 //! file on disk is read synchronously underneath, so a program with no
 //! runtime can drive them with [`block_on`].
+//!
+//! [`MokujiCollection`] is the same for a collection (`MANIFEST.md`), and
+//! [`query`] has the questions that take more than one lookup.
+//!
+//! # Reading over HTTP
+//!
+//! The crate has no HTTP client, so that it pulls in no HTTP stack; the
+//! caller plugs in the one it already uses. A file is read through
+//! [`RangeReader`], whose `read_range` is a future, or through
+//! [`BlockingRangeReader`], wrapped in [`Blocking`], for a client that blocks.
+//! Either way a read is one request for exactly the bytes asked for, and a
+//! server that answers `200` rather than `206` ignored the `Range` header and
+//! sent the whole file: that is an error, not a slow success.
+//!
+//! An async reader over `reqwest`, driven by the caller's runtime:
+//!
+//! ```ignore
+//! use mokuji::{FormatError, MokujiIndex, RangeReader};
+//!
+//! struct Http { client: reqwest::Client, url: String, len: u64 }
+//!
+//! fn failed(detail: impl ToString) -> FormatError {
+//!     FormatError::Read { kind: std::io::ErrorKind::Other, detail: detail.to_string() }
+//! }
+//!
+//! impl RangeReader for Http {
+//!     fn file_len(&self) -> u64 { self.len }
+//!     async fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>, FormatError> {
+//!         // A Range header cannot ask for nothing, so nothing is not asked for.
+//!         if len == 0 {
+//!             return Ok(Vec::new());
+//!         }
+//!         let range = format!("bytes={offset}-{}", offset + u64::from(len) - 1);
+//!         let response = self.client.get(&self.url)
+//!             .header(reqwest::header::RANGE, range)
+//!             .send().await.map_err(failed)?;
+//!         if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+//!             return Err(failed(format!("the server answered {}", response.status())));
+//!         }
+//!         Ok(response.bytes().await.map_err(failed)?.to_vec())
+//!     }
+//! }
+//!
+//! // The length from a HEAD request, or a first ranged GET's Content-Range.
+//! let index = MokujiIndex::open(Http { client, url, len }).await?;
+//! ```
+//!
+//! A blocking one over `ureq`, with no runtime, driven by [`block_on`]:
+//!
+//! ```ignore
+//! use mokuji::{block_on, Blocking, BlockingRangeReader, FormatError, MokujiIndex};
+//!
+//! struct Http { url: String, len: u64 }
+//!
+//! fn failed(detail: impl ToString) -> FormatError {
+//!     FormatError::Read { kind: std::io::ErrorKind::Other, detail: detail.to_string() }
+//! }
+//!
+//! impl BlockingRangeReader for Http {
+//!     fn file_len(&self) -> u64 { self.len }
+//!     fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>, FormatError> {
+//!         if len == 0 {
+//!             return Ok(Vec::new());
+//!         }
+//!         let range = format!("bytes={offset}-{}", offset + u64::from(len) - 1);
+//!         let response = ureq::get(&self.url).header("Range", &range).call().map_err(failed)?;
+//!         if response.status() != 206 {
+//!             return Err(failed(format!("the server answered {}", response.status())));
+//!         }
+//!         response.into_body().read_to_vec().map_err(failed)
+//!     }
+//! }
+//!
+//! let index = block_on(MokujiIndex::open(Blocking(Http { url, len })))?;
+//! ```
 
 use std::path::Path;
+use std::sync::Arc;
 
 // The modules follow the sections of the specification, because keeping the
 // dictionary, the postings and the payload from knowing about each other is a
 // requirement of the format and not only good practice.
 pub mod codec;
+mod collection;
 pub mod format;
 pub mod manifest;
 pub mod meta;
+pub mod query;
 pub mod read;
 pub mod tokenize;
 pub mod write;
@@ -41,9 +119,15 @@ pub mod cli;
 use crate::meta::Meta;
 use crate::read::{Column, CountingReader, Index, TermEntry};
 
+pub use crate::collection::{
+    CollectionCompletion, CollectionSearch, CollectionStats, MokujiCollection,
+};
 pub use crate::format::Error as FormatError;
 pub use crate::read::block_on::block_on;
-pub use crate::read::{FileReader, Payload, RangeReader, ReadStats, SliceReader};
+pub use crate::read::{
+    Blocking, BlockingRangeReader, FileReader, OpenOptions, Payload, RangeReader, ReadStats,
+    RequestInfo, SliceReader,
+};
 pub use crate::tokenize::Tokenizer;
 
 /// What can go wrong opening or asking a file.
@@ -53,6 +137,13 @@ pub enum Error {
     File(FormatError),
     /// A query named an attribute column the file does not carry.
     NoColumn(String),
+    /// [`query::locate`] was asked of a file that does not say its geohash
+    /// precisions and geometry scale, and the caller did not say them either.
+    NotCoverings,
+    /// A payload's rings are not the integers `geometry=delta-int-1e…` writes.
+    Rings,
+    /// A collection's manifest, or a segment against it, was refused.
+    Collection(manifest::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -62,6 +153,14 @@ impl std::fmt::Display for Error {
             Error::NoColumn(name) => {
                 write!(f, "this index carries no attribute column called '{name}'")
             }
+            Error::NotCoverings => {
+                write!(
+                    f,
+                    "the file does not say its geohash precisions and geometry scale"
+                )
+            }
+            Error::Rings => write!(f, "rings are not integers"),
+            Error::Collection(e) => write!(f, "{e}"),
         }
     }
 }
@@ -122,11 +221,18 @@ pub struct Completion {
     pub docs: Vec<u64>,
     /// Their payloads, in the same order.
     pub payloads: Vec<Payload>,
+    /// The reads since the last reset when the documents were known, before
+    /// any payload: zero when the completions section answered on a fresh
+    /// count.
+    pub requests_before_payload: u32,
 }
+
+/// A test of a document by its ID, for [`SearchOptions::filter`].
+pub type DocFilter = Arc<dyn Fn(u64) -> bool + Send + Sync>;
 
 /// How a search combines and ranks its terms. The defaults are `mokuji
 /// search`'s, and the TypeScript reader's.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SearchOptions {
     /// How many results to return with their payload.
     pub limit: usize,
@@ -142,8 +248,30 @@ pub struct SearchOptions {
     /// An attribute column added to each score as `ln(1 + value)`, a static
     /// prior.
     pub boost: Option<String>,
-    /// Require the terms at consecutive positions; the file must carry them.
+    /// Require the terms at consecutive positions, in the order they were
+    /// typed; the file must carry them. Of the terms `probe` leaves out,
+    /// nothing is required, but each read term keeps the place it was typed
+    /// at.
     pub phrase: bool,
+    /// Keep only the documents this accepts, by document ID, before they are
+    /// tested for a phrase, ranked, or have any payload read, so that
+    /// discarding a document costs no payload. `matched` then counts what it
+    /// kept.
+    pub filter: Option<DocFilter>,
+}
+
+impl std::fmt::Debug for SearchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchOptions")
+            .field("limit", &self.limit)
+            .field("any", &self.any)
+            .field("probe", &self.probe)
+            .field("length_norm", &self.length_norm)
+            .field("boost", &self.boost)
+            .field("phrase", &self.phrase)
+            .field("filter", &self.filter.as_ref().map(|_| "Fn(u64) -> bool"))
+            .finish()
+    }
 }
 
 impl Default for SearchOptions {
@@ -155,6 +283,7 @@ impl Default for SearchOptions {
             length_norm: 0.75,
             boost: None,
             phrase: false,
+            filter: None,
         }
     }
 }
@@ -197,7 +326,13 @@ impl<R: RangeReader> MokujiIndex<R> {
     /// Opens a file through `reader`: its header and everything resident, the
     /// table of contents, in one read where the layout allows.
     pub async fn open(reader: R) -> Result<Self> {
-        let index = Index::open(CountingReader::new(reader)).await?;
+        Self::open_with(reader, OpenOptions::default()).await
+    }
+
+    /// [`MokujiIndex::open`], choosing how much to hold and whether to read
+    /// neighbouring blocks as one.
+    pub async fn open_with(reader: R, options: OpenOptions) -> Result<Self> {
+        let index = Index::open_with(CountingReader::new(reader), options).await?;
         let meta = Meta::parse(index.meta())?;
         let tokenizer = Tokenizer::parse(&meta.tokenizer.id);
         Ok(MokujiIndex {
@@ -245,6 +380,24 @@ impl<R: RangeReader> MokujiIndex<R> {
     /// The reads and bytes since open, or since [`Self::reset_stats`].
     pub fn stats(&self) -> ReadStats {
         self.index.reader().stats()
+    }
+
+    /// Calls `f` after every range read with where it began and how many
+    /// bytes it returned, so a caller can show the requests themselves;
+    /// `None` stops.
+    pub fn set_on_request(&self, f: Option<Box<dyn Fn(RequestInfo) + Send>>) {
+        self.index.reader().set_on_request(f);
+    }
+
+    /// Whether neighbouring blocks are read in one request; on unless the
+    /// options it was opened with said otherwise.
+    pub fn coalesce(&self) -> bool {
+        self.index.coalesce()
+    }
+
+    /// Turns reading neighbouring blocks in one request on or off.
+    pub fn set_coalesce(&mut self, on: bool) {
+        self.index.set_coalesce(on);
     }
 
     /// Starts counting from zero, so that what follows is one query's cost.
@@ -307,12 +460,14 @@ impl<R: RangeReader> MokujiIndex<R> {
     pub async fn complete(&self, text: &str, limit: usize) -> Result<Completion> {
         let normalized = self.normalize(text);
         let (docs, from_table) = self.index.complete(normalized.as_bytes(), limit).await?;
+        let requests_before_payload = self.stats().reads;
         let payloads = self.index.payload_span(&docs).await?;
         Ok(Completion {
             normalized,
             from_table,
             docs,
             payloads,
+            requests_before_payload,
         })
     }
 
@@ -394,6 +549,7 @@ pub async fn rank<R: RangeReader>(
         phrase,
         ..
     } = *options;
+    let filter = options.filter.as_deref();
     let empty = |probed: Vec<(String, u64)>, skipped: usize| Ranking {
         ranked: Vec::new(),
         probed,
@@ -411,10 +567,12 @@ pub async fn rank<R: RangeReader>(
     let keys: Vec<&[u8]> = terms.iter().map(|t| t.as_bytes()).collect();
     let found = index.lookup_many(&keys).await?;
 
-    let mut present: Vec<(String, TermEntry)> = Vec::new();
-    for (term, entry) in terms.iter().zip(found) {
+    // Each term with the place it was typed at, which a phrase is tested
+    // against: `probe` reorders them by rarity.
+    let mut present: Vec<(usize, String, TermEntry)> = Vec::new();
+    for (at, (term, entry)) in terms.iter().zip(found).enumerate() {
         match entry {
-            Some(entry) => present.push((term.clone(), entry)),
+            Some(entry) => present.push((at, term.clone(), entry)),
             // A term nobody wrote down cannot be in an intersection, and there
             // is nothing to skip past in a union.
             None if !any => return Ok(empty(Vec::new(), 0)),
@@ -429,7 +587,7 @@ pub async fn rank<R: RangeReader>(
     // ones, and costs the least to say it.
     let mut skipped = 0;
     if let Some(probe) = probe {
-        present.sort_by_key(|(_, entry)| entry.doc_freq);
+        present.sort_by_key(|(_, _, entry)| entry.doc_freq);
         skipped = present.len().saturating_sub(probe);
         present.truncate(probe);
         // A probe of zero reads no postings, so nothing can be matched.
@@ -439,12 +597,12 @@ pub async fn rank<R: RangeReader>(
     }
 
     let mut runs = Vec::with_capacity(present.len());
-    for (_, entry) in &present {
+    for (_, _, entry) in &present {
         runs.push((entry.clone(), index.postings(entry).await?));
     }
     let probed: Vec<(String, u64)> = present
         .iter()
-        .map(|(term, entry)| (term.clone(), entry.doc_freq))
+        .map(|(_, term, entry)| (term.clone(), entry.doc_freq))
         .collect();
 
     let mut matched: Vec<u64> = if any {
@@ -462,25 +620,54 @@ pub async fn rank<R: RangeReader>(
         }
         matched
     };
+    if let Some(keep) = filter {
+        matched.retain(|&doc| keep(doc));
+    }
     if matched.is_empty() {
         return Ok(empty(probed, skipped));
     }
 
     if phrase {
-        // One further read per term, and only here. The terms have to occur at
-        // consecutive positions, in the order they were typed.
-        let mut places = Vec::with_capacity(runs.len());
-        for (entry, postings) in &runs {
-            places.push(index.positions(entry, postings).await?);
+        // One further read per term, and only here; a term typed twice is
+        // read once. Each term read has to occur where it was typed relative
+        // to the others: at `p + k` for the term typed `k`th, for one `p`. A
+        // union admits documents missing a term, which no phrase holds.
+        let mut places: Vec<Vec<Vec<u64>>> = Vec::new();
+        let mut row_of = Vec::with_capacity(runs.len());
+        let mut read: Vec<&str> = Vec::new();
+        for ((_, term, _), (entry, postings)) in present.iter().zip(&runs) {
+            if let Some(j) = read.iter().position(|t| t == term) {
+                row_of.push(j);
+                continue;
+            }
+            let rows = index.positions(entry, postings).await?;
+            // A row per document the postings name, or the file contradicts
+            // itself.
+            if rows.len() != postings.docs.len() {
+                return Err(Error::File(FormatError::Malformed {
+                    detail: "positions disagree with the postings",
+                }));
+            }
+            read.push(term);
+            places.push(rows);
+            row_of.push(places.len() - 1);
         }
         matched.retain(|doc| {
-            let at = |i: usize| -> &[u64] {
-                let run = &runs[i].1;
-                let index = run.docs.binary_search(doc).expect("in the intersection");
-                places[i][index].as_slice()
-            };
-            at(0).iter().any(|&start| {
-                (1..runs.len()).all(|i| at(i).binary_search(&(start + i as u64)).is_ok())
+            let mut at = Vec::with_capacity(runs.len());
+            for ((_, postings), &row) in runs.iter().zip(&row_of) {
+                match postings.docs.binary_search(doc) {
+                    Ok(index) => at.push(places[row][index].as_slice()),
+                    Err(_) => return false,
+                }
+            }
+            // Wide enough that no position in a hostile file overflows it.
+            let first = present[0].0 as i128;
+            at[0].iter().any(|&start| {
+                let p = i128::from(start) - first;
+                present.iter().zip(&at).skip(1).all(|((k, _, _), places)| {
+                    u64::try_from(p + *k as i128)
+                        .is_ok_and(|want| places.binary_search(&want).is_ok())
+                })
             })
         });
         if matched.is_empty() {

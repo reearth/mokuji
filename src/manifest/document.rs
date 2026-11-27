@@ -120,6 +120,15 @@ impl Manifest {
         }
     }
 
+    /// Where a segment is on disk, for a manifest read from `manifest`: its
+    /// path taken relative to the manifest's directory.
+    pub fn segment_path(manifest: &std::path::Path, segment: &Segment) -> std::path::PathBuf {
+        manifest
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(&segment.path)
+    }
+
     /// The manifest as JSON, one key order and one layout, so that the same
     /// collection is always written down the same way.
     pub fn to_json(&self) -> String {

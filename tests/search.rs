@@ -126,3 +126,144 @@ fn carries_its_credit_and_normalizes_what_was_typed() {
     assert_eq!(done.normalized, "black se");
     assert!(!done.docs.is_empty());
 }
+
+fn docs(found: &mokuji::SearchResult) -> Vec<u64> {
+    found.results.iter().map(|r| r.doc).collect()
+}
+
+#[test]
+fn a_phrase_holds_its_terms_where_they_were_typed() {
+    let tiny = block_on(MokujiIndex::open_file(fixture("tiny"))).unwrap();
+    let phrase = SearchOptions {
+        phrase: true,
+        ..SearchOptions::default()
+    };
+    let ask = |query: &str, options: &SearchOptions| block_on(tiny.search(query, options)).unwrap();
+    assert_eq!(docs(&ask("tokyo chuo", &phrase)), [1]);
+    assert!(docs(&ask("chuo tokyo", &phrase)).is_empty());
+    assert_eq!(docs(&ask("osaka chuo", &phrase)), [3]);
+
+    // `probe` reads the rarer term alone; a phrase of one term is the term.
+    let probed = SearchOptions {
+        probe: Some(1),
+        ..phrase.clone()
+    };
+    let plain = SearchOptions {
+        probe: Some(1),
+        ..SearchOptions::default()
+    };
+    let found = ask("tokyo chuo", &probed);
+    assert_eq!(
+        found
+            .probed
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>(),
+        ["chuo"]
+    );
+    assert_eq!(docs(&found), [1, 3]);
+    assert_eq!(docs(&found), docs(&ask("tokyo chuo", &plain)));
+
+    // A union admits documents missing a term, and no phrase holds them.
+    let any = SearchOptions {
+        any: true,
+        ..phrase.clone()
+    };
+    assert_eq!(docs(&ask("tokyo chuo", &any)), [1]);
+
+    let dict = block_on(MokujiIndex::open_file(fixture("dict"))).unwrap();
+    let refused = block_on(dict.search("東京都", &phrase)).unwrap_err();
+    assert!(refused
+        .to_string()
+        .contains("this index carries no positions, so it cannot test a phrase"));
+}
+
+#[test]
+fn a_filter_leaves_documents_out_before_their_positions_or_payload() {
+    let tiny = block_on(MokujiIndex::open_file(fixture("tiny"))).unwrap();
+    let not_one: mokuji::DocFilter = std::sync::Arc::new(|doc| doc != 1);
+    let filtered = SearchOptions {
+        filter: Some(not_one.clone()),
+        ..SearchOptions::default()
+    };
+    let phrase = SearchOptions {
+        phrase: true,
+        filter: Some(not_one),
+        ..SearchOptions::default()
+    };
+    tiny.reset_stats();
+    let without = block_on(tiny.search("tokyo chuo", &filtered)).unwrap();
+    let reads = tiny.stats().reads;
+    tiny.reset_stats();
+    let with = block_on(tiny.search("tokyo chuo", &phrase)).unwrap();
+    assert_eq!((without.matched, with.matched), (0, 0));
+    // Nothing survived to be tested, so no positions were read.
+    assert_eq!(tiny.stats().reads, reads);
+}
+
+#[test]
+fn rank_is_search_without_the_payload() {
+    let tiny = block_on(MokujiIndex::open_file(fixture("tiny"))).unwrap();
+    let options = SearchOptions::default();
+    let found = block_on(tiny.search("tokyo chuo", &options)).unwrap();
+    tiny.reset_stats();
+    let terms = ["tokyo".to_string(), "chuo".to_string()];
+    let ranking = block_on(mokuji::rank(tiny.index(), &terms, None, &options)).unwrap();
+    let ranked: Vec<(u64, Option<f64>)> = found.results.iter().map(|r| (r.doc, r.score)).collect();
+    assert_eq!(ranking.ranked, ranked);
+    // The dictionary block and the postings, and no payload block.
+    let without_payload = tiny.stats().reads;
+    tiny.reset_stats();
+    block_on(tiny.search("tokyo chuo", &options)).unwrap();
+    assert!(without_payload < tiny.stats().reads);
+}
+
+#[test]
+fn a_completion_says_what_it_read_before_the_payload() {
+    let names = block_on(MokujiIndex::open_file(fixture("names"))).unwrap();
+    names.reset_stats();
+    let found = block_on(names.complete("t", 2)).unwrap();
+    assert!(found.from_table);
+    assert_eq!(found.requests_before_payload, 0);
+    assert_eq!(names.stats().reads, 1);
+}
+
+#[test]
+fn reports_every_request() {
+    let tiny = block_on(MokujiIndex::open_file(fixture("tiny"))).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    tiny.set_on_request(Some(Box::new(move |info| log.lock().unwrap().push(info))));
+    tiny.reset_stats();
+    block_on(tiny.search("tokyo chuo", &SearchOptions::default())).unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len() as u32, tiny.stats().reads);
+    assert_eq!(
+        seen.iter().map(|r| r.length).sum::<u64>(),
+        tiny.stats().bytes
+    );
+}
+
+#[test]
+fn an_open_file_can_move_to_another_thread() {
+    fn send<T: Send>() {}
+    send::<MokujiIndex<mokuji::FileReader>>();
+    send::<mokuji::MokujiCollection<mokuji::FileReader>>();
+}
+
+#[test]
+fn a_term_typed_twice_in_a_phrase_reads_its_positions_once() {
+    let tiny = block_on(MokujiIndex::open_file(fixture("tiny"))).unwrap();
+    let options = |phrase| SearchOptions {
+        phrase,
+        ..SearchOptions::default()
+    };
+    let plain = block_on(tiny.search("chuo chuo", &options(false))).unwrap();
+    tiny.reset_stats();
+    let found = block_on(tiny.search("chuo chuo", &options(true))).unwrap();
+    // `chuo` is never next to itself.
+    assert_eq!((plain.matched, found.matched), (2, 0));
+    // Its dictionary block, with the postings inline, and its positions once;
+    // nothing matched, so no payload.
+    assert_eq!(tiny.stats().reads, 2);
+}

@@ -47,6 +47,21 @@ ranking and before any payload is read, so that discarding a document costs no
 payload. Numbered by kind, a corpus is filtered by kind with an ID range:
 `filter=lambda doc: doc < 1200`.
 
+`phrase=True` keeps only the documents where the terms occur at consecutive
+positions, in the order typed, at one more read per term; the file must carry
+positions. With `probe`, the terms read are tested at their places in the
+query. `rank(terms, ...)` is the half of a search before the payload: every
+document matched, best first, with what finding them read, for a caller that
+decides itself which payloads to fetch.
+
+```python
+tiny.search("tokyo chuo", phrase=True)  # "tokyo chuo", not "chuo … tokyo"
+tiny.rank(["tokyo", "chuo"]).ranked     # [Scored(doc=1, score=1.04…)]
+```
+
+An attribute column the file does not carry raises `NoColumnError`, a
+`MokujiError` and, as before, a `ValueError`.
+
 The scores agree with `mokuji search`'s and the TypeScript reader's to about
 1e-12, not to the last bit. JavaScript's `Math.log` is not correctly rounded,
 and Python's is, so two documents whose scores differ by less than that may
@@ -56,7 +71,66 @@ Every result is accompanied by `index.stats` — the range requests and bytes it
 cost since opening or `reset_stats()` — and `index.attribution` /
 `index.license`, the credit the file states. `index.generator` is the writer
 and every build parameter it records, including any a pipeline added to check
-when it opens the file.
+when it opens the file. `index.generation`, `index.attrs` (the application's
+additions, None when there are none) and `index.tokenizer_params` are the rest
+of what the metadata says, and `index.meta` all of it; `decode_cbor` decodes
+other CBOR the same way.
+
+### A collection
+
+`collection.search(query, limit)` is every live document holding every term,
+in collection order — segments in manifest order, documents in each
+segment's — with no ranking, since that needs a score the segments share.
+
+`parse_manifest(text)` reads and checks a manifest as the Rust crate does,
+refusing a version it does not implement, an empty collection, a content hash
+that is not `<algorithm>:<hex>`, deletes out of order and regions that are not
+ISO 3166-1 alpha-2 codes; `MokujiCollection.open` checks a manifest the same
+way. `within(manifest, countries)` restricts it to a place, and
+`manifest_to_json(manifest)` writes it as the Rust crate writes it, byte for
+byte.
+
+```python
+from mokuji import manifest_to_json, parse_manifest, within
+
+manifest = parse_manifest(open("world.json").read())
+japan = within(manifest, ["JP"])
+open("japan.json", "w").write(manifest_to_json(japan))
+```
+
+### An address typed past its key
+
+`lookup_prefix` gives the terms a prefix begins, and, when none does, the
+longest term one of the readings it is given begins with, marked `within`:
+the town an address typed down to its lot number is in, when the file keys
+towns. Every prefix of the readings is looked up at once.
+
+```python
+from mokuji import lookup_prefix
+
+q = index.normalize("東京都千代田区丸の内1丁目9番1号")
+hits = lookup_prefix(index, q, 10, [q])
+# [PrefixHit(term="東京都千代田区丸の内1丁目", doc=…, payload=…, match="within")]
+```
+
+### Which polygon holds a point
+
+`locate` answers from a file of geohash coverings, as `demo/reverse` builds:
+each polygon a document keyed by the cells that cover it, its label and rings
+as payload, and the file's `attrs` saying how (`geohash-precisions`,
+`geometry=delta-int-1e…`, and `payload-fields` for a label cut at U+001F).
+It looks up the point's cell at every precision at once and tests the
+candidates' rings even-odd.
+
+```python
+from mokuji import locate
+
+found = locate(index, 35.6812, 139.7671)
+# found.inside: [Polygon(doc=…, label=…, fields={"KEY_CODE": …}, rings=[[(lon, lat), …]])]
+```
+
+`geohash`, `decode_rings`, `contains`, `precisions_of`, `scale_of` and
+`fields_of` are the parts it is made of.
 
 ### Reading a file on hand
 
@@ -66,6 +140,14 @@ searched without being loaded, and costs what a query touches.
 ```python
 with MokujiIndex.open("postal.mokuji") as postal:
     postal.lookup("1000005", 10)
+```
+
+A file already in memory is a `BytesSource`. `resident_dictionary=True` holds
+the whole term dictionary as stored, at one more read when opening, and then
+a term lookup costs no read at all (SPEC.md §4.2):
+
+```python
+index = MokujiIndex.open(BytesSource(data), resident_dictionary=True)
 ```
 
 ### Reading from something else
@@ -152,3 +234,6 @@ and compare the answers.
 - `ja-address` strips `White_Space`, as the Rust tokenizer does; JavaScript's
   `trim` differs on U+0085 and U+FEFF.
 - Requests are made one after another, not at once.
+- `MokujiCollection.manifest` is the checked copy of the manifest, with only
+  the keys MANIFEST.md defines: an unknown key is dropped, `deletes` is always
+  a list, and `region` is None when the segment states none.

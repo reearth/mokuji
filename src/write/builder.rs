@@ -91,6 +91,63 @@ pub struct Completions {
     pub docs_per_entry: u32,
 }
 
+impl Options {
+    /// The options as `mokuji build` records them in `generator.params`, and
+    /// whether the build compressed, for a [`Meta`](crate::meta::Meta) the
+    /// caller composes: the same keys the TypeScript, Python and Go writers
+    /// give. A caller with parameters of its own, such as how the documents
+    /// were ordered, adds them.
+    pub fn params(&self) -> crate::meta::Value {
+        let mut params = self.recorded_params();
+        params.push((
+            "compress",
+            crate::meta::Value::Uint(u64::from(self.compress)),
+        ));
+        crate::meta::cbor_map(params)
+    }
+
+    /// What `mokuji build` records, without `compress`: the command's files
+    /// predate it, and are rebuilt byte for byte.
+    pub(crate) fn recorded_params(&self) -> Vec<(&'static str, crate::meta::Value)> {
+        use crate::meta::Value;
+        // A reader does not need the payload encoding, since the payload
+        // offsets section declares the codec, but a rebuild does; and where
+        // the scale is a decision about precision, recording it turns a
+        // shortened copy into one that says it was shortened.
+        let payload = match self.payload {
+            PayloadEncoding::Opaque => "opaque".to_string(),
+            PayloadEncoding::Ints { scale_exponent, .. } => {
+                format!("ints:{}", -i16::from(scale_exponent))
+            }
+        };
+        let mut params = vec![
+            ("terms_per_block", Value::Uint(self.terms_per_block as u64)),
+            (
+                "docs_per_payload_block",
+                Value::Uint(u64::from(self.docs_per_payload_block)),
+            ),
+            ("has_freqs", Value::Uint(u64::from(self.has_freqs))),
+            ("payload", Value::Text(payload)),
+            ("doc_lengths", Value::Uint(u64::from(self.doc_lengths))),
+            ("positions", Value::Uint(u64::from(self.positions))),
+            ("inline_postings", Value::Uint(self.inline_postings as u64)),
+        ];
+        if let Some(c) = self.completions {
+            // Which documents an entry lists is this writer's choice, and the
+            // file has to say what it was: the smallest document IDs, which
+            // rank by whatever the documents were numbered by.
+            params.push((
+                "completions",
+                Value::Text(format!(
+                    "{},{},{} by document order",
+                    c.min_terms, c.max_span, c.docs_per_entry
+                )),
+            ));
+        }
+        params
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Options {

@@ -110,6 +110,7 @@ pub fn run(path: &Path, terms: &[&str], query: &Query<'_>) -> Result<(), Error> 
         length_norm,
         boost: boost.map(str::to_string),
         phrase,
+        filter: None,
     };
     let crate::Ranking {
         ranked,

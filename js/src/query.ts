@@ -2,6 +2,7 @@
 // MokujiIndex: a prefix that falls back to the longest term a query begins
 // with, and the polygons holding a point, from a file of geohash coverings.
 
+import { MokujiError } from "./errors.js";
 import type { CborValue, MokujiIndex, Postings } from "./mokuji.js";
 
 const utf8 = new TextDecoder();
@@ -36,6 +37,8 @@ export async function lookupPrefix(
   limit = 20,
   readings: string[] = [],
 ): Promise<PrefixHit[]> {
+  // Nothing asked for, nothing read.
+  if (limit <= 0) return [];
   let entries = await index.prefix(normalized, limit);
   let within = false;
   if (!entries.length && readings.length) {
@@ -120,8 +123,10 @@ function attr(index: MokujiIndex, name: string): CborValue | undefined {
 export function precisionsOf(index: MokujiIndex): number[] | null {
   const declared = attr(index, "geohash-precisions");
   if (typeof declared !== "string") return null;
-  const parsed = declared.split(",").map((p) => Number(p.trim()));
-  return parsed.length && parsed.every((p) => Number.isInteger(p) && p > 0 && p <= 12) ? parsed : null;
+  const parts = declared.split(",").map((p) => p.trim());
+  if (!parts.every((p) => /^\d+$/.test(p))) return null;
+  const parsed = parts.map(Number);
+  return parsed.every((p) => p > 0 && p <= 12) ? parsed : null;
 }
 
 /** Integers per degree the rings are stored in (`geometry`, such as
@@ -144,7 +149,8 @@ export type Rings = [number, number][][];
 
 /** Rings as `geometry=delta-int-1e…` writes them: `;` between rings, each the
  * first vertex then the difference from the vertex before, in integers of
- * 1/`scale` degree, without the closing vertex, which is put back. */
+ * 1/`scale` degree, without the closing vertex, which is put back. Throws
+ * for values that are not integers. */
 export function decodeRings(text: string, scale: number): Rings {
   return text.split(";").map((part) => {
     const values = part.split(",");
@@ -152,8 +158,11 @@ export function decodeRings(text: string, scale: number): Rings {
     let x = 0;
     let y = 0;
     for (let i = 0; i + 1 < values.length; i += 2) {
-      x += Number(values[i]);
-      y += Number(values[i + 1]);
+      const dx = values[i]!.trim();
+      const dy = values[i + 1]!.trim();
+      if (!/^[+-]?\d+$/.test(dx) || !/^[+-]?\d+$/.test(dy)) throw new MokujiError("rings are not integers");
+      x += Number(dx);
+      y += Number(dy);
       ring.push([x / scale, y / scale]);
     }
     if (ring.length) ring.push(ring[0]!);
@@ -209,10 +218,17 @@ export async function locate(
   lon: number,
   options: { precisions?: number[]; scale?: number } = {},
 ): Promise<Located> {
-  const precisions = options.precisions ?? precisionsOf(index);
-  const scale = options.scale ?? scaleOf(index);
+  // What the caller says counts only when it says something: no precisions,
+  // or a scale that is not a positive number, defers to the file.
+  const given = options.precisions?.length ? options.precisions : undefined;
+  if (given && !given.every((p) => Number.isInteger(p) && p >= 1 && p <= 12)) {
+    throw new MokujiError("the file does not say its geohash precisions and geometry scale");
+  }
+  const scaleGiven = options.scale !== undefined && Number.isFinite(options.scale) && options.scale > 0 ? options.scale : undefined;
+  const precisions = given ?? precisionsOf(index);
+  const scale = scaleGiven ?? scaleOf(index);
   if (!precisions || !scale) {
-    throw new Error("the file does not say its geohash precisions and geometry scale");
+    throw new MokujiError("the file does not say its geohash precisions and geometry scale");
   }
   const names = fieldsOf(index);
   const cell = geohash(lat, lon, Math.max(...precisions));
@@ -224,7 +240,8 @@ export async function locate(
   const payloads = await index.payloadSpan(docs);
   const polygons = docs.map((doc, i): Polygon => {
     const payload = payloads[i]!;
-    const cut = payload.indexOf("|");
+    // A payload with no rings is a label alone, and holds no point.
+    const cut = payload.includes("|") ? payload.indexOf("|") : payload.length;
     const label = payload.slice(0, cut);
     const values = label.split("\x1f");
     const fields = names ? Object.fromEntries(names.map((name, j) => [name, values[j] ?? ""])) : null;

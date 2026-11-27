@@ -1,6 +1,6 @@
 use crate::format::Result;
 
-use crate::read::reader::{check_range, RangeReader};
+use crate::read::reader::{check_range, BlockingRangeReader, RangeReader};
 
 /// A [`RangeReader`] over bytes already in memory.
 ///
@@ -21,23 +21,34 @@ impl SliceReader {
     }
 }
 
+impl BlockingRangeReader for SliceReader {
+    fn file_len(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+
+    fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>> {
+        check_range(offset, len, self.bytes.len() as u64)?;
+        let start = offset as usize;
+        Ok(self.bytes[start..start + len as usize].to_vec())
+    }
+}
+
 impl RangeReader for SliceReader {
     fn file_len(&self) -> u64 {
         self.bytes.len() as u64
     }
 
     async fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>> {
-        check_range(offset, len, self.file_len())?;
-        let start = offset as usize;
-        Ok(self.bytes[start..start + len as usize].to_vec())
+        BlockingRangeReader::read_range(self, offset, len)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SliceReader;
     use crate::format::Error;
     use crate::read::block_on::block_on;
+    use crate::read::RangeReader;
 
     #[test]
     fn reads_a_range() {

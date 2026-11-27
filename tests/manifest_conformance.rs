@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use mokuji::manifest::{Collection, Manifest};
-use mokuji::read::{block_on::block_on, CountingReader, SliceReader};
+use mokuji::read::{block_on::block_on, CountingReader, OpenOptions, SliceReader};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -54,7 +54,17 @@ fn every_collection_case_holds() {
                 ))
             })
             .collect();
-        let collection = block_on(Collection::open(&manifest, readers.iter().collect())).unwrap();
+        // Block by block, as the cases count.
+        let options = OpenOptions {
+            coalesce: false,
+            ..OpenOptions::default()
+        };
+        let collection = block_on(Collection::open_with(
+            &manifest,
+            readers.iter().collect(),
+            options,
+        ))
+        .unwrap();
         readers.iter().for_each(CountingReader::reset);
 
         let found = block_on(collection.complete(case.prefix.as_bytes(), case.limit)).unwrap();

@@ -14,6 +14,7 @@ fuzz_target!(|data: &[u8]| {
         &reader,
         OpenOptions {
             resident_dictionary: true,
+            ..OpenOptions::default()
         },
     )) else {
         return;

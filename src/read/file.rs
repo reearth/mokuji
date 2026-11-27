@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::format::Result;
 
-use crate::read::reader::{check_range, RangeReader};
+use crate::read::reader::{check_range, BlockingRangeReader, RangeReader};
 
 /// A [`RangeReader`] over a file on disk, read a range at a time.
 ///
@@ -25,16 +25,26 @@ impl FileReader {
     }
 }
 
+impl BlockingRangeReader for FileReader {
+    fn file_len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>> {
+        check_range(offset, len, self.len)?;
+        let mut buf = vec![0; len as usize];
+        read_exact_at(&self.file, &mut buf, offset)?;
+        Ok(buf)
+    }
+}
+
 impl RangeReader for FileReader {
     fn file_len(&self) -> u64 {
         self.len
     }
 
     async fn read_range(&self, offset: u64, len: u32) -> Result<Vec<u8>> {
-        check_range(offset, len, self.len)?;
-        let mut buf = vec![0; len as usize];
-        read_exact_at(&self.file, &mut buf, offset)?;
-        Ok(buf)
+        BlockingRangeReader::read_range(self, offset, len)
     }
 }
 
@@ -61,9 +71,10 @@ fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> std::io::R
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::FileReader;
     use crate::format::Error;
     use crate::read::block_on::block_on;
+    use crate::read::RangeReader;
     use std::io::Write;
 
     fn temp(bytes: &[u8]) -> (std::path::PathBuf, FileReader) {

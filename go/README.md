@@ -57,6 +57,19 @@ sections of the PLATEAU specifications, with each section's text in its
 payload, 16 made the file 8% larger and a filtered search about twice as
 fast.
 
+`Phrase` requires the terms at consecutive positions, in the order typed,
+from a file that carries positions. It is tested after `Filter`: each term's
+positions are read whole, one request per term, once any document survives
+the match and the filter, and nothing is read when none does. `Rank` is the
+half of a search before any
+payload: the documents a set of terms matches, best first, for a caller that
+decides itself which payloads to fetch.
+
+```go
+tiny.Search(ctx, "tokyo chuo", mokuji.Phrase())          // not "chuo tokyo"
+ranking, err := tiny.Rank(ctx, tiny.Split("tokyo chuo")) // ranking.Ranked, no payload read
+```
+
 The scores agree with the other readers' to about 1e-12, not to the last
 bit, since logarithms differ in the last place between platforms; two
 documents whose scores differ by less than that may come out in either order
@@ -66,8 +79,64 @@ between them.
 opening or `ResetStats`, and `index.OnRequest` sees every request.
 `index.Attribution` and `index.License` are the credit the file states, and
 `index.Generator` the writer and every build parameter it records, including
-any a pipeline added to check when it opens the file.
+any a pipeline added to check when it opens the file. `index.Generation`,
+`index.TokenizerParams` and `index.Attrs` are the rest of the metadata a
+reader acts on, and `index.Meta` all of it, decoded; `DecodeCBOR` decodes
+CBOR the same way. `Normalize(id, text)` is what a query goes through for a
+tokenizer, by its identifier, without a file.
 Queries may run from several goroutines at once.
+
+A refusal is a `*FormatError` for a file or a manifest that cannot be read, a
+`*NoColumnError` for a boost column the file lacks, and a `*BuildError` for
+what a `Builder` will not write; `Locate` returns `ErrNotCoverings` and
+`ErrRings`.
+
+### A collection
+
+`Complete` and `Candidates` are a collection's completion: the first
+documents in collection order, or every segment's own first for a caller
+that ranks across them. `Search` is the live documents holding every term,
+in collection order, unranked, since scores from different segments are not
+comparable. `LiveIn` is one segment's first live documents for a prefix
+already normalized.
+
+```go
+found, err := collection.Search(ctx, "Tokyo", 10) // found.Hits, found.Payloads, found.Matched
+```
+
+`ParseManifest` reads a manifest with the checks a collection opens with,
+`Within` restricts it to some countries, and `JSON` writes it as the Rust
+crate does, byte for byte, so that one collection is written down one way.
+
+### An address typed past its key
+
+`LookupPrefix` gives the terms a prefix begins, and, when none does, the
+longest term one of the readings it is given begins with, marked
+`MatchWithin`: the town an address typed down to its lot number is in, when
+the file keys towns. Every prefix of the readings is looked up at once.
+
+```go
+q := index.Normalize("東京都千代田区丸の内1丁目9番1号")
+hits, err := mokuji.LookupPrefix(ctx, index, q, 10, []string{q})
+// [{Term: "東京都千代田区丸の内1丁目", Doc, Payload, Match: "within"}]
+```
+
+### Which polygon holds a point
+
+`Locate` answers from a file of geohash coverings, as `demo/reverse` builds:
+each polygon a document keyed by the cells that cover it, its label and rings
+as payload, and the file's `attrs` saying how (`geohash-precisions`,
+`geometry=delta-int-1e…`, and `payload-fields` for a label cut at U+001F).
+It looks up the point's cell at every precision at once and tests the
+candidates' rings even-odd.
+
+```go
+found, err := mokuji.Locate(ctx, index, 35.6812, 139.7671, nil)
+// found.Inside: [{Doc, Label, Fields: {"KEY_CODE": …}, Rings: [[[lon, lat], …]]}]
+```
+
+`Geohash`, `DecodeRings`, `Contains`, `PrecisionsOf`, `ScaleOf` and
+`FieldsOf` are the parts it is made of.
 
 ### Reading a file on hand
 
@@ -79,6 +148,10 @@ postal, err := mokuji.OpenFile(ctx, "postal.mokuji")
 defer func() { _ = postal.Close() }()
 postal.Lookup(ctx, "1000005", 10)
 ```
+
+`OpenWith` with `OpenOptions{ResidentDictionary: true}` holds the whole term
+dictionary: one more request at open and its stored size in memory, and then
+a term lookup costs no request at all.
 
 ### Reading from something else
 
@@ -185,3 +258,8 @@ The same places as the Python reader:
 - `ja-address` strips `White_Space`, as the Rust tokenizer does; JavaScript's
   `trim` differs on U+0085 and U+FEFF.
 - Requests are made one after another, not at once.
+- A manifest is parsed with the checks the Rust crate makes, with three
+  differences Go's JSON decoder brings: a key given twice is taken at its last
+  value rather than refused, a number above 2^63 − 1 is refused though it fits
+  the format's unsigned integers, and a lone surrogate escape in a string is
+  read as U+FFFD rather than refused.
