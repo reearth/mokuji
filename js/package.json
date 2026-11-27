@@ -1,6 +1,6 @@
 {
   "name": "mokuji",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Read Mokuji files — a cloud-optimized search index — over HTTP range requests, in a browser, a worker or Node",
   "type": "module",
   "license": "MIT OR Apache-2.0",

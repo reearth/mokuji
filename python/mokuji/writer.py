@@ -43,7 +43,7 @@ GENERATOR_NAME = "mokuji-python"
 # What this package records as `generator.version`. A release sets it with
 # the other packages' versions (RELEASING.md), and publishing checks that
 # they agree.
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 # The first section identifier an application may use (SPEC.md §5.2).
 SECTION_APPLICATION_MIN = 0x8000
